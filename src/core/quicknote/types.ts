@@ -1,5 +1,7 @@
 export interface SourceNote {
   id: string
+  noteUid?: string | null
+  parentNoteId?: string | null
   offset: number
   sourcePath: string
   startLine: number
@@ -26,6 +28,8 @@ export interface QuickNoteCreateRequest {
   timestamp?: string
   tags?: string[]
   body: string
+  noteUid?: string | null
+  parentNoteId?: string | null
 }
 
 export interface QuickNoteCreateResponse {

@@ -166,6 +166,11 @@ export function useApp(): AppState & AppActions {
     }
   }, [applyParsed, applySourceSummary])
 
+  // Keep ref in sync so the file watcher can call the latest reloadSource.
+  useEffect(() => {
+    reloadSourceRef.current = reloadSource
+  }, [reloadSource])
+
   const searchNotes = useCallback(
     async (query: string) => {
       if (!parsed) return []

@@ -22,7 +22,7 @@ export interface UseEditorSessionResult {
   timestampInputRef: React.RefObject<HTMLInputElement | null>
   tagInputRef: React.RefObject<HTMLInputElement | null>
   openNoteEditor: (note: SourceNote) => void
-  openBranchEditor: () => void
+  openBranchEditor: (source?: SourceNote | null) => void
   closeEditor: () => void
   flushAutoSave: () => Promise<boolean>
   handleUndo: () => void
@@ -106,9 +106,9 @@ export function useEditorSession({
     [draft, nextSessionKey, setEditorState],
   )
 
-  const openBranchEditor = useCallback(() => {
+  const openBranchEditor = useCallback((source?: SourceNote | null) => {
     draft.clearSaveError()
-    setEditorState(editorForBranch(nextSessionKey()))
+    setEditorState(editorForBranch(nextSessionKey(), source ?? null))
   }, [draft, nextSessionKey, setEditorState])
 
   const closeEditor = useCallback(() => {
@@ -127,7 +127,8 @@ export function useEditorSession({
     const ok = await draft.flushAutoSave()
     if (!ok) return
 
-    openBranchEditor()
+    const branchSource = editorRef.current?.source ?? current.source ?? null
+    openBranchEditor(branchSource)
   }, [draft, openBranchEditor])
 
   const fields = useEditorFields({

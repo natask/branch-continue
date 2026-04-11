@@ -44,9 +44,11 @@ function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
   const {
     notes,
     activeNoteId,
+    activeNote,
     totalCount,
     recentering,
     sourcePath,
+    sourceWritable,
     selectingSource,
     selectNote,
     searchNotes,
@@ -66,10 +68,93 @@ function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
   })
 
   const orderedNotes = useMemo(() => orderNotes(notes), [notes])
+  const notesById = useMemo(() => {
+    const map = new Map<string, SourceNote>()
+    for (const note of notes) {
+      map.set(note.id, note)
+    }
+    return map
+  }, [notes])
+  const notesByUid = useMemo(() => {
+    const map = new Map<string, SourceNote>()
+    for (const note of notes) {
+      if (note.noteUid) map.set(note.noteUid, note)
+    }
+    return map
+  }, [notes])
+  const childrenByParentRef = useMemo(() => {
+    const map = new Map<string, SourceNote[]>()
+    for (const note of notes) {
+      if (!note.parentNoteId) continue
+      const existing = map.get(note.parentNoteId) ?? []
+      existing.push(note)
+      map.set(note.parentNoteId, existing)
+    }
+    return map
+  }, [notes])
+
   const currentEditorNoteId = editorSession.editor?.source?.id ?? activeNoteId
   const editorPositionLabel = useMemo(
     () => formatNotePosition(orderedNotes, currentEditorNoteId, totalCount),
     [currentEditorNoteId, orderedNotes, totalCount],
+  )
+  const currentContextNote = editorSession.editor?.source ?? activeNote
+  const unsavedBranchSource = editorSession.editor?.source ? null : editorSession.editor?.branchFrom ?? null
+  const currentParentNote = useMemo(
+    () =>
+      resolveLinkedNote(
+        notesById,
+        notesByUid,
+        unsavedBranchSource?.noteUid ??
+          unsavedBranchSource?.id ??
+          currentContextNote?.parentNoteId ??
+          null,
+      ),
+    [currentContextNote?.parentNoteId, notesById, notesByUid, unsavedBranchSource?.id, unsavedBranchSource?.noteUid],
+  )
+  const currentChildNotes = useMemo(() => {
+    if (!currentContextNote) return []
+
+    const matches = [
+      ...(childrenByParentRef.get(currentContextNote.id) ?? []),
+      ...(currentContextNote.noteUid ? childrenByParentRef.get(currentContextNote.noteUid) ?? [] : []),
+    ]
+    const unique = new Map<string, SourceNote>()
+    for (const child of matches) {
+      unique.set(child.id, child)
+    }
+    return Array.from(unique.values()).sort((a, b) => a.startLine - b.startLine)
+  }, [childrenByParentRef, currentContextNote])
+
+  const handleSearchSelect = useCallback(
+    (hit: QuickNoteSearchHit) => {
+      jumpToSearchHit(hit)
+      setSearchOpen(false)
+      editorSession.openNoteEditor(hit.note)
+    },
+    [editorSession, jumpToSearchHit],
+  )
+
+  const handleOpenNote = useCallback(
+    (note: SourceNote) => {
+      editorSession.openNoteEditor(note)
+    },
+    [editorSession],
+  )
+
+  const handleOpenLinkedNote = useCallback(
+    (note: SourceNote) => {
+      selectNote(note)
+      editorSession.openNoteEditor(note)
+    },
+    [editorSession, selectNote],
+  )
+
+  const handleBranch = useCallback(
+    (from: SourceNote) => {
+      editorSession.openBranchEditor(from)
+    },
+    [editorSession],
   )
 
   useEffect(() => {
@@ -97,6 +182,18 @@ function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
         return
       }
 
+      if (shortcut && key === '[' && currentParentNote) {
+        event.preventDefault()
+        handleOpenLinkedNote(currentParentNote)
+        return
+      }
+
+      if (shortcut && key === ']' && currentChildNotes.length > 0) {
+        event.preventDefault()
+        handleOpenLinkedNote(currentChildNotes[0]!)
+        return
+      }
+
       if (event.key !== 'Escape') return
 
       if (searchOpen) {
@@ -119,36 +216,22 @@ function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [editorSession, orderedNotes, searchOpen, selectNote, sortMode])
+  }, [
+    currentChildNotes,
+    currentParentNote,
+    editorSession,
+    handleOpenLinkedNote,
+    orderedNotes,
+    searchOpen,
+    selectNote,
+    sortMode,
+  ])
 
   useEffect(() => {
     if (orderedNotes.length === 0) return
     if (activeNoteId && orderedNotes.some((note) => note.id === activeNoteId)) return
     selectNote(orderedNotes[orderedNotes.length - 1]!)
   }, [activeNoteId, orderedNotes, selectNote])
-
-  const handleSearchSelect = useCallback(
-    (hit: QuickNoteSearchHit) => {
-      jumpToSearchHit(hit)
-      setSearchOpen(false)
-      editorSession.openNoteEditor(hit.note)
-    },
-    [editorSession, jumpToSearchHit],
-  )
-
-  const handleOpenNote = useCallback(
-    (note: SourceNote) => {
-      editorSession.openNoteEditor(note)
-    },
-    [editorSession],
-  )
-
-  const handleBranch = useCallback(
-    (_from: SourceNote) => {
-      editorSession.openBranchEditor()
-    },
-    [editorSession],
-  )
 
   return (
     <div className="app">
@@ -159,6 +242,7 @@ function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
         </div>
 
         <div className="topbar-meta">
+          <span className="meta-pill">{sourceWritable ? 'Direct Auto-Save' : 'Download Auto-Save'}</span>
           <div className="topbar-jump">
             <button
               className={`topbar-jump-opt${sortMode === 'oldest' ? ' active' : ''}`}
@@ -188,9 +272,12 @@ function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
           <button className="topbar-search" onClick={() => void selectSourceFile()} type="button">
             {selectingSource ? 'Selecting...' : 'Select File'}
           </button>
+          <button className="topbar-search" onClick={() => void reloadSource()} type="button">
+            Reload
+          </button>
           <button
             className="topbar-search topbar-search-strong"
-            onClick={editorSession.openBranchEditor}
+            onClick={() => editorSession.openBranchEditor(currentContextNote ?? null)}
             type="button"
           >
             Branch
@@ -200,6 +287,37 @@ function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
           </button>
         </div>
       </header>
+      {(currentParentNote || currentChildNotes.length > 0) && (
+        <section className="lineage-strip">
+          {currentParentNote && (
+            <button
+              className="lineage-pill lineage-pill-parent"
+              onClick={() => handleOpenLinkedNote(currentParentNote)}
+              type="button"
+            >
+              Back to source: {describeNote(currentParentNote)}
+            </button>
+          )}
+          {currentChildNotes.length > 0 && (
+            <div className="lineage-children">
+              <span className="lineage-label">Branches</span>
+              {currentChildNotes.slice(0, 3).map((child) => (
+                <button
+                  key={child.id}
+                  className="lineage-pill"
+                  onClick={() => handleOpenLinkedNote(child)}
+                  type="button"
+                >
+                  {describeNote(child)}
+                </button>
+              ))}
+              {currentChildNotes.length > 3 && (
+                <span className="lineage-more">+{currentChildNotes.length - 3} more</span>
+              )}
+            </div>
+          )}
+        </section>
+      )}
 
       <TimeMachine
         notes={notes}
@@ -254,4 +372,20 @@ function resolveInitialSortMode(): NoteSortMode {
   if (typeof window === 'undefined') return 'latest'
   const start = new URLSearchParams(window.location.search).get('start')
   return start?.toLowerCase() === 'oldest' ? 'oldest' : 'latest'
+}
+
+function resolveLinkedNote(
+  notesById: Map<string, SourceNote>,
+  notesByUid: Map<string, SourceNote>,
+  noteRef: string | null,
+): SourceNote | null {
+  if (!noteRef) return null
+  return notesById.get(noteRef) ?? notesByUid.get(noteRef) ?? null
+}
+
+function describeNote(note: SourceNote): string {
+  const title = note.title.trim()
+  if (title.length > 0) return title
+  if (note.timestamp) return note.timestamp
+  return `L${note.startLine}`
 }

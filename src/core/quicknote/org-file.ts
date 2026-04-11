@@ -7,6 +7,16 @@ import type {
 const TIMESTAMP_RE = /\[\d{4}-\d{2}-\d{2} [^\]]+\]/
 const ORG_SUFFIX_TAGS_RE = /\s+(:[^\s:]+(?::[^\s:]+)*:)\s*$/
 const HASH_TAG_LINE_RE = /^\s*(#[A-Za-z0-9_-]+(?:\s+#[A-Za-z0-9_-]+)*)\s*$/
+const ORG_PROPERTIES_START_RE = /^\s*:PROPERTIES:\s*$/i
+const ORG_PROPERTIES_END_RE = /^\s*:END:\s*$/i
+const ORG_PROPERTY_LINE_RE = /^\s*:([A-Za-z0-9_@#%.-]+):\s*(.*?)\s*$/
+const NOTE_UID_PROPERTY_KEY = 'BRANCH_CONTINUE_NOTE_UID'
+const PARENT_NOTE_ID_PROPERTY_KEY = 'BRANCH_CONTINUE_PARENT_NOTE_ID'
+
+interface NoteLineageMetadata {
+  noteUid: string | null
+  parentNoteId: string | null
+}
 
 export interface ParsedQuickNoteFile {
   content: string
@@ -61,7 +71,8 @@ export function appendQuickNoteEntry(
   const title = request.title?.trim() ?? ''
   const tags = normalizeTags(request.tags ?? [])
   const timestamp = request.timestamp?.trim() || formatOrgTimestamp(new Date())
-  const entryLines = buildNoteLines({ title, timestamp, tags, body })
+  const lineage = resolveLineageForCreate(request)
+  const entryLines = buildNoteLines({ title, timestamp, tags, body, lineage })
   const nextContent = `${parsed.content.trimEnd()}\n\n${entryLines.join('\n')}\n`
   const nextParsed = parseQuickNoteFile(nextContent, parsed.sourcePath)
   const entry = nextParsed.entries[0]
@@ -90,10 +101,11 @@ export function updateQuickNoteEntry(
   const title = request.title?.trim() ?? existing.title
   const tags = normalizeTags(request.tags ?? existing.tags)
   const timestamp = request.timestamp?.trim() || existing.timestamp || formatOrgTimestamp(new Date())
+  const lineage = resolveLineageForUpdate(existing, request)
 
   const startIndex = existing.startLine - 1
   const endExclusiveIndex = existing.endLine
-  const entryLines = buildNoteLines({ title, timestamp, tags, body })
+  const entryLines = buildNoteLines({ title, timestamp, tags, body, lineage })
   const nextLines = [
     ...parsed.lines.slice(0, startIndex),
     ...entryLines,
@@ -189,6 +201,8 @@ function parseNote(
 
   return {
     id: buildNoteId(timestamp, startIndex, idUsage),
+    noteUid: bodyPreamble.lineage.noteUid,
+    parentNoteId: bodyPreamble.lineage.parentNoteId,
     offset: headlineIndexes.length - 1 - headlineIndex,
     sourcePath,
     startLine: startIndex + 1,
@@ -225,34 +239,55 @@ function normalizeTimestampForId(timestamp: string): string {
     .replace(/[^a-z0-9+-]+/g, '')
 }
 
-function extractBodyPreamble(bodyLines: string[]): { tags: string[]; indexes: Set<number> } {
+function extractBodyPreamble(bodyLines: string[]): {
+  tags: string[]
+  indexes: Set<number>
+  lineage: NoteLineageMetadata
+} {
   const tags: string[] = []
   const indexes = new Set<number>()
-  let reachedBody = false
+  let index = 0
 
-  for (let index = 0; index < bodyLines.length; index += 1) {
-    const line = bodyLines[index]
+  while (index < bodyLines.length && !bodyLines[index]!.trim()) {
+    indexes.add(index)
+    index += 1
+  }
+
+  const propertyDrawer = parsePropertiesDrawer(bodyLines, index)
+  if (propertyDrawer) {
+    for (let cursor = index; cursor < propertyDrawer.endIndex; cursor += 1) {
+      indexes.add(cursor)
+    }
+    index = propertyDrawer.endIndex
+  }
+
+  while (index < bodyLines.length) {
+    const line = bodyLines[index]!
     const trimmed = line.trim()
-
-    if (reachedBody) break
 
     if (!trimmed) {
       indexes.add(index)
+      index += 1
       continue
     }
 
-    if (!HASH_TAG_LINE_RE.test(line)) {
-      reachedBody = true
-      break
-    }
+    if (!HASH_TAG_LINE_RE.test(line)) break
 
     indexes.add(index)
     for (const tag of extractHashTags(line)) {
       tags.push(tag)
     }
+    index += 1
   }
 
-  return { tags, indexes }
+  return {
+    tags,
+    indexes,
+    lineage: {
+      noteUid: normalizeLineageValue(propertyDrawer?.properties.get(NOTE_UID_PROPERTY_KEY)),
+      parentNoteId: normalizeLineageValue(propertyDrawer?.properties.get(PARENT_NOTE_ID_PROPERTY_KEY)),
+    },
+  }
 }
 
 function firstMeaningfulLine(lines: string[]): string | null {
@@ -327,9 +362,21 @@ function buildNoteLines(input: {
   timestamp: string
   tags: string[]
   body: string
+  lineage: NoteLineageMetadata
 }): string[] {
   const headline = input.title ? `* ${input.title} ${input.timestamp}` : `* ${input.timestamp}`
   const lines = [headline]
+
+  if (input.lineage.noteUid || input.lineage.parentNoteId) {
+    lines.push(':PROPERTIES:')
+    if (input.lineage.noteUid) {
+      lines.push(`:${NOTE_UID_PROPERTY_KEY}: ${input.lineage.noteUid}`)
+    }
+    if (input.lineage.parentNoteId) {
+      lines.push(`:${PARENT_NOTE_ID_PROPERTY_KEY}: ${input.lineage.parentNoteId}`)
+    }
+    lines.push(':END:')
+  }
 
   if (input.tags.length > 0) {
     lines.push(input.tags.map((tag) => `#${tag}`).join(' '))
@@ -340,4 +387,80 @@ function buildNoteLines(input: {
   }
 
   return lines
+}
+
+function parsePropertiesDrawer(
+  bodyLines: string[],
+  startIndex: number,
+): { endIndex: number; properties: Map<string, string> } | null {
+  if (!ORG_PROPERTIES_START_RE.test(bodyLines[startIndex] ?? '')) {
+    return null
+  }
+
+  const properties = new Map<string, string>()
+  for (let index = startIndex + 1; index < bodyLines.length; index += 1) {
+    const line = bodyLines[index]!
+    if (ORG_PROPERTIES_END_RE.test(line)) {
+      return {
+        endIndex: index + 1,
+        properties,
+      }
+    }
+    const match = line.match(ORG_PROPERTY_LINE_RE)
+    if (!match) continue
+    properties.set(match[1].trim().toUpperCase(), match[2].trim())
+  }
+
+  return null
+}
+
+function resolveLineageForCreate(request: QuickNoteCreateRequest): NoteLineageMetadata {
+  const parentNoteId = normalizeLineageValue(request.parentNoteId)
+  let noteUid = normalizeLineageValue(request.noteUid)
+
+  if (parentNoteId && !noteUid) {
+    noteUid = createStableNoteUid()
+  }
+
+  return {
+    noteUid,
+    parentNoteId,
+  }
+}
+
+function resolveLineageForUpdate(
+  existing: SourceNote,
+  request: QuickNoteCreateRequest,
+): NoteLineageMetadata {
+  const parentNoteId =
+    request.parentNoteId === undefined
+      ? normalizeLineageValue(existing.parentNoteId)
+      : normalizeLineageValue(request.parentNoteId)
+  let noteUid =
+    request.noteUid === undefined
+      ? normalizeLineageValue(existing.noteUid)
+      : normalizeLineageValue(request.noteUid)
+
+  if (parentNoteId && !noteUid) {
+    noteUid = createStableNoteUid()
+  }
+
+  return {
+    noteUid,
+    parentNoteId,
+  }
+}
+
+function normalizeLineageValue(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim()
+  return normalized.length > 0 ? normalized : null
+}
+
+function createStableNoteUid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `qnuid-${crypto.randomUUID()}`
+  }
+  const randomPart = Math.random().toString(36).slice(2, 10)
+  return `qnuid-${Date.now().toString(36)}-${randomPart}`
 }

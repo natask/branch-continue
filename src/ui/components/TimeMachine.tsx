@@ -278,6 +278,8 @@ export function TimeMachine({
     if (!navigationEnabled) return undefined
 
     const handler = (event: KeyboardEvent) => {
+      if (isInteractiveEventTarget(event.target)) return
+
       if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
         event.preventDefault()
         const current = sorted[focusIndex]
@@ -408,7 +410,10 @@ export function TimeMachine({
                   >
                     <p className="tm-card-preview">{entry.body || entry.preview}</p>
                   </div>
-                  <span className="tm-card-meta">L{entry.startLine}-L{entry.endLine}</span>
+                  <span className="tm-card-meta">
+                    L{entry.startLine}-L{entry.endLine}
+                    {entry.parentNoteId ? ' • branched' : ''}
+                  </span>
                 </div>
               </div>
             )
@@ -422,4 +427,12 @@ export function TimeMachine({
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
+}
+
+function isInteractiveEventTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  if (target.isContentEditable) return true
+
+  const interactiveSelector = 'input, textarea, select, [contenteditable="true"], [role="textbox"]'
+  return target.closest(interactiveSelector) !== null
 }

@@ -174,16 +174,20 @@ export function useEditorDraft({
       setSaveError(null)
 
       try {
-        const request: QuickNoteCreateRequest = {
+        const requestBase: QuickNoteCreateRequest = {
           title: snapshot.title,
           timestamp: snapshot.timestamp ?? undefined,
           tags: snapshot.tags,
           body: snapshot.body,
         }
+        const parentRef = snapshot.branchFrom?.noteUid ?? snapshot.branchFrom?.id
 
         const entry = snapshot.source
-          ? await updateNote(snapshot.source.id, request)
-          : await createNote(request)
+          ? await updateNote(snapshot.source.id, requestBase)
+          : await createNote({
+              ...requestBase,
+              ...(parentRef ? { parentNoteId: parentRef } : {}),
+            })
 
         const current = editorRef.current
         if (!current || current.sessionKey !== snapshot.sessionKey) {

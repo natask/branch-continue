@@ -255,6 +255,44 @@ pre {
   font-weight: 600;
 }
 
+.lineage-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 0 28px 8px;
+}
+
+.lineage-children {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.lineage-label,
+.lineage-more {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+}
+
+.lineage-pill {
+  border: none;
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.lineage-pill-parent {
+  background: rgba(232, 168, 76, 0.16);
+  color: var(--accent);
+}
+
 .tm-layout {
   flex: 1;
   min-height: 0;
@@ -989,6 +1027,10 @@ pre {
 
   .topbar-search {
     min-height: 40px;
+  }
+
+  .lineage-strip {
+    padding: 0 12px 8px;
   }
 
   .tm-layout {

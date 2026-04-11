@@ -3,6 +3,7 @@ import type { QuickNoteCreateRequest, SourceNote } from '../../core/quicknote/ty
 export type EditorState = {
   sessionKey: number
   source: SourceNote | null
+  branchFrom: SourceNote | null
   editing: boolean
   title: string
   timestamp: string | null
@@ -46,6 +47,7 @@ export function editorFromNote(note: SourceNote, sessionKey: number): EditorStat
   return {
     sessionKey,
     source: note,
+    branchFrom: null,
     editing: true,
     title: note.title,
     timestamp: note.timestamp,
@@ -62,10 +64,11 @@ export function editorFromNote(note: SourceNote, sessionKey: number): EditorStat
   }
 }
 
-export function editorForBranch(sessionKey: number): EditorState {
+export function editorForBranch(sessionKey: number, branchFrom: SourceNote | null = null): EditorState {
   return {
     sessionKey,
     source: null,
+    branchFrom,
     editing: true,
     title: '',
     timestamp: formatNewTimestamp(),

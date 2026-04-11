@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { parseQuickNoteFile } from '../src/core/quicknote/org-file'
+import {
+  appendQuickNoteEntry,
+  parseQuickNoteFile,
+  updateQuickNoteEntry,
+} from '../src/core/quicknote/org-file'
 
 const SOURCE_PATH = 'quicknote.org'
 
@@ -50,5 +54,80 @@ describe('parseQuickNoteFile note ids', () => {
     const parsed = parseQuickNoteFile(content, SOURCE_PATH)
     const ids = parsed.entries.map((entry) => entry.id)
     expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('parses lineage metadata from an org PROPERTIES drawer', () => {
+    const content = [
+      '* Child [2026-04-11 Sat 10:00:02 +0000]',
+      ':PROPERTIES:',
+      ':BRANCH_CONTINUE_NOTE_UID: qnuid-child-1',
+      ':BRANCH_CONTINUE_PARENT_NOTE_ID: qn-ts-2026-04-11-sat-100001+0000',
+      ':END:',
+      '#branch',
+      'branched body',
+      '',
+    ].join('\n')
+
+    const parsed = parseQuickNoteFile(content, SOURCE_PATH)
+    expect(parsed.entries.length).toBe(1)
+    expect(parsed.entries[0]?.noteUid).toBe('qnuid-child-1')
+    expect(parsed.entries[0]?.parentNoteId).toBe('qn-ts-2026-04-11-sat-100001+0000')
+    expect(parsed.entries[0]?.body.trimEnd()).toBe('branched body')
+  })
+
+  it('writes and reparses lineage metadata when appending a branch note', () => {
+    const original = parseQuickNoteFile(
+      [
+        '* Parent [2026-04-11 Sat 10:00:01 +0000]',
+        'parent body',
+        '',
+      ].join('\n'),
+      SOURCE_PATH,
+    )
+
+    const { parsed: appended, entry } = appendQuickNoteEntry(original, {
+      title: 'Child',
+      timestamp: '[2026-04-11 Sat 10:00:02 +0000]',
+      body: 'child body',
+      parentNoteId: original.entries[0]?.id ?? null,
+      tags: ['branch'],
+    })
+
+    expect(entry.parentNoteId).toBe(original.entries[0]?.id)
+    expect(entry.noteUid).toMatch(/^qnuid-/)
+    expect(appended.content).toContain(':PROPERTIES:')
+    expect(appended.content).toContain(':BRANCH_CONTINUE_PARENT_NOTE_ID:')
+    expect(appended.content).toContain(':BRANCH_CONTINUE_NOTE_UID:')
+    expect(appended.entries[0]?.parentNoteId).toBe(original.entries[0]?.id)
+  })
+
+  it('preserves lineage metadata on update when request omits lineage fields', () => {
+    const content = [
+      '* Child [2026-04-11 Sat 10:00:02 +0000]',
+      ':PROPERTIES:',
+      ':BRANCH_CONTINUE_NOTE_UID: qnuid-child-1',
+      ':BRANCH_CONTINUE_PARENT_NOTE_ID: qn-ts-2026-04-11-sat-100001+0000',
+      ':END:',
+      'original body',
+      '',
+    ].join('\n')
+
+    const parsed = parseQuickNoteFile(content, SOURCE_PATH)
+    const note = parsed.entries[0]
+    expect(note).toBeDefined()
+
+    const { parsed: updated, entry } = updateQuickNoteEntry(parsed, note!.id, {
+      title: 'Child Edited',
+      timestamp: note!.timestamp ?? undefined,
+      tags: note!.tags,
+      body: 'updated body',
+    })
+
+    expect(entry.noteUid).toBe('qnuid-child-1')
+    expect(entry.parentNoteId).toBe('qn-ts-2026-04-11-sat-100001+0000')
+    expect(updated.content).toContain(':BRANCH_CONTINUE_NOTE_UID: qnuid-child-1')
+    expect(updated.content).toContain(
+      ':BRANCH_CONTINUE_PARENT_NOTE_ID: qn-ts-2026-04-11-sat-100001+0000',
+    )
   })
 })
