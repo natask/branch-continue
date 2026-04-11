@@ -1,142 +1,193 @@
-// Time Machine — Apple-style 3D perspective card stack navigator
-
-import { useState, useCallback, useEffect, useRef } from 'react'
-import type { PageMeta } from '../../core/page/types'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { SourceNote } from '../../core/quicknote/types'
+import { findNoteIndex, orderNotes, type NoteSortMode } from '../lib/note-order'
 
 interface TimeMachineProps {
-  pages: PageMeta[]
-  activePageId: string | null
-  onSelect: (id: string) => void
-  onClose: () => void
+  notes: SourceNote[]
+  activeNoteId: string | null
+  sortMode: NoteSortMode
+  totalCount: number
+  recentering: boolean
+  navigationEnabled: boolean
+  onSelect: (note: SourceNote) => void
+  onOpen: (note: SourceNote) => void
+  onBranch: (from: SourceNote) => void
 }
 
-function formatDate(ts: number): string {
-  const d = new Date(ts)
-  const month = d.toLocaleString('en', { month: 'short' })
-  const day = d.getDate()
-  const time = d.toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit', hour12: false })
-  return `${month} ${day} · ${time}`
-}
-
-export function TimeMachine({ pages, activePageId, onSelect, onClose }: TimeMachineProps) {
-  // Sort: newest first (front of stack)
-  const sorted = [...pages].sort((a, b) => b.createdAt - a.createdAt)
-
-  const activeIndex = sorted.findIndex((p) => p.id === activePageId)
-  const [focusIndex, setFocusIndex] = useState(activeIndex >= 0 ? activeIndex : 0)
+export function TimeMachine({
+  notes,
+  activeNoteId,
+  sortMode,
+  totalCount,
+  recentering,
+  navigationEnabled,
+  onSelect,
+  onOpen,
+  onBranch,
+}: TimeMachineProps) {
+  const sorted = useMemo(() => orderNotes(notes, sortMode), [notes, sortMode])
+  const activeIndex = Math.max(0, findNoteIndex(sorted, activeNoteId))
   const containerRef = useRef<HTMLDivElement>(null)
-  const scrollAccumRef = useRef(0)
+  const wheelAccumRef = useRef(0)
+  const [focusIndex, setFocusIndex] = useState(activeIndex)
 
-  // Scroll navigation with accumulator for smooth trackpad
+  const focusNote = (index: number) => {
+    const nextIndex = clamp(index, 0, sorted.length - 1)
+    const nextNote = sorted[nextIndex]
+    if (!nextNote) return
+    setFocusIndex(nextIndex)
+    onSelect(nextNote)
+  }
+
   useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
+    setFocusIndex(activeIndex)
+  }, [activeIndex])
 
-    const handler = (e: WheelEvent) => {
-      e.preventDefault()
-      scrollAccumRef.current += e.deltaY
+  useEffect(() => {
+    const element = containerRef.current
+    if (!element || !navigationEnabled) return
 
-      if (Math.abs(scrollAccumRef.current) > 40) {
-        const delta = scrollAccumRef.current > 0 ? 1 : -1
-        setFocusIndex((prev) => Math.max(0, Math.min(sorted.length - 1, prev + delta)))
-        scrollAccumRef.current = 0
+    const handler = (event: WheelEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('.tm-card-scroll')) return
+
+      event.preventDefault()
+
+      const delta = Math.abs(event.deltaY) > Math.abs(event.deltaX) ? event.deltaY : event.deltaX
+      wheelAccumRef.current += delta
+
+      if (Math.abs(wheelAccumRef.current) < 40) return
+
+      const direction = wheelAccumRef.current > 0 ? 1 : -1
+      wheelAccumRef.current = 0
+      focusNote(focusIndex + direction)
+    }
+
+    element.addEventListener('wheel', handler, { passive: false })
+    return () => element.removeEventListener('wheel', handler)
+  }, [focusIndex, navigationEnabled, onSelect, sorted])
+
+  useEffect(() => {
+    if (!navigationEnabled) return undefined
+
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault()
+        const current = sorted[focusIndex]
+        if (current) onBranch(current)
+        return
+      }
+
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        const current = sorted[focusIndex]
+        if (current) onOpen(current)
+        return
+      }
+
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        focusNote(focusIndex - 1)
+      } else if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+        event.preventDefault()
+        focusNote(focusIndex + 1)
       }
     }
 
-    el.addEventListener('wheel', handler, { passive: false })
-    return () => el.removeEventListener('wheel', handler)
-  }, [sorted.length])
-
-  // Arrow keys + Enter navigation
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
-        e.preventDefault()
-        setFocusIndex((prev) => Math.max(0, prev - 1))
-      } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
-        e.preventDefault()
-        setFocusIndex((prev) => Math.min(sorted.length - 1, prev + 1))
-      } else if (e.key === 'Enter') {
-        e.preventDefault()
-        if (sorted[focusIndex]) {
-          onSelect(sorted[focusIndex].id)
-        }
-      }
-    }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [focusIndex, sorted, onSelect])
+  }, [focusIndex, navigationEnabled, onBranch, onOpen, onSelect, sorted])
 
-  const handleCardClick = useCallback(
-    (id: string, index: number) => {
-      if (index === focusIndex) {
-        onSelect(id)
-      } else {
-        setFocusIndex(index)
-      }
-    },
-    [focusIndex, onSelect],
-  )
-
-  if (sorted.length === 0) return null
-
-  // Placeholder "text lines" — varying widths for visual texture
-  const lineWidths = [88, 94, 55, 80, 42, 91, 68, 50, 76, 38]
+  if (sorted.length === 0) {
+    return (
+      <div className="empty-panel">
+        <p className="empty-title">No notes yet.</p>
+      </div>
+    )
+  }
 
   return (
-    <div className="tm-overlay" ref={containerRef} onClick={onClose}>
-      <div className="tm-scene" onClick={(e) => e.stopPropagation()}>
-        {sorted.map((page, index) => {
-          const offset = index - focusIndex
-          const isFocused = index === focusIndex
-          const isActive = page.id === activePageId
-          const isChild = !!page.parentPageId
+    <div className="tm-layout">
+      <section className="tm-stage" ref={containerRef}>
+        <div className="tm-counter">
+          {Math.min(focusIndex + 1, totalCount || sorted.length)} / {totalCount || sorted.length}
+        </div>
+        <div className="tm-stage-actions">
+          <span className="tm-window-status">{recentering ? 'Refreshing' : 'Live'}</span>
+        </div>
 
-          // Only render cards within visible range
-          if (Math.abs(offset) > 7) return null
+        <div className="tm-scene">
+          {sorted.map((entry, index) => {
+            const offset = index - focusIndex
+            if (Math.abs(offset) > 7) return null
 
-          // 3D position — diagonal recession toward top-left
-          const tx = offset * -125 + (isChild ? 25 : 0)
-          const ty = offset * -80
-          const tz = offset * -240
-          const scale = Math.max(0.35, 1 - Math.abs(offset) * 0.07)
-          const opacity = Math.max(0.06, 1 - Math.abs(offset) * 0.2)
-          const blur = Math.min(8, Math.abs(offset) * 1.8)
+            const isFocused = index === focusIndex
+            const tx = offset * 132
+            const ty = offset * -78
+            const tz = offset * -240
+            const scale = Math.max(0.36, 1 - Math.abs(offset) * 0.07)
+            const opacity = Math.max(0.08, 1 - Math.abs(offset) * 0.18)
+            const blur = Math.min(8, Math.abs(offset) * 1.6)
 
-          return (
-            <div
-              key={page.id}
-              className={`tm-card ${isFocused ? 'tm-card-focused' : ''}`}
-              style={{
-                transform: `translate3d(${tx}px, ${ty}px, ${tz}px) scale(${scale})`,
-                opacity,
-                filter: blur > 0.5 ? `blur(${blur}px)` : 'none',
-                zIndex: 100 - Math.abs(offset),
-              }}
-              onClick={() => handleCardClick(page.id, index)}
-            >
-              <div className="tm-card-titlebar">
-                <span className="tm-card-name">{page.title || 'Untitled'}</span>
-                <span className="tm-card-date">{formatDate(page.createdAt)}</span>
-              </div>
-              <div className="tm-card-body">
-                {isChild && <span className="tm-branch-indicator">&#8627; branch</span>}
-                <div className="tm-card-lines">
-                  {lineWidths.map((w, i) => (
-                    <div key={i} className="tm-card-line" style={{ width: `${w}%` }} />
-                  ))}
+            return (
+              <div
+                key={entry.id}
+                className={`tm-card ${isFocused ? 'tm-card-focused' : ''}`}
+                role="button"
+                tabIndex={0}
+                style={{
+                  transform: `translate3d(${tx}px, ${ty}px, ${tz}px) scale(${scale})`,
+                  opacity,
+                  filter: blur > 0.5 ? `blur(${blur}px)` : 'none',
+                  zIndex: 100 - Math.abs(offset),
+                }}
+                onClick={() => {
+                  if (isFocused) {
+                    onOpen(entry)
+                    return
+                  }
+                  focusNote(index)
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    if (isFocused) {
+                      onOpen(entry)
+                    } else {
+                      focusNote(index)
+                    }
+                  }
+                }}
+              >
+                {entry.title && (
+                  <div className="tm-card-titlebar">
+                    <span className="tm-card-name">{entry.title}</span>
+                    {entry.timestamp && <span className="tm-card-date">{entry.timestamp}</span>}
+                  </div>
+                )}
+
+                <div className="tm-card-body">
+                  <div
+                    className="tm-card-scroll"
+                    onWheel={(event) => {
+                      event.stopPropagation()
+                    }}
+                  >
+                    <p className="tm-card-preview">{entry.body || entry.preview}</p>
+                  </div>
+                  <span className="tm-card-meta">L{entry.startLine}-L{entry.endLine}</span>
                 </div>
               </div>
-              {isActive && <div className="tm-card-badge">current</div>}
-            </div>
-          )
-        })}
-      </div>
+            )
+          })}
+        </div>
 
-      <div className="tm-counter">
-        {focusIndex + 1} / {sorted.length}
-      </div>
-      <div className="tm-hint">scroll to navigate &middot; enter to select &middot; esc to close</div>
+        <div className="tm-hint">scroll cards · arrows navigate · enter opens</div>
+      </section>
     </div>
   )
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max)
 }

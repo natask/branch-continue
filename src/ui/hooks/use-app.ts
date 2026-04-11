@@ -1,180 +1,261 @@
-// Main application hook — initializes database, page service, and manages state
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  appendQuickNoteEntry,
+  parseQuickNoteFile,
+  searchQuickNoteFile,
+  updateQuickNoteEntry,
+  type ParsedQuickNoteFile,
+} from '../../core/quicknote/org-file'
+import {
+  SourceSelectionCancelledError,
+  createSourceBridge,
+} from '../../core/quicknote/source-bridge'
+import type {
+  QuickNoteCreateRequest,
+  QuickNoteSearchHit,
+  SourceNote,
+} from '../../core/quicknote/types'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { LoroDoc } from 'loro-crdt'
-import type { PageMeta } from '../../core/page/types'
-import type { PageService } from '../../core/services/page-service'
-import { getDatabase } from '../../core/services/db'
-import { createPageService } from '../../core/services/page-service'
-import { createWriter } from '../../core/events/writer'
-import { getContent, getPageMeta } from '../../core/page/loro-schema'
-import { createSearch } from '../../core/search'
-import type { SearchEngine, SearchResult } from '../../core/search/types'
-
-interface AppRuntime {
-  service: PageService
-  pages: PageMeta[]
-}
-
-let runtimePromise: Promise<AppRuntime> | null = null
-
-function getAppRuntime(): Promise<AppRuntime> {
-  if (!runtimePromise) {
-    runtimePromise = (async () => {
-      console.log('[init] starting database...')
-      const db = await getDatabase()
-      console.log('[init] database ready')
-      const writer = createWriter(db)
-      const service = createPageService(db, writer)
-      const pages = await service.listPages()
-      return { service, pages }
-    })().catch((err) => {
-      runtimePromise = null
-      throw err
-    })
-  }
-  return runtimePromise
-}
-
-export interface AppState {
+interface AppState {
   ready: boolean
   error: string | null
-  pages: PageMeta[]
-  activePageId: string | null
-  activeDoc: LoroDoc | null
-  activeContent: string
-  activeTitle: string
+  notes: SourceNote[]
+  activeNoteId: string | null
+  activeNote: SourceNote | null
+  activeNoteOffset: number
+  totalCount: number
+  recentering: boolean
+  sourcePath: string
+  sourceSelected: boolean
+  sourceWritable: boolean
+  sourceMode: 'direct' | 'download'
+  selectingSource: boolean
 }
 
-export interface AppActions {
-  createPage: (title?: string) => Promise<void>
-  selectPage: (id: string) => Promise<void>
-  updateContent: (content: string) => Promise<void>
-  updateTitle: (title: string) => Promise<void>
-  branchPage: () => Promise<void>
-  searchPages: (query: string) => SearchResult<PageMeta>[]
+interface AppActions {
+  selectNote: (note: SourceNote) => void
+  searchNotes: (query: string) => Promise<QuickNoteSearchHit[]>
+  jumpToSearchHit: (hit: QuickNoteSearchHit) => void
+  createNote: (request: QuickNoteCreateRequest) => Promise<SourceNote>
+  updateNote: (noteId: string, request: QuickNoteCreateRequest) => Promise<SourceNote>
+  selectSourceFile: () => Promise<void>
+  reloadSource: () => Promise<void>
 }
+
+const sourceBridge = createSourceBridge()
+const EMPTY_PATH = 'No file selected'
 
 export function useApp(): AppState & AppActions {
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [pages, setPages] = useState<PageMeta[]>([])
-  const [activePageId, setActivePageId] = useState<string | null>(null)
-  const [activeDoc, setActiveDoc] = useState<LoroDoc | null>(null)
-  const [activeContent, setActiveContent] = useState('')
-  const [activeTitle, setActiveTitle] = useState('')
+  const [parsed, setParsed] = useState<ParsedQuickNoteFile | null>(null)
+  const [notes, setNotes] = useState<SourceNote[]>([])
+  const [activeNoteId, setActiveNoteId] = useState<string | null>(null)
+  const [activeNoteOffset, setActiveNoteOffset] = useState(0)
+  const activeNoteIdRef = useRef<string | null>(null)
+  const activeNoteOffsetRef = useRef(0)
+  const [sourcePath, setSourcePath] = useState(EMPTY_PATH)
+  const [sourceWritable, setSourceWritable] = useState(false)
+  const [sourceMode, setSourceMode] = useState<'direct' | 'download'>('direct')
+  const [selectingSource, setSelectingSource] = useState(false)
 
-  const serviceRef = useRef<PageService | null>(null)
-  const searchRef = useRef<SearchEngine<PageMeta> | null>(null)
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const setActiveSelection = useCallback((note: SourceNote | null) => {
+    const id = note?.id ?? null
+    const offset = note?.offset ?? 0
+    activeNoteIdRef.current = id
+    activeNoteOffsetRef.current = offset
+    setActiveNoteId(id)
+    setActiveNoteOffset(offset)
+  }, [])
 
-  // Initialize
+  const applyParsed = useCallback(
+    (nextParsed: ParsedQuickNoteFile, preferredNoteId?: string | null) => {
+      setParsed(nextParsed)
+      setNotes(nextParsed.entries)
+
+      const resolvedPreferredId =
+        preferredNoteId === undefined ? activeNoteIdRef.current : preferredNoteId
+      let nextActive: SourceNote | null = null
+
+      if (preferredNoteId === null) {
+        nextActive = nextParsed.entries[0] ?? null
+      } else {
+        if (resolvedPreferredId) {
+          nextActive = nextParsed.entries.find((entry) => entry.id === resolvedPreferredId) ?? null
+        }
+
+        if (!nextActive) {
+          nextActive = getNoteByOffset(nextParsed.entries, activeNoteOffsetRef.current)
+        }
+
+        if (!nextActive) {
+          nextActive = nextParsed.entries[0] ?? null
+        }
+      }
+
+      setActiveSelection(nextActive)
+    },
+    [setActiveSelection],
+  )
+
+  const applySourceSummary = useCallback(
+    (summary: { path: string; writable: boolean; mode: 'direct' | 'download' }) => {
+      setSourcePath(summary.path || EMPTY_PATH)
+      setSourceWritable(summary.writable)
+      setSourceMode(summary.mode)
+    },
+    [],
+  )
+
   useEffect(() => {
     let cancelled = false
+
     ;(async () => {
       try {
-        const { service, pages: allPages } = await getAppRuntime()
-        serviceRef.current = service
+        const restored = await sourceBridge.restoreLastSelection()
+        if (cancelled) return
 
-        if (!cancelled) {
-          setPages(allPages)
-          searchRef.current = createSearch({
-            items: allPages,
-            getText: (p) => `${p.title} `,
-            getId: (p) => p.id,
-          })
-          setReady(true)
+        if (restored) {
+          applySourceSummary(restored.summary)
+          applyParsed(parseQuickNoteFile(restored.content, restored.summary.path), null)
+        } else {
+          setSourcePath(EMPTY_PATH)
+          setSourceWritable(false)
+          setSourceMode('direct')
         }
-      } catch (err) {
-        console.error('Failed to initialize database:', err)
-        if (!cancelled) {
-          setError(String(err))
-        }
+
+        setReady(true)
+      } catch (nextError) {
+        if (cancelled) return
+        setError(errorMessage(nextError))
       }
     })()
 
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [applyParsed, applySourceSummary])
 
-  const refreshPages = useCallback(async () => {
-    if (!serviceRef.current) return
-    const allPages = await serviceRef.current.listPages()
-    setPages(allPages)
-    searchRef.current?.update(allPages)
-  }, [])
+  const selectSourceFile = useCallback(async () => {
+    setSelectingSource(true)
+    setError(null)
 
-  const createPage = useCallback(async (title?: string) => {
-    if (!serviceRef.current) return
-    const { id, doc } = await serviceRef.current.createPage(title)
-    await refreshPages()
-    setActivePageId(id)
-    setActiveDoc(doc)
-    setActiveContent(getContent(doc))
-    setActiveTitle(getPageMeta(doc).title)
-  }, [refreshPages])
-
-  const selectPage = useCallback(async (id: string) => {
-    if (!serviceRef.current) return
-    const doc = await serviceRef.current.loadPage(id)
-    if (doc) {
-      setActivePageId(id)
-      setActiveDoc(doc)
-      setActiveContent(getContent(doc))
-      setActiveTitle(getPageMeta(doc).title)
+    try {
+      const selected = await sourceBridge.selectFile()
+      applySourceSummary(selected.summary)
+      applyParsed(parseQuickNoteFile(selected.content, selected.summary.path), null)
+    } catch (nextError) {
+      if (isSelectionCancelled(nextError)) return
+      setError(errorMessage(nextError))
+    } finally {
+      setSelectingSource(false)
     }
-  }, [])
+  }, [applyParsed, applySourceSummary])
 
-  const updateContent = useCallback(async (content: string) => {
-    if (!serviceRef.current || !activeDoc) return
-    setActiveContent(content)
+  const reloadSource = useCallback(async () => {
+    setError(null)
 
-    // Debounced save
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    saveTimerRef.current = setTimeout(async () => {
-      if (activeDoc && serviceRef.current) {
-        await serviceRef.current.updateContent(activeDoc, content)
+    try {
+      const selected = await sourceBridge.read()
+      applySourceSummary(selected.summary)
+      applyParsed(parseQuickNoteFile(selected.content, selected.summary.path))
+    } catch (nextError) {
+      setError(errorMessage(nextError))
+    }
+  }, [applyParsed, applySourceSummary])
+
+  const searchNotes = useCallback(
+    async (query: string) => {
+      if (!parsed) return []
+      return searchQuickNoteFile(parsed, query, 50)
+    },
+    [parsed],
+  )
+
+  const jumpToSearchHit = useCallback(
+    (hit: QuickNoteSearchHit) => {
+      setActiveSelection(hit.note)
+    },
+    [setActiveSelection],
+  )
+
+  const createNote = useCallback(
+    async (request: QuickNoteCreateRequest) => {
+      if (!parsed) {
+        throw new Error('Select a source file first.')
       }
-    }, 500)
-  }, [activeDoc])
 
-  const updateTitle = useCallback(async (title: string) => {
-    if (!serviceRef.current || !activeDoc) return
-    setActiveTitle(title)
-    await serviceRef.current.updateTitle(activeDoc, title)
-    await refreshPages()
-  }, [activeDoc, refreshPages])
+      const { parsed: nextParsed, entry } = appendQuickNoteEntry(parsed, request)
+      await sourceBridge.write(nextParsed.content)
+      applyParsed(nextParsed, entry.id)
+      return entry
+    },
+    [applyParsed, parsed],
+  )
 
-  const branchPage = useCallback(async () => {
-    if (!serviceRef.current || !activeDoc) return
-    const parentTitle = getPageMeta(activeDoc).title
-    const { id, doc } = await serviceRef.current.branchPage(activeDoc, `Branch of ${parentTitle}`)
-    await refreshPages()
-    setActivePageId(id)
-    setActiveDoc(doc)
-    setActiveContent(getContent(doc))
-    setActiveTitle(getPageMeta(doc).title)
-  }, [activeDoc, refreshPages])
+  const updateNote = useCallback(
+    async (noteId: string, request: QuickNoteCreateRequest) => {
+      if (!parsed) {
+        throw new Error('Select a source file first.')
+      }
 
-  const searchPages = useCallback((query: string): SearchResult<PageMeta>[] => {
-    if (!searchRef.current) return []
-    return searchRef.current.search(query)
-  }, [])
+      const { parsed: nextParsed, entry } = updateQuickNoteEntry(parsed, noteId, request)
+      await sourceBridge.write(nextParsed.content)
+      applyParsed(nextParsed, entry.id)
+      return entry
+    },
+    [applyParsed, parsed],
+  )
+
+  const activeNote = useMemo(
+    () => (activeNoteId ? notes.find((note) => note.id === activeNoteId) ?? null : null),
+    [activeNoteId, notes],
+  )
+
+  const selectNote = useCallback(
+    (note: SourceNote) => {
+      setActiveSelection(note)
+    },
+    [setActiveSelection],
+  )
 
   return {
     ready,
     error,
-    pages,
-    activePageId,
-    activeDoc,
-    activeContent,
-    activeTitle,
-    createPage,
-    selectPage,
-    updateContent,
-    updateTitle,
-    branchPage,
-    searchPages,
+    notes,
+    activeNoteId: activeNote?.id ?? null,
+    activeNote,
+    activeNoteOffset,
+    totalCount: notes.length,
+    recentering: false,
+    sourcePath,
+    sourceSelected: parsed !== null,
+    sourceWritable,
+    sourceMode,
+    selectingSource,
+    selectNote,
+    searchNotes,
+    jumpToSearchHit,
+    createNote,
+    updateNote,
+    selectSourceFile,
+    reloadSource,
   }
+}
+
+function getNoteByOffset(notes: SourceNote[], offset: number): SourceNote | null {
+  if (notes.length === 0) return null
+  if (!Number.isFinite(offset)) return notes[0]
+  const index = Math.min(Math.max(Math.round(offset), 0), notes.length - 1)
+  return notes[index] ?? null
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function isSelectionCancelled(error: unknown): boolean {
+  if (error instanceof SourceSelectionCancelledError) return true
+  const message = errorMessage(error).toLowerCase()
+  return message.includes('cancel') || message.includes('aborted') || message.includes('abort')
 }

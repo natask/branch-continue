@@ -1,195 +1,243 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useApp } from './ui/hooks/use-app'
-import { Editor } from './ui/components/Editor'
+import { useEditorSession } from './ui/hooks/use-editor-session'
 import { SearchModal } from './ui/components/SearchModal'
 import { TimeMachine } from './ui/components/TimeMachine'
+import { Editor } from './ui/components/Editor'
+import { formatNotePosition, orderNotes, type NoteSortMode } from './ui/lib/note-order'
+import type { QuickNoteSearchHit, SourceNote } from './core/quicknote/types'
 
 export default function App() {
-  const {
-    ready,
-    error,
-    pages,
-    activePageId,
-    activeContent,
-    activeTitle,
-    createPage,
-    selectPage,
-    updateContent,
-    updateTitle,
-    branchPage,
-    searchPages,
-  } = useApp()
+  const app = useApp()
 
-  const [searchOpen, setSearchOpen] = useState(false)
-  const [timeMachineOpen, setTimeMachineOpen] = useState(false)
-  const [branchToast, setBranchToast] = useState(false)
-  const emptyRef = useRef<HTMLDivElement>(null)
-
-  // Global keyboard shortcuts
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      // Cmd+K — search
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault()
-        setSearchOpen((prev) => !prev)
-        return
-      }
-
-      // Escape — close search, or toggle Time Machine
-      if (e.key === 'Escape') {
-        if (searchOpen) {
-          setSearchOpen(false)
-          return
-        }
-        if (timeMachineOpen) {
-          setTimeMachineOpen(false)
-          return
-        }
-        if (pages.length > 0) {
-          setTimeMachineOpen(true)
-        }
-        return
-      }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [searchOpen, timeMachineOpen, pages.length])
-
-  // Auto-focus empty state
-  useEffect(() => {
-    if (ready && !activePageId && emptyRef.current) {
-      emptyRef.current.focus()
-    }
-  }, [ready, activePageId])
-
-  const handleSearchSelect = useCallback(
-    (id: string) => {
-      selectPage(id)
-      setSearchOpen(false)
-      setTimeMachineOpen(false)
-    },
-    [selectPage],
-  )
-
-  const handleTimeMachineSelect = useCallback(
-    (id: string) => {
-      selectPage(id)
-      setTimeMachineOpen(false)
-    },
-    [selectPage],
-  )
-
-  const handleBranch = useCallback(async () => {
-    await branchPage()
-    setBranchToast(true)
-    setTimeout(() => setBranchToast(false), 1400)
-  }, [branchPage])
-
-  // Empty state: first keystroke creates a page
-  const handleEmptyKeyDown = useCallback(
-    async (e: React.KeyboardEvent) => {
-      if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        e.preventDefault()
-        const char = e.key
-        await createPage()
-        await updateContent(char)
-      }
-    },
-    [createPage, updateContent],
-  )
-
-  if (error) {
+  if (app.error) {
     return (
-      <div className="loading">
-        <div style={{ textAlign: 'center', maxWidth: 500 }}>
-          <p style={{ marginBottom: 8 }}>Database failed to initialize.</p>
-          <pre
-            style={{
-              textAlign: 'left',
-              fontSize: '0.75rem',
-              background: '#131825',
-              padding: 12,
-              borderRadius: 6,
-              overflow: 'auto',
-              marginBottom: 12,
-              color: '#5a6580',
-            }}
-          >
-            {error}
-          </pre>
-          <button
-            className="btn-create"
-            onClick={async () => {
-              const dbs = await indexedDB.databases()
-              for (const db of dbs) {
-                if (db.name) indexedDB.deleteDatabase(db.name)
-              }
-              window.location.reload()
-            }}
-          >
-            Clear Data &amp; Reload
-          </button>
+      <div className="error-screen">
+        <div className="error-panel">
+          <p className="error-title">File operation failed.</p>
+          <pre className="error-text">{app.error}</pre>
+          <p className="error-hint">
+            Current source: <code>{app.sourcePath}</code>
+          </p>
         </div>
       </div>
     )
   }
 
-  if (!ready) {
-    return <div className="loading">loading</div>
+  if (!app.ready) {
+    return <div className="loading">loading file session</div>
   }
+
+  if (!app.sourceSelected) {
+    return <SourceSelectionScreen selectingSource={app.selectingSource} selectSourceFile={app.selectSourceFile} />
+  }
+
+  return <LoadedSourceApp app={app} />
+}
+
+function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
+  const {
+    notes,
+    activeNoteId,
+    totalCount,
+    recentering,
+    sourcePath,
+    sourceWritable,
+    selectingSource,
+    selectNote,
+    searchNotes,
+    jumpToSearchHit,
+    createNote,
+    updateNote,
+    selectSourceFile,
+    reloadSource,
+  } = app
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [sortMode, setSortMode] = useState<NoteSortMode>(resolveInitialSortMode)
+
+  const editorSession = useEditorSession({
+    sourceSelected: true,
+    createNote,
+    updateNote,
+  })
+
+  const orderedNotes = useMemo(() => orderNotes(notes, sortMode), [notes, sortMode])
+  const currentEditorNoteId = editorSession.editor?.source?.id ?? activeNoteId
+  const editorPositionLabel = useMemo(
+    () => formatNotePosition(orderedNotes, currentEditorNoteId, totalCount),
+    [currentEditorNoteId, orderedNotes, totalCount],
+  )
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const shortcut = event.metaKey || event.ctrlKey
+      const key = event.key.toLowerCase()
+
+      if (editorSession.editor && shortcut && key === 'z' && !event.shiftKey) {
+        event.preventDefault()
+        editorSession.handleUndo()
+        return
+      }
+
+      if (editorSession.editor && shortcut && ((key === 'z' && event.shiftKey) || key === 'y')) {
+        event.preventDefault()
+        editorSession.handleRedo()
+        return
+      }
+
+      if (shortcut && key === 'k') {
+        const target = event.target as HTMLElement
+        if (target.tagName === 'TEXTAREA') return
+        event.preventDefault()
+        setSearchOpen((current) => !current)
+        return
+      }
+
+      if (event.key !== 'Escape') return
+
+      if (searchOpen) {
+        event.preventDefault()
+        setSearchOpen(false)
+        return
+      }
+
+      if (editorSession.editor) {
+        event.preventDefault()
+        editorSession.closeEditor()
+        return
+      }
+
+      const boundary = orderedNotes[0]
+      if (!boundary) return
+      event.preventDefault()
+      selectNote(boundary)
+    }
+
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [editorSession, orderedNotes, searchOpen, selectNote])
+
+  useEffect(() => {
+    if (orderedNotes.length === 0) return
+    if (activeNoteId && orderedNotes.some((note) => note.id === activeNoteId)) return
+    selectNote(orderedNotes[0])
+  }, [activeNoteId, orderedNotes, selectNote])
+
+  const handleSearchSelect = useCallback(
+    (hit: QuickNoteSearchHit) => {
+      jumpToSearchHit(hit)
+      setSearchOpen(false)
+      editorSession.openNoteEditor(hit.note)
+    },
+    [editorSession, jumpToSearchHit],
+  )
+
+  const handleOpenNote = useCallback(
+    (note: SourceNote) => {
+      editorSession.openNoteEditor(note)
+    },
+    [editorSession],
+  )
+
+  const handleBranch = useCallback(
+    (_from: SourceNote) => {
+      editorSession.openBranchEditor()
+    },
+    [editorSession],
+  )
 
   return (
     <div className="app">
-      {activePageId ? (
-        <Editor
-          title={activeTitle}
-          content={activeContent}
-          onTitleChange={updateTitle}
-          onContentChange={updateContent}
-          onBranch={handleBranch}
-        />
-      ) : (
-        <div className="empty-state" ref={emptyRef} tabIndex={0} onKeyDown={handleEmptyKeyDown}>
-          <h1>Branch Continue</h1>
-          <p>start typing to create a page</p>
+      <header className="topbar">
+        <div className="topbar-copy">
+          <h1 className="topbar-title">Branch Continue</h1>
+          <p className="topbar-path">{sourcePath}</p>
         </div>
-      )}
 
-      {/* Shortcut hints — editor mode only */}
-      {activePageId && !timeMachineOpen && !searchOpen && (
-        <div className="editor-hints">
-          <span>
-            <kbd>&#x21E7;&#x21B5;</kbd> branch
-          </span>
-          <span>
-            <kbd>esc</kbd> pages
-          </span>
-          <span>
-            <kbd>&#x2318;K</kbd> search
-          </span>
+        <div className="topbar-meta">
+          <label className="topbar-sort" htmlFor="sort-mode">
+            <span>Sort</span>
+            <select
+              id="sort-mode"
+              value={sortMode}
+              onChange={(event) => {
+                const nextSortMode = event.target.value as NoteSortMode
+                setSortMode(nextSortMode)
+              }}
+            >
+              <option value="latest">Latest first</option>
+              <option value="oldest">Oldest first</option>
+            </select>
+          </label>
+          <span className="meta-pill">{sourceWritable ? 'Direct Auto-Save' : 'Download Auto-Save'}</span>
+          <button className="topbar-search" onClick={() => void selectSourceFile()} type="button">
+            {selectingSource ? 'Selecting...' : 'Select File'}
+          </button>
+          <button className="topbar-search" onClick={() => void reloadSource()} type="button">
+            Reload
+          </button>
+          <button className="topbar-search" onClick={editorSession.openBranchEditor} type="button">
+            +
+          </button>
+          <button className="topbar-search" onClick={() => setSearchOpen(true)}>
+            Search <kbd>⌘K</kbd>
+          </button>
         </div>
-      )}
+      </header>
 
-      {/* Branch toast */}
-      {branchToast && <div className="branch-toast">branched</div>}
+      <TimeMachine
+        notes={notes}
+        activeNoteId={activeNoteId}
+        sortMode={sortMode}
+        totalCount={totalCount}
+        recentering={recentering}
+        navigationEnabled={!searchOpen && !editorSession.editorOpen}
+        onSelect={selectNote}
+        onOpen={handleOpenNote}
+        onBranch={handleBranch}
+      />
 
-      {/* Time Machine navigator */}
-      {timeMachineOpen && (
-        <TimeMachine
-          pages={pages}
-          activePageId={activePageId}
-          onSelect={handleTimeMachineSelect}
-          onClose={() => setTimeMachineOpen(false)}
-        />
-      )}
-
-      {/* Search */}
       <SearchModal
         open={searchOpen}
         onClose={() => setSearchOpen(false)}
-        onSearch={searchPages}
+        onSearch={searchNotes}
         onSelect={handleSearchSelect}
       />
+
+      {editorSession.editor && (
+        <Editor session={editorSession} positionLabel={editorPositionLabel} />
+      )}
     </div>
   )
+}
+
+function SourceSelectionScreen({
+  selectingSource,
+  selectSourceFile,
+}: {
+  selectingSource: boolean
+  selectSourceFile: () => Promise<void>
+}) {
+  return (
+    <div className="app">
+      <div className="empty-panel">
+        <div>
+          <p className="empty-title">Select a source file to start.</p>
+          <p className="empty-copy">
+            Works in browser and Tauri mobile. If direct writes are unavailable, auto-save will
+            download an updated copy.
+          </p>
+          <button className="btn-primary" onClick={() => void selectSourceFile()} type="button">
+            {selectingSource ? 'Selecting...' : 'Choose File'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function resolveInitialSortMode(): NoteSortMode {
+  if (typeof window === 'undefined') return 'latest'
+  const start = new URLSearchParams(window.location.search).get('start')
+  return start?.toLowerCase() === 'oldest' ? 'oldest' : 'latest'
 }
