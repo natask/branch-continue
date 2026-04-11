@@ -455,11 +455,11 @@
   <div class="shell">
     <aside class="panel sidebar">
       <div class="eyebrow">Schema Workbench</div>
-      <h1>One card. Three storage shapes.</h1>
+      <h1>One card. Three actual integration feeds.</h1>
       <p class="lede">
         Start from a single canonical card model. Project it into <code>loro</code> for editing,
-        <code>search</code> for retrieval, and <code>omni</code> for unified pulls across UI,
-        agents, and future tooling.
+        <code>@moa.os/search</code> for ranking and matching, and <code>omnitab</code> for
+        command presentation.
       </p>
 
       <div class="control-block">
@@ -483,11 +483,11 @@
           </li>
           <li class="rule-item">
             <strong>Search owns flattened recall</strong>
-            <span>Plaintext, tags, aliases, filters, and ranking hints only. No canonical truth lives here.</span>
+            <span>Derived text, aliases, and ranking hints only. No canonical truth lives here.</span>
           </li>
           <li class="rule-item">
-            <strong>Omni owns cross-surface retrieval</strong>
-            <span>One normalized record for commands, sidebars, agents, and future cross-entity joins.</span>
+            <strong>OmniTab owns command interaction</strong>
+            <span>It consumes command items and runs actions. It does not own persistence or canonical data.</span>
           </li>
         </ul>
       </div>
@@ -535,8 +535,8 @@
           <button class="tab-button active" data-tab="overview">Overview</button>
           <button class="tab-button" data-tab="loro">Loro</button>
           <button class="tab-button" data-tab="search">Search</button>
-          <button class="tab-button" data-tab="omni">Omni</button>
-          <button class="tab-button" data-tab="seeds">Seed SQL</button>
+          <button class="tab-button" data-tab="omnitab">OmniTab</button>
+          <button class="tab-button" data-tab="seeds">Seed Feeds</button>
         </div>
 
         <div class="tab-panel active" id="tab-overview">
@@ -563,7 +563,8 @@
 
           <div class="callout">
             The important design decision is this: the app edits a <strong>card</strong>, not a
-            search row and not an omni row. Search and omni should be derived materialized views.
+            search item and not an omnitab command. Search and omnitab should be derived
+            projections.
           </div>
         </div>
 
@@ -601,8 +602,8 @@
             <div>
               <h2>Search Projection</h2>
               <p>
-                Search gets a flattened plaintext document plus filter fields and ranking hints.
-                It should be cheap to rebuild whenever snapshots or omni records change.
+                Search gets derived in-memory items plus a <code>createSearch</code> config. It
+                should be cheap to rebuild from the current page state.
               </p>
             </div>
           </div>
@@ -619,18 +620,19 @@
           </div>
 
           <div class="callout">
-            Search should index <strong>title + summary + body plaintext + tags + aliases</strong>.
-            That is enough for the first useful version, and it keeps the ranking model legible.
+            Search should feed <strong>title + summary + body plaintext + tags + aliases</strong>
+            into <code>getText</code> and <code>getAliases</code>. That is enough for the first
+            useful version, and it matches the actual package contract.
           </div>
         </div>
 
-        <div class="tab-panel" id="tab-omni">
+        <div class="tab-panel" id="tab-omnitab">
           <div class="section-head">
             <div>
-              <h2>Omni Record</h2>
+              <h2>OmniTab Command Feed</h2>
               <p>
-                Omni is the normalized read model. It is where commands, agents, sidebars, and
-                future non-page entities can all pull from one contract.
+                OmniTab consumes <code>CommandItem[]</code>. For page search and actions, derive
+                commands from your current cards and hand them to the component.
               </p>
             </div>
           </div>
@@ -638,43 +640,45 @@
           <div class="schema-grid">
             <div class="schema-block">
               <h3>Schema Contract</h3>
-              <pre><code id="omniInterface"></code></pre>
+              <pre><code id="omnitabInterface"></code></pre>
             </div>
             <div class="schema-block">
-              <h3>Omni Seed Payload</h3>
-              <pre><code id="omniSeed"></code></pre>
+              <h3>OmniTab Seed Payload</h3>
+              <pre><code id="omnitabSeed"></code></pre>
             </div>
           </div>
 
           <div class="callout">
-            Omni should not try to mirror every Loro container. It should keep the fields that
-            other systems need to pull without understanding CRDT structure.
+            Current package reality: <code>OmniTab.tsx</code> reads
+            <code>aliases?: string[]</code> through a cast even though <code>CommandItem</code>
+            does not declare it. If you want aliases in omnitab search, use a local extended type
+            or patch the upstream type.
           </div>
         </div>
 
         <div class="tab-panel" id="tab-seeds">
           <div class="section-head">
             <div>
-              <h2>Seed Tables</h2>
+              <h2>Seed Feed Builders</h2>
               <p>
-                These are suggested bootstrap rows if you want to materialize a first local dataset
-                and then derive search from omni or from snapshots.
+                These are practical starter feeds for <code>createSearch</code> and
+                <code>OmniTab</code>, built directly from your page cards.
               </p>
             </div>
           </div>
 
           <div class="sql-grid">
             <div class="schema-block">
-              <h3>Suggested Omni Table</h3>
-              <pre><code id="omniSql"></code></pre>
+              <h3>Search Wiring</h3>
+              <pre><code id="searchConfig"></code></pre>
             </div>
             <div class="schema-block">
-              <h3>Suggested Search Table</h3>
-              <pre><code id="searchSql"></code></pre>
+              <h3>OmniTab Wiring</h3>
+              <pre><code id="omnitabConfig"></code></pre>
             </div>
             <div class="schema-block">
-              <h3>Seed Inserts</h3>
-              <pre><code id="seedInserts"></code></pre>
+              <h3>Seed Feed Payloads</h3>
+              <pre><code id="seedFeeds"></code></pre>
             </div>
             <div class="schema-block">
               <h3>Pull Order</h3>
@@ -684,8 +688,8 @@
 
           <p class="footer-note">
             Practical rule: read from <code>loro</code> when editing, read from
-            <code>omni</code> when listing or commanding, and rebuild <code>search</code> from the
-            current materialized state.
+            <code>search items</code> when ranking, and read from <code>omnitab commands</code>
+            when presenting command UI.
           </p>
         </div>
       </section>
@@ -707,8 +711,8 @@
             <p>Fast recall, ranking, fuzzy match, filterable text retrieval, no ownership of truth.</p>
           </div>
           <div class="matrix-cell">
-            <h3>Omni</h3>
-            <p>Normalized pull surface for lists, commands, agents, and any entity beyond pages.</p>
+            <h3>OmniTab</h3>
+            <p>Command palette UI over derived command items, with bang filters, recency, and actions.</p>
           </div>
         </div>
       </section>
@@ -772,20 +776,17 @@
   }
 }`
 
-    const searchInterface = `interface SearchDocument {
+    const searchInterface = `interface SearchCardItem {
   id: string
-  entityType: 'card'
-  source: 'loro'
   title: string
+  category: 'page' | 'branch' | 'agent_note'
   summary: string
   bodyText: string
-  preview: string
   tags: string[]
   aliases: string[]
-  status: 'active' | 'archived'
   kind: 'page' | 'branch' | 'agent_note'
-  branchRootId: string
   parentId?: string
+  branchRootId: string
   updatedAt: number
   searchText: string
   rankHints: {
@@ -793,109 +794,66 @@
     recencyWeight: number
     branchDepth: number
   }
-}`
+}
 
-    const omniInterface = `interface OmniRecord {
+const engine = createSearch({
+  items,
+  getText: item => item.searchText,
+  getAliases: item => item.aliases,
+  getId: item => item.id,
+  frecency: { storageKey: 'branch-continue:search', maxEntries: 200 },
+})`
+
+    const omnitabInterface = `interface BranchCommandItem extends CommandItem {
+  aliases?: string[]
+  source: {
+    type: 'page'
+    pageId: string
+  }
+}
+
+interface CommandItem {
   id: string
-  entityType: 'card'
-  canonicalId: string
-  sourceKind: 'loro_snapshot'
-  title: string
-  summary: string
-  bodyMarkdown: string
-  bodyText: string
-  tags: string[]
-  aliases: string[]
-  links: Array<{
-    targetId: string
-    relation: 'branch_of' | 'references' | 'supports'
-    label?: string
-  }>
-  lineage: {
-    parentId?: string
-    branchRootId: string
-    depth: number
-  }
-  facets: {
-    kind: 'page' | 'branch' | 'agent_note'
-    status: 'active' | 'archived'
-    stage: 'seed' | 'working' | 'stable'
-    authorType: 'user' | 'agent'
-  }
-  provenance: {
-    primaryStore: 'loro'
-    snapshotTable: 'page_snapshots'
-    eventStream: string
-    actorId: string
-  }
-  timestamps: {
-    createdAt: number
-    updatedAt: number
-  }
+  label: string
+  category: string
+  kind: 'executable' | 'selectable'
+  action: () => void
+  isActive?: boolean
+  hint?: string
 }`
 
-    const omniSql = `CREATE TABLE omni_records (
-  id TEXT PRIMARY KEY,
-  entity_type TEXT NOT NULL,
-  canonical_id TEXT NOT NULL,
-  source_kind TEXT NOT NULL,
-  title TEXT NOT NULL,
-  summary TEXT NOT NULL,
-  body_markdown TEXT NOT NULL,
-  body_text TEXT NOT NULL,
-  tags_json TEXT NOT NULL,
-  aliases_json TEXT NOT NULL,
-  links_json TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  status TEXT NOT NULL,
-  stage TEXT NOT NULL,
-  author_type TEXT NOT NULL,
-  parent_id TEXT,
-  branch_root_id TEXT NOT NULL,
-  depth INTEGER NOT NULL DEFAULT 0,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
+    const searchConfig = `const searchItems = cards.map(buildSearchItem)
 
-CREATE INDEX idx_omni_kind ON omni_records(kind);
-CREATE INDEX idx_omni_branch_root ON omni_records(branch_root_id);
-CREATE INDEX idx_omni_updated ON omni_records(updated_at);`
+const engine = createSearch({
+  items: searchItems,
+  getText: item => item.searchText,
+  getAliases: item => item.aliases,
+  getId: item => item.id,
+  frecency: { storageKey: 'branch-continue:search', maxEntries: 200 },
+})`
 
-    const searchSql = `CREATE TABLE search_documents (
-  id TEXT PRIMARY KEY,
-  entity_type TEXT NOT NULL,
-  source TEXT NOT NULL,
-  title TEXT NOT NULL,
-  summary TEXT NOT NULL,
-  body_text TEXT NOT NULL,
-  preview TEXT NOT NULL,
-  tags_json TEXT NOT NULL,
-  aliases_json TEXT NOT NULL,
-  status TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  parent_id TEXT,
-  branch_root_id TEXT NOT NULL,
-  updated_at INTEGER NOT NULL,
-  search_text TEXT NOT NULL,
-  rank_hints_json TEXT NOT NULL
-);
+    const omnitabConfig = `const commands = cards.flatMap(card => buildOmniTabCommands(card))
 
-CREATE INDEX idx_search_kind ON search_documents(kind);
-CREATE INDEX idx_search_status ON search_documents(status);
-CREATE INDEX idx_search_updated ON search_documents(updated_at);`
+<OmniTab
+  isOpen={isOpen}
+  onClose={onClose}
+  commands={commands}
+  placeholder="Open page or run command..."
+  storageKey="omnitab:recency"
+/>`
 
     const pullOrder = `1. Editing surface
    - load page snapshot
    - hydrate LoroDoc
    - read/write content and metadata there
 
-2. Materialized reads
-   - project current card into omni_records
-   - use omni_records for sidebar, command palette, agent pulls
+2. Search feed
+   - derive SearchCardItem[] from current cards
+   - call createSearch with getText + getAliases + getId
 
-3. Search refresh
-   - project omni or snapshot state into search_documents
-   - build fuzzy/exact index from title, summary, bodyText, tags, aliases`
+3. OmniTab feed
+   - derive BranchCommandItem[] from current cards + app actions
+   - hand commands into <OmniTab />`
 
     const baseSeeds = [
       {
@@ -974,7 +932,7 @@ Agents should append notes as attributable stack entries.
 - notes do not silently replace user text
 
 ## Implication
-The omni layer should expose agent-authored records beside pages.`,
+Search and omnitab feeds should be able to surface agent-authored notes beside pages.`,
         tags: ['agent', 'notes', 'events'],
         aliases: ['stack protocol', 'agent notes'],
         createdAt: Date.parse('2026-04-11T09:31:00.000Z'),
@@ -1010,11 +968,11 @@ The omni layer should expose agent-authored records beside pages.`,
       loroSeed: document.getElementById('loroSeed'),
       searchInterface: document.getElementById('searchInterface'),
       searchSeed: document.getElementById('searchSeed'),
-      omniInterface: document.getElementById('omniInterface'),
-      omniSeed: document.getElementById('omniSeed'),
-      omniSql: document.getElementById('omniSql'),
-      searchSql: document.getElementById('searchSql'),
-      seedInserts: document.getElementById('seedInserts'),
+      omnitabInterface: document.getElementById('omnitabInterface'),
+      omnitabSeed: document.getElementById('omnitabSeed'),
+      searchConfig: document.getElementById('searchConfig'),
+      omnitabConfig: document.getElementById('omnitabConfig'),
+      seedFeeds: document.getElementById('seedFeeds'),
       pullOrder: document.getElementById('pullOrder'),
     }
 
@@ -1087,18 +1045,15 @@ The omni layer should expose agent-authored records beside pages.`,
 
       return {
         id: seed.id,
-        entityType: 'card',
-        source: 'loro',
         title: seed.title,
+        category: seed.kind,
         summary: seed.summary,
         bodyText,
-        preview: bodyText.slice(0, 180),
         tags: seed.tags,
         aliases: seed.aliases,
-        status: seed.status,
         kind: seed.kind,
-        branchRootId: seed.branchRootId,
         parentId: seed.parentId,
+        branchRootId: seed.branchRootId,
         updatedAt: seed.updatedAt,
         searchText,
         rankHints: {
@@ -1109,76 +1064,51 @@ The omni layer should expose agent-authored records beside pages.`,
       }
     }
 
-    function buildOmni(seed) {
-      const bodyText = stripMarkdown(seed.bodyMarkdown)
-      return {
-        id: `omni:${seed.id}`,
-        entityType: 'card',
-        canonicalId: seed.id,
-        sourceKind: 'loro_snapshot',
-        title: seed.title,
-        summary: seed.summary,
-        bodyMarkdown: seed.bodyMarkdown,
-        bodyText,
-        tags: seed.tags,
-        aliases: seed.aliases,
-        links: seed.links,
-        lineage: {
-          parentId: seed.parentId,
-          branchRootId: seed.branchRootId,
-          depth: computeDepth(seed),
+    function buildOmniTab(seed) {
+      return [
+        {
+          id: `open:${seed.id}`,
+          label: seed.title,
+          category: 'Open Page',
+          kind: 'executable',
+          hint: seed.kind,
+          aliases: [...seed.aliases, ...seed.tags],
+          action: '[bind openPage(seed.id) in app]',
+          source: { type: 'page', pageId: seed.id },
         },
-        facets: {
-          kind: seed.kind,
-          status: seed.status,
-          stage: seed.stage,
-          authorType: seed.author.type,
+        {
+          id: `branch:${seed.id}`,
+          label: `Branch from ${seed.title}`,
+          category: 'Page Action',
+          kind: 'executable',
+          hint: 'Cmd+B',
+          aliases: [`branch ${seed.title}`, ...seed.aliases],
+          action: '[bind branchPage(seed.id) in app]',
+          source: { type: 'page', pageId: seed.id },
         },
-        provenance: {
-          primaryStore: 'loro',
-          snapshotTable: 'page_snapshots',
-          eventStream: `page:${seed.id}`,
-          actorId: seed.author.id,
+        {
+          id: `focus:${seed.id}`,
+          label: `Focus ${seed.tags[0] ?? 'page'} context`,
+          category: 'Filter',
+          kind: 'selectable',
+          isActive: seed.stage === 'working',
+          hint: seed.stage,
+          aliases: seed.tags,
+          action: '[bind filter toggle in app]',
+          source: { type: 'page', pageId: seed.id },
         },
-        timestamps: {
-          createdAt: seed.createdAt,
-          updatedAt: seed.updatedAt,
-        },
-      }
+      ]
     }
 
-    function sqlEscape(value) {
-      return String(value).replaceAll("'", "''")
-    }
-
-    function buildSeedInserts() {
+    function buildSeedFeeds() {
       return seeds.map((seed) => {
-        const omni = buildOmni(seed)
         const search = buildSearch(seed)
+        const omnitab = buildOmniTab(seed)
         return [
           `-- ${seed.title}`,
-          `INSERT INTO omni_records (`,
-          `  id, entity_type, canonical_id, source_kind, title, summary, body_markdown, body_text,`,
-          `  tags_json, aliases_json, links_json, kind, status, stage, author_type,`,
-          `  parent_id, branch_root_id, depth, created_at, updated_at`,
-          `) VALUES (`,
-          `  '${sqlEscape(omni.id)}', 'card', '${sqlEscape(omni.canonicalId)}', '${sqlEscape(omni.sourceKind)}',`,
-          `  '${sqlEscape(omni.title)}', '${sqlEscape(omni.summary)}', '${sqlEscape(omni.bodyMarkdown)}', '${sqlEscape(omni.bodyText)}',`,
-          `  '${sqlEscape(JSON.stringify(omni.tags))}', '${sqlEscape(JSON.stringify(omni.aliases))}', '${sqlEscape(JSON.stringify(omni.links))}',`,
-          `  '${sqlEscape(omni.facets.kind)}', '${sqlEscape(omni.facets.status)}', '${sqlEscape(omni.facets.stage)}', '${sqlEscape(omni.facets.authorType)}',`,
-          `  ${omni.lineage.parentId ? `'${sqlEscape(omni.lineage.parentId)}'` : 'NULL'}, '${sqlEscape(omni.lineage.branchRootId)}', ${omni.lineage.depth}, ${omni.timestamps.createdAt}, ${omni.timestamps.updatedAt}`,
-          `);`,
+          `searchItem = ${pretty(search)}`,
           ``,
-          `INSERT INTO search_documents (`,
-          `  id, entity_type, source, title, summary, body_text, preview,`,
-          `  tags_json, aliases_json, status, kind, parent_id, branch_root_id, updated_at, search_text, rank_hints_json`,
-          `) VALUES (`,
-          `  '${sqlEscape(search.id)}', 'card', 'loro', '${sqlEscape(search.title)}', '${sqlEscape(search.summary)}',`,
-          `  '${sqlEscape(search.bodyText)}', '${sqlEscape(search.preview)}', '${sqlEscape(JSON.stringify(search.tags))}',`,
-          `  '${sqlEscape(JSON.stringify(search.aliases))}', '${sqlEscape(search.status)}', '${sqlEscape(search.kind)}',`,
-          `  ${search.parentId ? `'${sqlEscape(search.parentId)}'` : 'NULL'}, '${sqlEscape(search.branchRootId)}', ${search.updatedAt},`,
-          `  '${sqlEscape(search.searchText)}', '${sqlEscape(JSON.stringify(search.rankHints))}'`,
-          `);`,
+          `omnitabCommands = ${pretty(omnitab)}`,
         ].join('\n')
       }).join('\n\n')
     }
@@ -1218,7 +1148,7 @@ The omni layer should expose agent-authored records beside pages.`,
       const seed = seeds.find((item) => item.id === currentId) || seeds[0]
       const loro = buildLoro(seed)
       const search = buildSearch(seed)
-      const omni = buildOmni(seed)
+      const omnitab = buildOmniTab(seed)
 
       elements.heroTitle.textContent = seed.title
       elements.heroCopy.textContent = seed.summary
@@ -1236,11 +1166,11 @@ The omni layer should expose agent-authored records beside pages.`,
       elements.loroSeed.textContent = pretty(loro)
       elements.searchInterface.textContent = searchInterface
       elements.searchSeed.textContent = pretty(search)
-      elements.omniInterface.textContent = omniInterface
-      elements.omniSeed.textContent = pretty(omni)
-      elements.omniSql.textContent = omniSql
-      elements.searchSql.textContent = searchSql
-      elements.seedInserts.textContent = buildSeedInserts()
+      elements.omnitabInterface.textContent = omnitabInterface
+      elements.omnitabSeed.textContent = pretty(omnitab)
+      elements.searchConfig.textContent = searchConfig
+      elements.omnitabConfig.textContent = omnitabConfig
+      elements.seedFeeds.textContent = buildSeedFeeds()
       elements.pullOrder.textContent = pullOrder
       renderSeedOptions()
     }

@@ -35,8 +35,12 @@ This means source gating is applied at the page layer, not per-control.
 
 - `use-app.ts`
   - App state coordinator for notes, active selection, source status.
+  - Maintains lifecycle state: `booting | no_source | ready | error`.
   - Calls parse/search/update functions and source bridge.
   - Owns `activeNoteId` and source lifecycle.
+- `use-app-selection.ts`
+  - Pure selection reconciliation logic used by `use-app`.
+  - Determines active note from preferred id, current id, and offset fallback.
 - `use-editor-session.ts`
   - Editor session state (open/close, branch, undo/redo wiring).
   - Composes:
@@ -95,7 +99,9 @@ This means source gating is applied at the page layer, not per-control.
 
 ## 5) Identity and Ordering Semantics
 
-- `SourceNote.id` is currently line-derived in parser (`qn-${startLine}`).
+- `SourceNote.id` is timestamp-based when a timestamp exists (`qn-ts-...`).
+  - Duplicate timestamps are disambiguated with a deterministic suffix.
+  - Non-timestamp notes fall back to line-based ids.
 - `SourceNote.offset` is newest-first relative position at parse time.
 - UI ordering is not assumed from parser output; `orderNotes(notes, sortMode)` is the display source of truth.
 
@@ -106,7 +112,7 @@ Important invariant:
 
 ## 6) Known Sharp Edges
 
-- `SourceNote.id` is line-based; structural edits that shift lines can change ids.
+- Notes without timestamps still use line-based fallback ids.
 - `activeNoteOffset` fallback is index-like and depends on parse-time offset semantics.
 - Any effect that restores source or reparses file must not be keyed by fast-changing selection state.
 
@@ -132,6 +138,7 @@ After:
 - `applyParsed` reads `activeNoteIdRef` and `activeNoteOffsetRef`.
 - Startup restore is stable and does not re-run from card navigation.
 - All selection writes flow through `setActiveSelection`.
+- Lifecycle is explicit (`booting | no_source | ready | error`) instead of an implicit `ready` boolean only.
 
 ### `note-order.ts` + `TimeMachine.tsx`
 

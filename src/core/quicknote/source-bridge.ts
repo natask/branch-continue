@@ -75,10 +75,31 @@ export interface SourceBridge {
   read(): Promise<SelectedFileResult>
   write(content: string): Promise<void>
   summary(): SourceSummary | null
+  startWatching(onChanged: () => void): void
+  stopWatching(): void
 }
+
+const FILE_WATCH_INTERVAL_MS = 2000
 
 export function createSourceBridge(): SourceBridge {
   let active: ActiveSource | null = null
+  let watchTimer: ReturnType<typeof setInterval> | null = null
+  let lastKnownModified: number | null = null
+  let lastKnownContentHash: string | null = null
+
+  function stopWatchTimer() {
+    if (watchTimer !== null) {
+      clearInterval(watchTimer)
+      watchTimer = null
+    }
+    lastKnownModified = null
+    lastKnownContentHash = null
+  }
+
+  async function simpleHash(text: string): Promise<string> {
+    // Use length + first/last chars as a fast change fingerprint
+    return `${text.length}:${text.charCodeAt(0) || 0}:${text.charCodeAt(text.length - 1) || 0}:${text.charCodeAt(Math.floor(text.length / 2)) || 0}`
+  }
 
   return {
     async selectFile(): Promise<SelectedFileResult> {
@@ -251,6 +272,51 @@ export function createSourceBridge(): SourceBridge {
     summary(): SourceSummary | null {
       if (!active) return null
       return toSummary(active)
+    },
+
+    startWatching(onChanged: () => void): void {
+      stopWatchTimer()
+
+      watchTimer = setInterval(async () => {
+        if (!active) return
+
+        try {
+          if (active.kind === 'tauri') {
+            const content = await readTauriFile(active.path)
+            const hash = await simpleHash(content)
+            if (lastKnownContentHash === null) {
+              lastKnownContentHash = hash
+              return
+            }
+            if (hash !== lastKnownContentHash) {
+              lastKnownContentHash = hash
+              onChanged()
+            }
+            return
+          }
+
+          if (active.kind === 'filesystem-handle') {
+            const file = await active.handle.getFile()
+            if (lastKnownModified === null) {
+              lastKnownModified = file.lastModified
+              return
+            }
+            if (file.lastModified !== lastKnownModified) {
+              lastKnownModified = file.lastModified
+              onChanged()
+            }
+            return
+          }
+
+          // Upload mode: no external file to watch.
+        } catch {
+          // File may be temporarily unavailable; skip this cycle.
+        }
+      }, FILE_WATCH_INTERVAL_MS)
+    },
+
+    stopWatching(): void {
+      stopWatchTimer()
     },
   }
 }

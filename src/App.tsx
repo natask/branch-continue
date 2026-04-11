@@ -47,7 +47,6 @@ function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
     totalCount,
     recentering,
     sourcePath,
-    sourceWritable,
     selectingSource,
     selectNote,
     searchNotes,
@@ -160,32 +159,44 @@ function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
         </div>
 
         <div className="topbar-meta">
-          <label className="topbar-sort" htmlFor="sort-mode">
-            <span>Esc Target</span>
-            <select
-              id="sort-mode"
-              value={sortMode}
-              onChange={(event) => {
-                const nextSortMode = event.target.value as NoteSortMode
-                setSortMode(nextSortMode)
-              }}
+          <div className="topbar-jump">
+            <button
+              className={`topbar-jump-opt${sortMode === 'oldest' ? ' active' : ''}`}
+              onClick={() => setSortMode('oldest')}
+              type="button"
             >
-              <option value="latest">Latest</option>
-              <option value="oldest">Oldest</option>
-            </select>
-          </label>
-          <span className="meta-pill">{sourceWritable ? 'Direct Auto-Save' : 'Download Auto-Save'}</span>
+              Oldest
+            </button>
+            <button
+              className={`topbar-jump-opt${sortMode === 'latest' ? ' active' : ''}`}
+              onClick={() => setSortMode('latest')}
+              type="button"
+            >
+              Latest
+            </button>
+            <button
+              className="topbar-jump-go"
+              onClick={() => {
+                const boundary = resolveBoundaryNote(orderedNotes, sortMode)
+                if (boundary) selectNote(boundary)
+              }}
+              type="button"
+            >
+              Go
+            </button>
+          </div>
           <button className="topbar-search" onClick={() => void selectSourceFile()} type="button">
             {selectingSource ? 'Selecting...' : 'Select File'}
           </button>
-          <button className="topbar-search" onClick={() => void reloadSource()} type="button">
-            Reload
+          <button
+            className="topbar-search topbar-search-strong"
+            onClick={editorSession.openBranchEditor}
+            type="button"
+          >
+            Branch
           </button>
-          <button className="topbar-search" onClick={editorSession.openBranchEditor} type="button">
-            +
-          </button>
-          <button className="topbar-search" onClick={() => setSearchOpen(true)}>
-            Search <kbd>⌘K</kbd>
+          <button className="topbar-search" onClick={() => setSearchOpen(true)} type="button">
+            Search
           </button>
         </div>
       </header>
@@ -228,8 +239,7 @@ function SourceSelectionScreen({
         <div>
           <p className="empty-title">Select a source file to start.</p>
           <p className="empty-copy">
-            Works in browser and Tauri mobile. If direct writes are unavailable, auto-save will
-            download an updated copy.
+            Made with Love
           </p>
           <button className="btn-primary" onClick={() => void selectSourceFile()} type="button">
             {selectingSource ? 'Selecting...' : 'Choose File'}

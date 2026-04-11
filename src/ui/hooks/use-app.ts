@@ -15,9 +15,11 @@ import type {
   QuickNoteSearchHit,
   SourceNote,
 } from '../../core/quicknote/types'
+import { resolveActiveSelection } from './use-app-selection'
 
 interface AppState {
   ready: boolean
+  lifecycle: 'booting' | 'no_source' | 'ready' | 'error'
   error: string | null
   notes: SourceNote[]
   activeNoteId: string | null
@@ -46,7 +48,7 @@ const sourceBridge = createSourceBridge()
 const EMPTY_PATH = 'No file selected'
 
 export function useApp(): AppState & AppActions {
-  const [ready, setReady] = useState(false)
+  const [lifecycle, setLifecycle] = useState<AppState['lifecycle']>('booting')
   const [error, setError] = useState<string | null>(null)
   const [parsed, setParsed] = useState<ParsedQuickNoteFile | null>(null)
   const [notes, setNotes] = useState<SourceNote[]>([])
@@ -72,28 +74,14 @@ export function useApp(): AppState & AppActions {
     (nextParsed: ParsedQuickNoteFile, preferredNoteId?: string | null) => {
       setParsed(nextParsed)
       setNotes(nextParsed.entries)
-
-      const resolvedPreferredId =
-        preferredNoteId === undefined ? activeNoteIdRef.current : preferredNoteId
-      let nextActive: SourceNote | null = null
-
-      if (preferredNoteId === null) {
-        nextActive = nextParsed.entries[0] ?? null
-      } else {
-        if (resolvedPreferredId) {
-          nextActive = nextParsed.entries.find((entry) => entry.id === resolvedPreferredId) ?? null
-        }
-
-        if (!nextActive) {
-          nextActive = getNoteByOffset(nextParsed.entries, activeNoteOffsetRef.current)
-        }
-
-        if (!nextActive) {
-          nextActive = nextParsed.entries[0] ?? null
-        }
-      }
-
-      setActiveSelection(nextActive)
+      setActiveSelection(
+        resolveActiveSelection({
+          notes: nextParsed.entries,
+          preferredNoteId,
+          currentActiveNoteId: activeNoteIdRef.current,
+          currentActiveNoteOffset: activeNoteOffsetRef.current,
+        }),
+      )
     },
     [setActiveSelection],
   )
@@ -107,6 +95,8 @@ export function useApp(): AppState & AppActions {
     [],
   )
 
+  const reloadSourceRef = useRef<(() => Promise<void>) | null>(null)
+
   useEffect(() => {
     let cancelled = false
 
@@ -118,21 +108,26 @@ export function useApp(): AppState & AppActions {
         if (restored) {
           applySourceSummary(restored.summary)
           applyParsed(parseQuickNoteFile(restored.content, restored.summary.path), null)
+          setLifecycle('ready')
+          sourceBridge.startWatching(() => {
+            reloadSourceRef.current?.()
+          })
         } else {
           setSourcePath(EMPTY_PATH)
           setSourceWritable(false)
           setSourceMode('direct')
+          setLifecycle('no_source')
         }
-
-        setReady(true)
       } catch (nextError) {
         if (cancelled) return
         setError(errorMessage(nextError))
+        setLifecycle('error')
       }
     })()
 
     return () => {
       cancelled = true
+      sourceBridge.stopWatching()
     }
   }, [applyParsed, applySourceSummary])
 
@@ -144,9 +139,14 @@ export function useApp(): AppState & AppActions {
       const selected = await sourceBridge.selectFile()
       applySourceSummary(selected.summary)
       applyParsed(parseQuickNoteFile(selected.content, selected.summary.path), null)
+      setLifecycle('ready')
+      sourceBridge.startWatching(() => {
+        reloadSourceRef.current?.()
+      })
     } catch (nextError) {
       if (isSelectionCancelled(nextError)) return
       setError(errorMessage(nextError))
+      setLifecycle('error')
     } finally {
       setSelectingSource(false)
     }
@@ -159,8 +159,10 @@ export function useApp(): AppState & AppActions {
       const selected = await sourceBridge.read()
       applySourceSummary(selected.summary)
       applyParsed(parseQuickNoteFile(selected.content, selected.summary.path))
+      setLifecycle('ready')
     } catch (nextError) {
       setError(errorMessage(nextError))
+      setLifecycle('error')
     }
   }, [applyParsed, applySourceSummary])
 
@@ -220,7 +222,8 @@ export function useApp(): AppState & AppActions {
   )
 
   return {
-    ready,
+    ready: lifecycle !== 'booting',
+    lifecycle,
     error,
     notes,
     activeNoteId: activeNote?.id ?? null,
@@ -241,13 +244,6 @@ export function useApp(): AppState & AppActions {
     selectSourceFile,
     reloadSource,
   }
-}
-
-function getNoteByOffset(notes: SourceNote[], offset: number): SourceNote | null {
-  if (notes.length === 0) return null
-  if (!Number.isFinite(offset)) return notes[0]
-  const index = Math.min(Math.max(Math.round(offset), 0), notes.length - 1)
-  return notes[index] ?? null
 }
 
 function errorMessage(error: unknown): string {

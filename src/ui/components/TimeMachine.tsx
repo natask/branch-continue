@@ -35,6 +35,12 @@ export function TimeMachine({
   const activeIndex = Math.max(0, findNoteIndex(sorted, activeNoteId))
   const containerRef = useRef<HTMLDivElement>(null)
   const wheelAccumRef = useRef(0)
+  const touchRef = useRef<{
+    startX: number
+    startY: number
+    startTime: number
+    locked: 'x' | 'y' | null
+  } | null>(null)
   const bodyDragRef = useRef<{
     pointerId: number
     startX: number
@@ -127,6 +133,74 @@ export function TimeMachine({
 
     element.addEventListener('wheel', handler, { passive: false })
     return () => element.removeEventListener('wheel', handler)
+  }, [focusIndex, navigationEnabled, onSelect, sorted])
+
+  // Touch swipe navigation for mobile
+  useEffect(() => {
+    const element = containerRef.current
+    if (!element || !navigationEnabled) return
+
+    const onTouchStart = (e: TouchEvent) => {
+      const touch = e.touches[0]
+      if (!touch) return
+      // Ignore touches inside scrollable card body
+      const target = e.target
+      if (target instanceof HTMLElement && target.closest('.tm-card-scroll')) return
+      touchRef.current = {
+        startX: touch.clientX,
+        startY: touch.clientY,
+        startTime: Date.now(),
+        locked: null,
+      }
+    }
+
+    const onTouchMove = (e: TouchEvent) => {
+      const state = touchRef.current
+      const touch = e.touches[0]
+      if (!state || !touch) return
+
+      const dx = touch.clientX - state.startX
+      const dy = touch.clientY - state.startY
+
+      // Lock axis after 8px of movement
+      if (!state.locked && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+        state.locked = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y'
+      }
+
+      // Prevent page scroll when swiping horizontally through cards
+      if (state.locked === 'x') {
+        e.preventDefault()
+      }
+    }
+
+    const onTouchEnd = (e: TouchEvent) => {
+      const state = touchRef.current
+      touchRef.current = null
+      if (!state) return
+
+      const touch = e.changedTouches[0]
+      if (!touch) return
+
+      const dx = touch.clientX - state.startX
+      const dy = touch.clientY - state.startY
+      const elapsed = Date.now() - state.startTime
+
+      // Use the dominant axis; require minimum 30px swipe within 500ms
+      const dominant = Math.abs(dx) > Math.abs(dy) ? dx : -dy
+      if (Math.abs(dominant) < 30 || elapsed > 500) return
+
+      const direction = dominant < 0 ? 1 : -1
+      focusNote(focusIndex + direction)
+    }
+
+    element.addEventListener('touchstart', onTouchStart, { passive: true })
+    element.addEventListener('touchmove', onTouchMove, { passive: false })
+    element.addEventListener('touchend', onTouchEnd, { passive: true })
+    return () => {
+      element.removeEventListener('touchstart', onTouchStart)
+      element.removeEventListener('touchmove', onTouchMove)
+      element.removeEventListener('touchend', onTouchEnd)
+    }
   }, [focusIndex, navigationEnabled, onSelect, sorted])
 
   const handleCardBodyPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -241,6 +315,7 @@ export function TimeMachine({
 
   const totalDisplayCount = totalCount || sorted.length
   const displayPosition = Math.min(Math.max(focusIndex + 1, 1), totalDisplayCount)
+  const focusedNote = sorted[focusIndex] ?? null
 
   return (
     <div className="tm-layout">
@@ -250,6 +325,16 @@ export function TimeMachine({
         </div>
         <div className="tm-stage-actions">
           <span className="tm-window-status">{recentering ? 'Refreshing' : 'Live'}</span>
+          <button
+            className="tm-branch-button"
+            onClick={() => {
+              if (!focusedNote) return
+              onBranch(focusedNote)
+            }}
+            type="button"
+          >
+            Branch
+          </button>
         </div>
 
         <div className="tm-scene" style={{ perspective: 'none' }}>

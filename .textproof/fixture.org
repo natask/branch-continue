@@ -1,0 +1,11 @@
+* First note [2026-04-10 Thu 09:00]
+This is the body of the first note with enough text to test wrapping behavior across viewport breakpoints.
+
+* Second note [2026-04-10 Thu 10:00]
+Another entry with different content. Testing how the time machine cards render these previews.
+
+* Third note with a longer title that might wrap [2026-04-10 Thu 11:00]
+Short body.
+
+* Fourth note [2026-04-11 Fri 08:00] :project:review:
+Tagged note with org-mode suffix tags to verify tag rendering in the editor and cards.
