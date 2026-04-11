@@ -271,7 +271,11 @@ function getBrowserFilePicker(): BrowserFilePicker | undefined {
 function fileName(path: string): string {
   const normalized = path.split('\\').join('/')
   const parts = normalized.split('/')
-  return parts[parts.length - 1] || path
+  const lastSegment = parts[parts.length - 1] || path
+  const decodedSegment = safeDecodeURIComponent(lastSegment)
+  const uriTail = decodedSegment.split('/').pop() || decodedSegment
+  const colonTail = uriTail.split(':').pop() || uriTail
+  return colonTail || path
 }
 
 function isPickerCancelled(error: unknown): boolean {
@@ -297,6 +301,7 @@ async function isTauriRuntime(): Promise<boolean> {
 async function selectTauriFile(): Promise<SelectedSource | null> {
   const dialog = await import('@tauri-apps/plugin-dialog')
   const pathApi = await import('@tauri-apps/api/path')
+  const mobilePlatform = detectMobilePlatform()
   let defaultPath: string | undefined
 
   try {
@@ -305,19 +310,33 @@ async function selectTauriFile(): Promise<SelectedSource | null> {
     defaultPath = undefined
   }
 
-  const result = await dialog.open({
+  const dialogOptions: Parameters<typeof dialog.open>[0] = {
     multiple: false,
     directory: false,
     defaultPath,
     pickerMode: 'document',
-    fileAccessMode: 'scoped',
-    filters: [
+    // Android SAF paths are more reliable with copied files; iOS can use scoped access.
+    fileAccessMode: mobilePlatform === 'android' ? 'copy' : 'scoped',
+  }
+
+  // Android uses MIME-based filtering; include octet-stream for providers that classify .org as unknown.
+  if (mobilePlatform === 'android') {
+    dialogOptions.filters = [
+      {
+        name: 'Org and text files',
+        extensions: ['text/plain', 'text/markdown', 'application/octet-stream'],
+      },
+    ]
+  } else {
+    dialogOptions.filters = [
       {
         name: 'Org and text files',
         extensions: ['org', 'txt', 'md'],
       },
-    ],
-  })
+    ]
+  }
+
+  const result = await dialog.open(dialogOptions)
 
   if (!result || Array.isArray(result)) {
     return null
@@ -393,17 +412,18 @@ async function resolveDefaultSourceWithinLegacyRoot(
 
 async function readTauriFile(path: string): Promise<string> {
   const fs = await import('@tauri-apps/plugin-fs')
+  const fsPath = toTauriFsPath(path)
   try {
-    return await fs.readTextFile(path)
+    return await fs.readTextFile(fsPath)
   } catch {
-    const binary = await fs.readFile(path)
+    const binary = await fs.readFile(fsPath)
     return decodeTextBytes(binary)
   }
 }
 
 async function writeTauriFile(path: string, content: string): Promise<void> {
   const fs = await import('@tauri-apps/plugin-fs')
-  await fs.writeTextFile(path, content)
+  await fs.writeTextFile(toTauriFsPath(path), content)
 }
 
 function decodeTextBytes(binary: Uint8Array): string {
@@ -419,6 +439,11 @@ function decodeTextBytes(binary: Uint8Array): string {
     } catch {
       // Try the next encoding.
     }
+  }
+
+  // Last fallback: if bytes look textual, decode as permissive UTF-8.
+  if (looksLikeText(binary)) {
+    return new TextDecoder('utf-8').decode(binary)
   }
 
   throw new Error('Selected file is not valid UTF text. Pick a .org/.txt/.md text file.')
@@ -532,4 +557,53 @@ function openHandleDb(): Promise<IDBDatabase | null> {
 
 function isFileSystemFileHandle(value: unknown): value is FileSystemFileHandle {
   return typeof value === 'object' && value !== null && 'kind' in value && 'getFile' in value
+}
+
+function detectMobilePlatform(): 'android' | 'ios' | 'other' {
+  if (typeof navigator === 'undefined') {
+    return 'other'
+  }
+
+  const userAgent = navigator.userAgent.toLowerCase()
+  if (userAgent.includes('android')) return 'android'
+  if (/iphone|ipad|ipod/.test(userAgent)) return 'ios'
+  return 'other'
+}
+
+function looksLikeText(binary: Uint8Array): boolean {
+  if (binary.length === 0) return true
+
+  let nonTextCount = 0
+  const sampleSize = Math.min(binary.length, 4096)
+
+  for (let index = 0; index < sampleSize; index += 1) {
+    const byte = binary[index]
+    const isControl = byte < 0x20 && byte !== 0x09 && byte !== 0x0a && byte !== 0x0d
+    if (isControl || byte === 0x00) {
+      nonTextCount += 1
+    }
+  }
+
+  // Allow a small number of control bytes while still treating as text.
+  return nonTextCount / sampleSize < 0.03
+}
+
+function toTauriFsPath(path: string): string | URL {
+  if (!path.toLowerCase().startsWith('file://')) {
+    return path
+  }
+
+  try {
+    return new URL(path)
+  } catch {
+    return path
+  }
+}
+
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
 }
