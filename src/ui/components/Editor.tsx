@@ -1,4 +1,4 @@
-import { useMemo, type WheelEvent as ReactWheelEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { UseEditorSessionResult } from '../hooks/use-editor-session'
 
 interface EditorProps {
@@ -8,6 +8,7 @@ interface EditorProps {
 
 export function Editor({ session, positionLabel }: EditorProps) {
   const editor = session.editor
+  const [bodyWheelTarget, setBodyWheelTarget] = useState<HTMLElement | null>(null)
   const saveIndicatorTitle = useMemo(
     () =>
       session.autoSaveEnabled
@@ -16,14 +17,34 @@ export function Editor({ session, positionLabel }: EditorProps) {
     [session.autoSaveEnabled],
   )
 
-  if (!editor) return null
+  useEffect(() => {
+    if (!bodyWheelTarget) return
 
-  const handleBodyWheel = (event: ReactWheelEvent<HTMLElement>) => {
-    if (!(event.metaKey || event.ctrlKey)) return
-    event.preventDefault()
-    event.currentTarget.scrollTop += event.deltaY
-    event.currentTarget.scrollLeft += event.deltaX
-  }
+    const handleBodyWheel = (event: WheelEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return
+      event.preventDefault()
+      event.stopPropagation()
+      bodyWheelTarget.scrollTop += event.deltaY
+      bodyWheelTarget.scrollLeft += event.deltaX
+    }
+
+    bodyWheelTarget.addEventListener('wheel', handleBodyWheel, { passive: false })
+    return () => bodyWheelTarget.removeEventListener('wheel', handleBodyWheel)
+  }, [bodyWheelTarget])
+
+  const handleBodyRef = useCallback(
+    (element: HTMLTextAreaElement | null) => {
+      session.bodyRef.current = element
+      setBodyWheelTarget(element)
+    },
+    [session.bodyRef],
+  )
+
+  const handlePreviewRef = useCallback((element: HTMLPreElement | null) => {
+    setBodyWheelTarget(element)
+  }, [])
+
+  if (!editor) return null
 
   return (
     <article className="note-editor">
@@ -261,15 +282,14 @@ export function Editor({ session, positionLabel }: EditorProps) {
 
         {editor.editing ? (
           <textarea
-            ref={session.bodyRef}
+            ref={handleBodyRef}
             className="note-editor-body note-editor-body--edit"
             value={editor.body}
             onChange={(event) => session.updateBody(event.target.value)}
             onKeyDown={session.handleBodyKeyDown}
-            onWheel={handleBodyWheel}
           />
         ) : (
-          <pre className="note-editor-body" onWheel={handleBodyWheel}>
+          <pre ref={handlePreviewRef} className="note-editor-body">
             {editor.body}
           </pre>
         )}

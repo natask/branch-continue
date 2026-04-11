@@ -5,7 +5,6 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
-  type WheelEvent as ReactWheelEvent,
 } from 'react'
 import { useControls, folder } from 'leva'
 import type { SourceNote } from '../../core/quicknote/types'
@@ -102,6 +101,18 @@ export function TimeMachine({
     if (!element || !navigationEnabled) return
 
     const handler = (event: WheelEvent) => {
+      const target = event.target
+      const cardScroll =
+        target instanceof HTMLElement ? target.closest('.tm-card-scroll') as HTMLDivElement | null : null
+
+      if (cardScroll && element.contains(cardScroll) && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault()
+        event.stopPropagation()
+        cardScroll.scrollTop += event.deltaY
+        cardScroll.scrollLeft += event.deltaX
+        return
+      }
+
       event.preventDefault()
 
       const delta = Math.abs(event.deltaY) > Math.abs(event.deltaX) ? event.deltaY : event.deltaX
@@ -117,15 +128,6 @@ export function TimeMachine({
     element.addEventListener('wheel', handler, { passive: false })
     return () => element.removeEventListener('wheel', handler)
   }, [focusIndex, navigationEnabled, onSelect, sorted])
-
-  const handleCardBodyWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
-    if (!(event.metaKey || event.ctrlKey)) return
-
-    event.preventDefault()
-    event.stopPropagation()
-    event.currentTarget.scrollTop += event.deltaY
-    event.currentTarget.scrollLeft += event.deltaX
-  }
 
   const handleCardBodyPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return
@@ -266,7 +268,7 @@ export function TimeMachine({
             const ty = effectiveOffset * spreadY + (isFocused ? liftY : sinkY)
             const scale = isFocused
               ? focusScale
-              : Math.max(0.36, 1 - Math.abs(offset) * scaleFalloff)
+              : Math.max(minScale, 1 - Math.abs(offset) * scaleFalloff)
             const opacity = Math.max(0.08, 1 - Math.abs(offset) * opacityFalloff)
             const blur = Math.min(8, Math.abs(offset) * blurFalloff)
 
@@ -313,7 +315,6 @@ export function TimeMachine({
                 <div className="tm-card-body">
                   <div
                     className="tm-card-scroll"
-                    onWheel={handleCardBodyWheel}
                     onPointerDown={handleCardBodyPointerDown}
                     onPointerMove={handleCardBodyPointerMove}
                     onPointerUp={finishCardBodyDrag}
