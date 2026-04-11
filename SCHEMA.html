@@ -1,0 +1,1305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Branch Continue Schema Workbench</title>
+  <style>
+    :root {
+      --bg: #f4efe5;
+      --paper: rgba(255, 250, 242, 0.82);
+      --paper-strong: #fff8ef;
+      --ink: #1e1c18;
+      --muted: #645d50;
+      --line: rgba(45, 40, 33, 0.14);
+      --accent: #c35b2f;
+      --accent-soft: rgba(195, 91, 47, 0.12);
+      --support: #0f766e;
+      --support-soft: rgba(15, 118, 110, 0.12);
+      --shadow: 0 28px 80px rgba(41, 27, 12, 0.12);
+      --radius: 24px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+    }
+
+    body {
+      font-family: "Avenir Next", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(195, 91, 47, 0.16), transparent 26%),
+        radial-gradient(circle at top right, rgba(15, 118, 110, 0.14), transparent 22%),
+        linear-gradient(180deg, #efe6d8 0%, #f8f3ea 48%, #ede5d8 100%);
+      padding: 32px;
+    }
+
+    .shell {
+      max-width: 1480px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 360px minmax(0, 1fr);
+      gap: 24px;
+    }
+
+    .panel {
+      background: var(--paper);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.5);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .sidebar {
+      padding: 28px;
+      position: sticky;
+      top: 24px;
+      height: fit-content;
+    }
+
+    .eyebrow {
+      font-family: "Avenir Next Condensed", "Arial Narrow", sans-serif;
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 12px;
+    }
+
+    h1, h2, h3 {
+      font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+      font-weight: 700;
+      margin: 0;
+    }
+
+    h1 {
+      font-size: clamp(2.3rem, 5vw, 4.25rem);
+      line-height: 0.94;
+      max-width: 10ch;
+    }
+
+    .lede {
+      margin: 18px 0 24px;
+      color: var(--muted);
+      line-height: 1.6;
+      font-size: 1rem;
+    }
+
+    .rule-list,
+    .mini-list {
+      display: grid;
+      gap: 12px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .rule-item {
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.58);
+      border-radius: 18px;
+      padding: 14px 16px;
+    }
+
+    .rule-item strong {
+      display: block;
+      font-size: 0.96rem;
+      margin-bottom: 4px;
+    }
+
+    .rule-item span {
+      color: var(--muted);
+      font-size: 0.93rem;
+      line-height: 1.5;
+    }
+
+    .control-block + .control-block {
+      margin-top: 22px;
+    }
+
+    label {
+      display: block;
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    select,
+    button {
+      font: inherit;
+    }
+
+    select {
+      width: 100%;
+      padding: 14px 16px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: var(--paper-strong);
+      color: var(--ink);
+    }
+
+    .button-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 14px;
+      padding: 13px 14px;
+      cursor: pointer;
+      transition: transform 180ms ease, box-shadow 180ms ease, background 180ms ease;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+    }
+
+    .btn-accent {
+      background: var(--accent);
+      color: #fff7f2;
+      box-shadow: 0 12px 24px rgba(195, 91, 47, 0.22);
+    }
+
+    .btn-secondary {
+      background: var(--support-soft);
+      color: var(--support);
+      border: 1px solid rgba(15, 118, 110, 0.18);
+    }
+
+    .mini-list li {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--line);
+      font-size: 0.94rem;
+    }
+
+    .mini-list li:last-child {
+      border-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .mini-list span:first-child {
+      color: var(--muted);
+    }
+
+    .content {
+      padding: 30px;
+      display: grid;
+      gap: 18px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .hero-card,
+    .meta-card,
+    .tab-card,
+    .matrix-card,
+    .schema-card {
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.52);
+      padding: 22px;
+    }
+
+    .hero-card {
+      background:
+        linear-gradient(135deg, rgba(195, 91, 47, 0.08), transparent 60%),
+        rgba(255, 255, 255, 0.52);
+    }
+
+    .hero-title {
+      margin-top: 10px;
+      font-size: clamp(1.9rem, 3vw, 2.9rem);
+      line-height: 1.02;
+    }
+
+    .hero-copy {
+      margin: 16px 0 0;
+      max-width: 68ch;
+      color: var(--muted);
+      line-height: 1.65;
+    }
+
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .chip {
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.75);
+      border: 1px solid var(--line);
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    .meta-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .meta-tile {
+      padding: 14px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px solid var(--line);
+    }
+
+    .meta-tile .label {
+      font-size: 0.75rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .meta-tile .value {
+      font-size: 1rem;
+      font-weight: 700;
+      word-break: break-word;
+    }
+
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 18px;
+    }
+
+    .tab-button {
+      background: rgba(255, 255, 255, 0.7);
+      color: var(--muted);
+      border: 1px solid var(--line);
+      font-size: 0.92rem;
+      font-weight: 700;
+    }
+
+    .tab-button.active {
+      background: var(--ink);
+      color: #fff9f3;
+      border-color: transparent;
+      box-shadow: 0 14px 24px rgba(30, 28, 24, 0.18);
+    }
+
+    .tab-panel {
+      display: none;
+    }
+
+    .tab-panel.active {
+      display: block;
+      animation: rise 220ms ease;
+    }
+
+    @keyframes rise {
+      from {
+        opacity: 0;
+        transform: translateY(6px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-end;
+      margin-bottom: 14px;
+    }
+
+    .section-head p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      max-width: 72ch;
+      line-height: 1.55;
+    }
+
+    .callout {
+      margin-top: 14px;
+      padding: 14px 16px;
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+      border-radius: 0 16px 16px 0;
+      color: #5f2d18;
+      line-height: 1.55;
+    }
+
+    .schema-grid,
+    .matrix-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .schema-block {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 16px;
+      background: rgba(255, 255, 255, 0.7);
+    }
+
+    .schema-block h3 {
+      font-size: 1.1rem;
+      margin-bottom: 10px;
+    }
+
+    pre {
+      margin: 0;
+      padding: 18px;
+      border-radius: 18px;
+      background: #171613;
+      color: #f8f2e8;
+      overflow: auto;
+      line-height: 1.5;
+      font-size: 0.9rem;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+    }
+
+    code {
+      font-family: "SFMono-Regular", "Menlo", monospace;
+    }
+
+    .matrix-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .matrix-cell {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 18px;
+      background: rgba(255, 255, 255, 0.74);
+    }
+
+    .matrix-cell h3 {
+      font-size: 1rem;
+      margin-bottom: 10px;
+    }
+
+    .matrix-cell p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.58;
+    }
+
+    .sql-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .footer-note {
+      font-size: 0.9rem;
+      color: var(--muted);
+      margin-top: 14px;
+      line-height: 1.55;
+    }
+
+    @media (max-width: 1120px) {
+      .shell {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        position: static;
+      }
+
+      .hero,
+      .schema-grid,
+      .matrix-grid,
+      .sql-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 700px) {
+      body {
+        padding: 16px;
+      }
+
+      .sidebar,
+      .content {
+        padding: 18px;
+      }
+
+      .button-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="panel sidebar">
+      <div class="eyebrow">Schema Workbench</div>
+      <h1>One card. Three storage shapes.</h1>
+      <p class="lede">
+        Start from a single canonical card model. Project it into <code>loro</code> for editing,
+        <code>search</code> for retrieval, and <code>omni</code> for unified pulls across UI,
+        agents, and future tooling.
+      </p>
+
+      <div class="control-block">
+        <label for="seedSelect">Seed Record</label>
+        <select id="seedSelect"></select>
+      </div>
+
+      <div class="control-block">
+        <div class="button-row">
+          <button class="btn-accent" id="branchButton">Simulate Branch</button>
+          <button class="btn-secondary" id="resetButton">Reset Seed</button>
+        </div>
+      </div>
+
+      <div class="control-block">
+        <div class="eyebrow">Storage Rules</div>
+        <ul class="rule-list">
+          <li class="rule-item">
+            <strong>Loro owns authored state</strong>
+            <span>Markdown body, lineage, lightweight metadata, and future local editing containers.</span>
+          </li>
+          <li class="rule-item">
+            <strong>Search owns flattened recall</strong>
+            <span>Plaintext, tags, aliases, filters, and ranking hints only. No canonical truth lives here.</span>
+          </li>
+          <li class="rule-item">
+            <strong>Omni owns cross-surface retrieval</strong>
+            <span>One normalized record for commands, sidebars, agents, and future cross-entity joins.</span>
+          </li>
+        </ul>
+      </div>
+
+      <div class="control-block">
+        <div class="eyebrow">Current Snapshot</div>
+        <ul class="mini-list" id="snapshotList"></ul>
+      </div>
+    </aside>
+
+    <main class="panel content">
+      <section class="hero">
+        <article class="hero-card">
+          <div class="eyebrow">Canonical Record</div>
+          <h2 class="hero-title" id="heroTitle"></h2>
+          <p class="hero-copy" id="heroCopy"></p>
+          <div class="chip-row" id="chipRow"></div>
+        </article>
+
+        <aside class="meta-card">
+          <div class="eyebrow">Lineage</div>
+          <div class="meta-grid">
+            <div class="meta-tile">
+              <div class="label">Card ID</div>
+              <div class="value" id="metaId"></div>
+            </div>
+            <div class="meta-tile">
+              <div class="label">Kind</div>
+              <div class="value" id="metaKind"></div>
+            </div>
+            <div class="meta-tile">
+              <div class="label">Parent</div>
+              <div class="value" id="metaParent"></div>
+            </div>
+            <div class="meta-tile">
+              <div class="label">Branch Root</div>
+              <div class="value" id="metaBranchRoot"></div>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="tab-card">
+        <div class="tabs">
+          <button class="tab-button active" data-tab="overview">Overview</button>
+          <button class="tab-button" data-tab="loro">Loro</button>
+          <button class="tab-button" data-tab="search">Search</button>
+          <button class="tab-button" data-tab="omni">Omni</button>
+          <button class="tab-button" data-tab="seeds">Seed SQL</button>
+        </div>
+
+        <div class="tab-panel active" id="tab-overview">
+          <div class="section-head">
+            <div>
+              <h2>Recommended Start</h2>
+              <p>
+                Keep the source model narrow. A card is the canonical unit. Every other layer is a
+                projection that can be rebuilt.
+              </p>
+            </div>
+          </div>
+
+          <div class="schema-grid">
+            <div class="schema-block">
+              <h3>Canonical Interface</h3>
+              <pre><code id="canonicalInterface"></code></pre>
+            </div>
+            <div class="schema-block">
+              <h3>Selected Canonical Seed</h3>
+              <pre><code id="canonicalSeed"></code></pre>
+            </div>
+          </div>
+
+          <div class="callout">
+            The important design decision is this: the app edits a <strong>card</strong>, not a
+            search row and not an omni row. Search and omni should be derived materialized views.
+          </div>
+        </div>
+
+        <div class="tab-panel" id="tab-loro">
+          <div class="section-head">
+            <div>
+              <h2>Loro Shape</h2>
+              <p>
+                Use <code>LoroDoc</code> as the authoritative editable document. Keep only values
+                that belong close to authoring and branching.
+              </p>
+            </div>
+          </div>
+
+          <div class="schema-grid">
+            <div class="schema-block">
+              <h3>Schema Contract</h3>
+              <pre><code id="loroInterface"></code></pre>
+            </div>
+            <div class="schema-block">
+              <h3>Loro Seed Payload</h3>
+              <pre><code id="loroSeed"></code></pre>
+            </div>
+          </div>
+
+          <div class="callout">
+            Start with <code>meta</code>, <code>content</code>, <code>tags</code>,
+            <code>links</code>, and <code>view</code>. Do not add block graphs or overlay trees
+            until you actually need them.
+          </div>
+        </div>
+
+        <div class="tab-panel" id="tab-search">
+          <div class="section-head">
+            <div>
+              <h2>Search Projection</h2>
+              <p>
+                Search gets a flattened plaintext document plus filter fields and ranking hints.
+                It should be cheap to rebuild whenever snapshots or omni records change.
+              </p>
+            </div>
+          </div>
+
+          <div class="schema-grid">
+            <div class="schema-block">
+              <h3>Schema Contract</h3>
+              <pre><code id="searchInterface"></code></pre>
+            </div>
+            <div class="schema-block">
+              <h3>Search Seed Payload</h3>
+              <pre><code id="searchSeed"></code></pre>
+            </div>
+          </div>
+
+          <div class="callout">
+            Search should index <strong>title + summary + body plaintext + tags + aliases</strong>.
+            That is enough for the first useful version, and it keeps the ranking model legible.
+          </div>
+        </div>
+
+        <div class="tab-panel" id="tab-omni">
+          <div class="section-head">
+            <div>
+              <h2>Omni Record</h2>
+              <p>
+                Omni is the normalized read model. It is where commands, agents, sidebars, and
+                future non-page entities can all pull from one contract.
+              </p>
+            </div>
+          </div>
+
+          <div class="schema-grid">
+            <div class="schema-block">
+              <h3>Schema Contract</h3>
+              <pre><code id="omniInterface"></code></pre>
+            </div>
+            <div class="schema-block">
+              <h3>Omni Seed Payload</h3>
+              <pre><code id="omniSeed"></code></pre>
+            </div>
+          </div>
+
+          <div class="callout">
+            Omni should not try to mirror every Loro container. It should keep the fields that
+            other systems need to pull without understanding CRDT structure.
+          </div>
+        </div>
+
+        <div class="tab-panel" id="tab-seeds">
+          <div class="section-head">
+            <div>
+              <h2>Seed Tables</h2>
+              <p>
+                These are suggested bootstrap rows if you want to materialize a first local dataset
+                and then derive search from omni or from snapshots.
+              </p>
+            </div>
+          </div>
+
+          <div class="sql-grid">
+            <div class="schema-block">
+              <h3>Suggested Omni Table</h3>
+              <pre><code id="omniSql"></code></pre>
+            </div>
+            <div class="schema-block">
+              <h3>Suggested Search Table</h3>
+              <pre><code id="searchSql"></code></pre>
+            </div>
+            <div class="schema-block">
+              <h3>Seed Inserts</h3>
+              <pre><code id="seedInserts"></code></pre>
+            </div>
+            <div class="schema-block">
+              <h3>Pull Order</h3>
+              <pre><code id="pullOrder"></code></pre>
+            </div>
+          </div>
+
+          <p class="footer-note">
+            Practical rule: read from <code>loro</code> when editing, read from
+            <code>omni</code> when listing or commanding, and rebuild <code>search</code> from the
+            current materialized state.
+          </p>
+        </div>
+      </section>
+
+      <section class="matrix-card">
+        <div class="section-head">
+          <div>
+            <h2>Responsibility Matrix</h2>
+            <p>Each layer has one job. Keep the seams explicit so migrations stay manageable.</p>
+          </div>
+        </div>
+        <div class="matrix-grid">
+          <div class="matrix-cell">
+            <h3>Loro</h3>
+            <p>Editable truth, branch lineage, local UI state, future patch-friendly evolution.</p>
+          </div>
+          <div class="matrix-cell">
+            <h3>Search</h3>
+            <p>Fast recall, ranking, fuzzy match, filterable text retrieval, no ownership of truth.</p>
+          </div>
+          <div class="matrix-cell">
+            <h3>Omni</h3>
+            <p>Normalized pull surface for lists, commands, agents, and any entity beyond pages.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const canonicalInterface = `interface CardSeed {
+  id: string
+  kind: 'page' | 'branch' | 'agent_note'
+  title: string
+  bodyMarkdown: string
+  summary: string
+  tags: string[]
+  aliases: string[]
+  createdAt: number
+  updatedAt: number
+  parentId?: string
+  branchRootId: string
+  stage: 'seed' | 'working' | 'stable'
+  status: 'active' | 'archived'
+  author: {
+    type: 'user' | 'agent'
+    id: string
+    sessionId?: string
+  }
+  links: Array<{
+    targetId: string
+    relation: 'branch_of' | 'references' | 'supports'
+    label?: string
+  }>
+}`
+
+    const loroInterface = `type LoroCardDoc = {
+  meta: {
+    id: string
+    kind: 'page' | 'branch' | 'agent_note'
+    title: string
+    summary: string
+    createdAt: number
+    updatedAt: number
+    parentId?: string
+    branchRootId: string
+    stage: 'seed' | 'working' | 'stable'
+    status: 'active' | 'archived'
+    authorType: 'user' | 'agent'
+    authorId: string
+    authorSessionId?: string
+  }
+  content: LoroText
+  tags: LoroList<string>
+  aliases: LoroList<string>
+  links: LoroList<{
+    targetId: string
+    relation: 'branch_of' | 'references' | 'supports'
+    label?: string
+  }>
+  view: {
+    cursorPosition?: number
+    scrollTop?: number
+  }
+}`
+
+    const searchInterface = `interface SearchDocument {
+  id: string
+  entityType: 'card'
+  source: 'loro'
+  title: string
+  summary: string
+  bodyText: string
+  preview: string
+  tags: string[]
+  aliases: string[]
+  status: 'active' | 'archived'
+  kind: 'page' | 'branch' | 'agent_note'
+  branchRootId: string
+  parentId?: string
+  updatedAt: number
+  searchText: string
+  rankHints: {
+    titleExactWeight: number
+    recencyWeight: number
+    branchDepth: number
+  }
+}`
+
+    const omniInterface = `interface OmniRecord {
+  id: string
+  entityType: 'card'
+  canonicalId: string
+  sourceKind: 'loro_snapshot'
+  title: string
+  summary: string
+  bodyMarkdown: string
+  bodyText: string
+  tags: string[]
+  aliases: string[]
+  links: Array<{
+    targetId: string
+    relation: 'branch_of' | 'references' | 'supports'
+    label?: string
+  }>
+  lineage: {
+    parentId?: string
+    branchRootId: string
+    depth: number
+  }
+  facets: {
+    kind: 'page' | 'branch' | 'agent_note'
+    status: 'active' | 'archived'
+    stage: 'seed' | 'working' | 'stable'
+    authorType: 'user' | 'agent'
+  }
+  provenance: {
+    primaryStore: 'loro'
+    snapshotTable: 'page_snapshots'
+    eventStream: string
+    actorId: string
+  }
+  timestamps: {
+    createdAt: number
+    updatedAt: number
+  }
+}`
+
+    const omniSql = `CREATE TABLE omni_records (
+  id TEXT PRIMARY KEY,
+  entity_type TEXT NOT NULL,
+  canonical_id TEXT NOT NULL,
+  source_kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  body_markdown TEXT NOT NULL,
+  body_text TEXT NOT NULL,
+  tags_json TEXT NOT NULL,
+  aliases_json TEXT NOT NULL,
+  links_json TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  author_type TEXT NOT NULL,
+  parent_id TEXT,
+  branch_root_id TEXT NOT NULL,
+  depth INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX idx_omni_kind ON omni_records(kind);
+CREATE INDEX idx_omni_branch_root ON omni_records(branch_root_id);
+CREATE INDEX idx_omni_updated ON omni_records(updated_at);`
+
+    const searchSql = `CREATE TABLE search_documents (
+  id TEXT PRIMARY KEY,
+  entity_type TEXT NOT NULL,
+  source TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  body_text TEXT NOT NULL,
+  preview TEXT NOT NULL,
+  tags_json TEXT NOT NULL,
+  aliases_json TEXT NOT NULL,
+  status TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  parent_id TEXT,
+  branch_root_id TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  search_text TEXT NOT NULL,
+  rank_hints_json TEXT NOT NULL
+);
+
+CREATE INDEX idx_search_kind ON search_documents(kind);
+CREATE INDEX idx_search_status ON search_documents(status);
+CREATE INDEX idx_search_updated ON search_documents(updated_at);`
+
+    const pullOrder = `1. Editing surface
+   - load page snapshot
+   - hydrate LoroDoc
+   - read/write content and metadata there
+
+2. Materialized reads
+   - project current card into omni_records
+   - use omni_records for sidebar, command palette, agent pulls
+
+3. Search refresh
+   - project omni or snapshot state into search_documents
+   - build fuzzy/exact index from title, summary, bodyText, tags, aliases`
+
+    const baseSeeds = [
+      {
+        id: 'card-root-product-core',
+        kind: 'page',
+        title: 'Branch Continue Product Core',
+        summary: 'The base page that defines the canvas, branching flow, and search expectation.',
+        bodyMarkdown: `# Branch Continue
+
+Write in a full-screen markdown canvas.
+
+## Core behavior
+- The page is the unit of thought.
+- Cmd+B branches the current page into a child page.
+- Search must find both titles and body content.
+- The first ship stays local-first and snapshot-driven.
+
+## Why this exists
+This tool is for continuing a line of thought without overwriting the previous one.`,
+        tags: ['product', 'canvas', 'branching', 'markdown'],
+        aliases: ['root brief', 'product core'],
+        createdAt: Date.parse('2026-04-11T09:00:00.000Z'),
+        updatedAt: Date.parse('2026-04-11T09:10:00.000Z'),
+        branchRootId: 'card-root-product-core',
+        stage: 'seed',
+        status: 'active',
+        author: { type: 'user', id: 'nat' },
+        links: [
+          { targetId: 'card-branch-categorization', relation: 'references', label: 'index strategy' },
+          { targetId: 'card-agent-note-stack', relation: 'supports', label: 'agent note path' },
+        ],
+      },
+      {
+        id: 'card-branch-categorization',
+        kind: 'branch',
+        title: 'Auto Categorization and Search Shape',
+        summary: 'A branch focused on tags, aliases, searchable text, and ranking hints.',
+        bodyMarkdown: `# Categorization Path
+
+The search row should not own truth.
+
+## Needed fields
+- tags
+- aliases
+- summary
+- body plaintext
+- branch lineage
+
+## Rule
+Search is rebuilt from current materialized state, not edited directly.`,
+        tags: ['search', 'taxonomy', 'ranking'],
+        aliases: ['search branch', 'categorization'],
+        createdAt: Date.parse('2026-04-11T09:18:00.000Z'),
+        updatedAt: Date.parse('2026-04-11T09:26:00.000Z'),
+        parentId: 'card-root-product-core',
+        branchRootId: 'card-root-product-core',
+        stage: 'working',
+        status: 'active',
+        author: { type: 'user', id: 'nat' },
+        links: [
+          { targetId: 'card-root-product-core', relation: 'branch_of', label: 'branched from root' },
+        ],
+      },
+      {
+        id: 'card-agent-note-stack',
+        kind: 'agent_note',
+        title: 'Agent Note Stack Protocol',
+        summary: 'The first seed for stack-based agent notes tied to an event log and page lineage.',
+        bodyMarkdown: `# Agent Note Stack
+
+Agents should append notes as attributable stack entries.
+
+## Desired behavior
+- notes are attributed to actor + session
+- notes can reference a page and a branch
+- notes do not silently replace user text
+
+## Implication
+The omni layer should expose agent-authored records beside pages.`,
+        tags: ['agent', 'notes', 'events'],
+        aliases: ['stack protocol', 'agent notes'],
+        createdAt: Date.parse('2026-04-11T09:31:00.000Z'),
+        updatedAt: Date.parse('2026-04-11T09:37:00.000Z'),
+        parentId: 'card-root-product-core',
+        branchRootId: 'card-root-product-core',
+        stage: 'seed',
+        status: 'active',
+        author: { type: 'agent', id: 'browser-agent', sessionId: 'sess-branch-001' },
+        links: [
+          { targetId: 'card-root-product-core', relation: 'supports', label: 'extends base page' },
+          { targetId: 'card-branch-categorization', relation: 'references', label: 'needs search pull' },
+        ],
+      },
+    ]
+
+    let seeds = structuredClone(baseSeeds)
+    let currentId = seeds[0].id
+
+    const elements = {
+      seedSelect: document.getElementById('seedSelect'),
+      snapshotList: document.getElementById('snapshotList'),
+      heroTitle: document.getElementById('heroTitle'),
+      heroCopy: document.getElementById('heroCopy'),
+      chipRow: document.getElementById('chipRow'),
+      metaId: document.getElementById('metaId'),
+      metaKind: document.getElementById('metaKind'),
+      metaParent: document.getElementById('metaParent'),
+      metaBranchRoot: document.getElementById('metaBranchRoot'),
+      canonicalInterface: document.getElementById('canonicalInterface'),
+      canonicalSeed: document.getElementById('canonicalSeed'),
+      loroInterface: document.getElementById('loroInterface'),
+      loroSeed: document.getElementById('loroSeed'),
+      searchInterface: document.getElementById('searchInterface'),
+      searchSeed: document.getElementById('searchSeed'),
+      omniInterface: document.getElementById('omniInterface'),
+      omniSeed: document.getElementById('omniSeed'),
+      omniSql: document.getElementById('omniSql'),
+      searchSql: document.getElementById('searchSql'),
+      seedInserts: document.getElementById('seedInserts'),
+      pullOrder: document.getElementById('pullOrder'),
+    }
+
+    function pretty(value) {
+      return JSON.stringify(value, null, 2)
+    }
+
+    function stripMarkdown(markdown) {
+      return markdown
+        .replace(/^#{1,6}\s+/gm, '')
+        .replace(/`{1,3}[^`]*`{1,3}/g, ' ')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/\*([^*]+)\*/g, '$1')
+        .replace(/^- /gm, '')
+        .replace(/\[(.*?)\]\(.*?\)/g, '$1')
+        .replace(/\n+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+    }
+
+    function computeDepth(seed) {
+      let depth = 0
+      let cursor = seed.parentId
+      while (cursor) {
+        const parent = seeds.find((item) => item.id === cursor)
+        if (!parent) break
+        depth += 1
+        cursor = parent.parentId
+      }
+      return depth
+    }
+
+    function buildLoro(seed) {
+      return {
+        meta: {
+          id: seed.id,
+          kind: seed.kind,
+          title: seed.title,
+          summary: seed.summary,
+          createdAt: seed.createdAt,
+          updatedAt: seed.updatedAt,
+          parentId: seed.parentId,
+          branchRootId: seed.branchRootId,
+          stage: seed.stage,
+          status: seed.status,
+          authorType: seed.author.type,
+          authorId: seed.author.id,
+          authorSessionId: seed.author.sessionId,
+        },
+        content: seed.bodyMarkdown,
+        tags: seed.tags,
+        aliases: seed.aliases,
+        links: seed.links,
+        view: {
+          cursorPosition: 0,
+          scrollTop: 0,
+        },
+      }
+    }
+
+    function buildSearch(seed) {
+      const bodyText = stripMarkdown(seed.bodyMarkdown)
+      const searchText = [
+        seed.title,
+        seed.summary,
+        bodyText,
+        seed.tags.join(' '),
+        seed.aliases.join(' '),
+      ].join('\n')
+
+      return {
+        id: seed.id,
+        entityType: 'card',
+        source: 'loro',
+        title: seed.title,
+        summary: seed.summary,
+        bodyText,
+        preview: bodyText.slice(0, 180),
+        tags: seed.tags,
+        aliases: seed.aliases,
+        status: seed.status,
+        kind: seed.kind,
+        branchRootId: seed.branchRootId,
+        parentId: seed.parentId,
+        updatedAt: seed.updatedAt,
+        searchText,
+        rankHints: {
+          titleExactWeight: 2.5,
+          recencyWeight: 1.2,
+          branchDepth: computeDepth(seed),
+        },
+      }
+    }
+
+    function buildOmni(seed) {
+      const bodyText = stripMarkdown(seed.bodyMarkdown)
+      return {
+        id: `omni:${seed.id}`,
+        entityType: 'card',
+        canonicalId: seed.id,
+        sourceKind: 'loro_snapshot',
+        title: seed.title,
+        summary: seed.summary,
+        bodyMarkdown: seed.bodyMarkdown,
+        bodyText,
+        tags: seed.tags,
+        aliases: seed.aliases,
+        links: seed.links,
+        lineage: {
+          parentId: seed.parentId,
+          branchRootId: seed.branchRootId,
+          depth: computeDepth(seed),
+        },
+        facets: {
+          kind: seed.kind,
+          status: seed.status,
+          stage: seed.stage,
+          authorType: seed.author.type,
+        },
+        provenance: {
+          primaryStore: 'loro',
+          snapshotTable: 'page_snapshots',
+          eventStream: `page:${seed.id}`,
+          actorId: seed.author.id,
+        },
+        timestamps: {
+          createdAt: seed.createdAt,
+          updatedAt: seed.updatedAt,
+        },
+      }
+    }
+
+    function sqlEscape(value) {
+      return String(value).replaceAll("'", "''")
+    }
+
+    function buildSeedInserts() {
+      return seeds.map((seed) => {
+        const omni = buildOmni(seed)
+        const search = buildSearch(seed)
+        return [
+          `-- ${seed.title}`,
+          `INSERT INTO omni_records (`,
+          `  id, entity_type, canonical_id, source_kind, title, summary, body_markdown, body_text,`,
+          `  tags_json, aliases_json, links_json, kind, status, stage, author_type,`,
+          `  parent_id, branch_root_id, depth, created_at, updated_at`,
+          `) VALUES (`,
+          `  '${sqlEscape(omni.id)}', 'card', '${sqlEscape(omni.canonicalId)}', '${sqlEscape(omni.sourceKind)}',`,
+          `  '${sqlEscape(omni.title)}', '${sqlEscape(omni.summary)}', '${sqlEscape(omni.bodyMarkdown)}', '${sqlEscape(omni.bodyText)}',`,
+          `  '${sqlEscape(JSON.stringify(omni.tags))}', '${sqlEscape(JSON.stringify(omni.aliases))}', '${sqlEscape(JSON.stringify(omni.links))}',`,
+          `  '${sqlEscape(omni.facets.kind)}', '${sqlEscape(omni.facets.status)}', '${sqlEscape(omni.facets.stage)}', '${sqlEscape(omni.facets.authorType)}',`,
+          `  ${omni.lineage.parentId ? `'${sqlEscape(omni.lineage.parentId)}'` : 'NULL'}, '${sqlEscape(omni.lineage.branchRootId)}', ${omni.lineage.depth}, ${omni.timestamps.createdAt}, ${omni.timestamps.updatedAt}`,
+          `);`,
+          ``,
+          `INSERT INTO search_documents (`,
+          `  id, entity_type, source, title, summary, body_text, preview,`,
+          `  tags_json, aliases_json, status, kind, parent_id, branch_root_id, updated_at, search_text, rank_hints_json`,
+          `) VALUES (`,
+          `  '${sqlEscape(search.id)}', 'card', 'loro', '${sqlEscape(search.title)}', '${sqlEscape(search.summary)}',`,
+          `  '${sqlEscape(search.bodyText)}', '${sqlEscape(search.preview)}', '${sqlEscape(JSON.stringify(search.tags))}',`,
+          `  '${sqlEscape(JSON.stringify(search.aliases))}', '${sqlEscape(search.status)}', '${sqlEscape(search.kind)}',`,
+          `  ${search.parentId ? `'${sqlEscape(search.parentId)}'` : 'NULL'}, '${sqlEscape(search.branchRootId)}', ${search.updatedAt},`,
+          `  '${sqlEscape(search.searchText)}', '${sqlEscape(JSON.stringify(search.rankHints))}'`,
+          `);`,
+        ].join('\n')
+      }).join('\n\n')
+    }
+
+    function renderSeedOptions() {
+      elements.seedSelect.innerHTML = seeds.map((seed) => {
+        const selected = seed.id === currentId ? ' selected' : ''
+        return `<option value="${seed.id}"${selected}>${seed.title}</option>`
+      }).join('')
+    }
+
+    function renderSnapshotList(seed) {
+      const rows = [
+        ['Title', seed.title],
+        ['Kind', seed.kind],
+        ['Stage', seed.stage],
+        ['Author', `${seed.author.type}:${seed.author.id}`],
+        ['Depth', String(computeDepth(seed))],
+        ['Links', String(seed.links.length)],
+      ]
+      elements.snapshotList.innerHTML = rows.map(([label, value]) => {
+        return `<li><span>${label}</span><strong>${value}</strong></li>`
+      }).join('')
+    }
+
+    function renderChips(seed) {
+      const chips = [
+        seed.kind,
+        seed.stage,
+        seed.status,
+        ...seed.tags.slice(0, 4),
+      ]
+      elements.chipRow.innerHTML = chips.map((chip) => `<span class="chip">${chip}</span>`).join('')
+    }
+
+    function render() {
+      const seed = seeds.find((item) => item.id === currentId) || seeds[0]
+      const loro = buildLoro(seed)
+      const search = buildSearch(seed)
+      const omni = buildOmni(seed)
+
+      elements.heroTitle.textContent = seed.title
+      elements.heroCopy.textContent = seed.summary
+      elements.metaId.textContent = seed.id
+      elements.metaKind.textContent = seed.kind
+      elements.metaParent.textContent = seed.parentId || 'none'
+      elements.metaBranchRoot.textContent = seed.branchRootId
+
+      renderChips(seed)
+      renderSnapshotList(seed)
+
+      elements.canonicalInterface.textContent = canonicalInterface
+      elements.canonicalSeed.textContent = pretty(seed)
+      elements.loroInterface.textContent = loroInterface
+      elements.loroSeed.textContent = pretty(loro)
+      elements.searchInterface.textContent = searchInterface
+      elements.searchSeed.textContent = pretty(search)
+      elements.omniInterface.textContent = omniInterface
+      elements.omniSeed.textContent = pretty(omni)
+      elements.omniSql.textContent = omniSql
+      elements.searchSql.textContent = searchSql
+      elements.seedInserts.textContent = buildSeedInserts()
+      elements.pullOrder.textContent = pullOrder
+      renderSeedOptions()
+    }
+
+    function branchCurrentSeed() {
+      const seed = seeds.find((item) => item.id === currentId)
+      if (!seed) return
+
+      const newId = `${seed.id}-branch-${Math.random().toString(36).slice(2, 6)}`
+      const createdAt = seed.updatedAt + 1000 * 60 * 7
+      const branch = {
+        ...seed,
+        id: newId,
+        kind: 'branch',
+        title: `Branch of ${seed.title}`,
+        summary: `A simulated child branch created from "${seed.title}" to validate lineage and projections.`,
+        bodyMarkdown: `${seed.bodyMarkdown}\n\n## New branch note\n- This child branch starts from the parent content and then diverges.`,
+        createdAt,
+        updatedAt: createdAt,
+        parentId: seed.id,
+        branchRootId: seed.branchRootId || seed.id,
+        stage: 'working',
+        aliases: [...seed.aliases, 'simulated branch'],
+        links: [
+          { targetId: seed.id, relation: 'branch_of', label: 'simulated parent' },
+          ...seed.links,
+        ],
+      }
+
+      seeds = [branch, ...seeds]
+      currentId = branch.id
+      render()
+    }
+
+    function resetSeeds() {
+      seeds = structuredClone(baseSeeds)
+      currentId = seeds[0].id
+      render()
+    }
+
+    document.querySelectorAll('.tab-button').forEach((button) => {
+      button.addEventListener('click', () => {
+        const tab = button.dataset.tab
+        document.querySelectorAll('.tab-button').forEach((node) => node.classList.remove('active'))
+        document.querySelectorAll('.tab-panel').forEach((node) => node.classList.remove('active'))
+        button.classList.add('active')
+        document.getElementById(`tab-${tab}`).classList.add('active')
+      })
+    })
+
+    elements.seedSelect.addEventListener('change', (event) => {
+      currentId = event.target.value
+      render()
+    })
+
+    document.getElementById('branchButton').addEventListener('click', branchCurrentSeed)
+    document.getElementById('resetButton').addEventListener('click', resetSeeds)
+
+    render()
+  </script>
+</body>
+</html>

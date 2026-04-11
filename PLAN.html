@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Branch Continue — Sharpened Plan</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      color: #e2e8f0;
+      line-height: 1.6;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 3rem;
+      padding-bottom: 2rem;
+      border-bottom: 2px solid #334155;
+    }
+
+    h1 {
+      font-size: 2.5rem;
+      margin-bottom: 0.5rem;
+      background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .subtitle {
+      font-size: 1.1rem;
+      color: #cbd5e1;
+      margin-top: 0.5rem;
+    }
+
+    .section {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 2rem;
+      margin-bottom: 2rem;
+      transition: all 0.3s ease;
+    }
+
+    .section:hover {
+      border-color: #475569;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    }
+
+    h2 {
+      font-size: 1.8rem;
+      margin-bottom: 1rem;
+      color: #60a5fa;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    h2::before {
+      content: '';
+      display: inline-block;
+      width: 4px;
+      height: 1.8rem;
+      background: linear-gradient(135deg, #60a5fa, #3b82f6);
+      border-radius: 2px;
+    }
+
+    h3 {
+      font-size: 1.3rem;
+      margin-top: 1.5rem;
+      margin-bottom: 0.75rem;
+      color: #93c5fd;
+    }
+
+    p {
+      margin-bottom: 1rem;
+      color: #cbd5e1;
+    }
+
+    ul, ol {
+      margin-left: 1.5rem;
+      margin-bottom: 1rem;
+    }
+
+    li {
+      margin-bottom: 0.5rem;
+      color: #cbd5e1;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1.5rem 0;
+      background: #0f172a;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    th {
+      background: #334155;
+      padding: 1rem;
+      text-align: left;
+      font-weight: 600;
+      color: #60a5fa;
+      border-bottom: 2px solid #475569;
+    }
+
+    td {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid #334155;
+      color: #cbd5e1;
+    }
+
+    tr:hover {
+      background: #1e293b;
+    }
+
+    code {
+      background: #0f172a;
+      padding: 0.2rem 0.4rem;
+      border-radius: 3px;
+      color: #f472b6;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.9em;
+    }
+
+    pre {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      padding: 1.5rem;
+      overflow-x: auto;
+      margin: 1.5rem 0;
+      color: #e2e8f0;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.9em;
+      line-height: 1.5;
+    }
+
+    .principle {
+      background: #0f172a;
+      border-left: 4px solid #60a5fa;
+      padding: 1.5rem;
+      margin-bottom: 1rem;
+      border-radius: 4px;
+    }
+
+    .principle strong {
+      color: #60a5fa;
+    }
+
+    .badge {
+      display: inline-block;
+      background: #334155;
+      color: #93c5fd;
+      padding: 0.25rem 0.75rem;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      margin-right: 0.5rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .badge.in-mvp {
+      background: rgba(34, 197, 94, 0.2);
+      color: #86efac;
+    }
+
+    .badge.future {
+      background: rgba(168, 85, 247, 0.2);
+      color: #d8b4fe;
+    }
+
+    .badge.concept {
+      background: rgba(59, 130, 246, 0.2);
+      color: #93c5fd;
+    }
+
+    .source-box {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      padding: 1.5rem;
+      margin: 1.5rem 0;
+    }
+
+    .source-box h4 {
+      color: #60a5fa;
+      margin-bottom: 0.5rem;
+      font-size: 0.95rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .source-box p {
+      margin-bottom: 0.5rem;
+      color: #cbd5e1;
+    }
+
+    .source-box code {
+      color: #f472b6;
+      word-break: break-all;
+    }
+
+    .path-list {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      padding: 1.5rem;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.9em;
+      color: #cbd5e1;
+      margin: 1rem 0;
+    }
+
+    .path-list li {
+      margin-bottom: 0.75rem;
+      list-style: none;
+      color: #cbd5e1;
+    }
+
+    .path-list code {
+      color: #f472b6;
+    }
+
+    .section.checklist {
+      border-left: 4px solid #86efac;
+    }
+
+    .checklist h3 {
+      color: #86efac;
+    }
+
+    .checklist ol {
+      list-style-position: inside;
+    }
+
+    .checklist li {
+      margin-bottom: 1rem;
+    }
+
+    footer {
+      text-align: center;
+      padding-top: 2rem;
+      border-top: 1px solid #334155;
+      color: #64748b;
+      margin-top: 3rem;
+    }
+
+    @media (max-width: 768px) {
+      h1 {
+        font-size: 1.8rem;
+      }
+
+      h2 {
+        font-size: 1.3rem;
+      }
+
+      .section {
+        padding: 1.5rem;
+      }
+
+      body {
+        padding: 1rem;
+      }
+
+      pre {
+        font-size: 0.85em;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🌿 Branch Continue</h1>
+      <p class="subtitle">Sharpened MVP Plan — A Thinking Tool with Event Sourcing</p>
+    </header>
+
+    <!-- Product Goal -->
+    <section class="section">
+      <h2>Product Goal</h2>
+      <p>Build a thinking tool that lets a user write freely, branch ideas into divergent pages, traverse those pages as a tree, and search across everything quickly.</p>
+      <p>The MVP is <strong>not</strong> trying to solve collaborative editing, agent layering, or sync in full. It must, however, be shaped so those can be added without rewriting the storage model.</p>
+
+      <h3>Long-term Direction</h3>
+      <ul>
+        <li>User thought is preserved as a sequence, not just a latest blob</li>
+        <li>Agents can inspect context and act on documents through a browser-side execution environment</li>
+        <li>Agent edits and human refinements become separate layers instead of destructive replacement</li>
+        <li>State can be replayed from events, while snapshots keep the product fast</li>
+      </ul>
+    </section>
+
+    <!-- Scope -->
+    <section class="section">
+      <h2>Scope</h2>
+
+      <h3>MVP: What We Are Actually Building First</h3>
+      <ol>
+        <li>Write in a full-screen markdown page.</li>
+        <li>Create a new page.</li>
+        <li>Branch a page into a child page with copied starting content.</li>
+        <li>Traverse pages from a sidebar tree.</li>
+        <li>Search pages by title and content.</li>
+        <li>Persist data locally in the browser.</li>
+        <li>Record append-only events for major user actions.</li>
+      </ol>
+
+      <h3>Explicitly Not In MVP</h3>
+      <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0;">
+        <span class="badge future">multi-actor sync</span>
+        <span class="badge future">remote collaboration</span>
+        <span class="badge future">agent-authored edit layers</span>
+        <span class="badge future">CRDT patch inspection UI</span>
+        <span class="badge future">command execution</span>
+        <span class="badge future">semantic search</span>
+        <span class="badge future">paragraph-level search (if slow)</span>
+      </div>
+    </section>
+
+    <!-- Product Principles -->
+    <section class="section">
+      <h2>Product Principles</h2>
+      <div class="principle">
+        <strong>1. Working software first.</strong> The first version must feel usable as a thinking tool, not as infrastructure.
+      </div>
+      <div class="principle">
+        <strong>2. Preserve original thought.</strong> Even if the UI feels simple, storage should avoid forcing destructive history loss.
+      </div>
+      <div class="principle">
+        <strong>3. Snapshots for speed, events for history.</strong> Rebuildability matters, but the app must stay fast.
+      </div>
+      <div class="principle">
+        <strong>4. Clear separation between document state, event log, and future overlays.</strong>
+      </div>
+      <div class="principle">
+        <strong>5. Small service boundaries now so future agent features can plug in cleanly.</strong>
+      </div>
+    </section>
+
+    <!-- Architecture Direction -->
+    <section class="section">
+      <h2>Architecture Direction</h2>
+
+      <h3>Current System Shape (MVP)</h3>
+      <p>For MVP, each page has:</p>
+      <ul>
+        <li>a current materialized document state</li>
+        <li>persisted snapshots for fast load</li>
+        <li>append-only events for important actions</li>
+      </ul>
+      <p>The app reads mostly from snapshots and metadata, while the event log acts as history and future foundation.</p>
+
+      <h3>Future System Shape</h3>
+      <p>Later, we want:</p>
+      <ul>
+        <li>events replayed to reconstruct page state</li>
+        <li>snapshots as cached checkpoints, not the only source of truth</li>
+        <li>CRDT-backed edits represented as smaller operations over time</li>
+        <li>overlays that reference a base page or base revision</li>
+        <li>agent actions stored as distinct authored layers rather than silent replacements</li>
+      </ul>
+      <p>That future direction should influence naming and interfaces now, but it should <strong>not bloat the MVP</strong>.</p>
+    </section>
+
+    <!-- Core Concepts -->
+    <section class="section">
+      <h2>Core Concepts</h2>
+
+      <h3>Page <span class="badge in-mvp">MVP</span></h3>
+      <p>The user-facing unit. A page is a node in a tree and has a parent pointer when branched.</p>
+
+      <h3>Snapshot <span class="badge in-mvp">MVP</span></h3>
+      <p>A fast-load serialized representation of the latest materialized page state.</p>
+
+      <h3>Event <span class="badge in-mvp">MVP</span></h3>
+      <p>An append-only record of something that happened: page created, branched, title changed, content saved, search run.</p>
+
+      <h3>Revision <span class="badge concept">Future</span></h3>
+      <p>Not a full MVP feature yet, but the system should reserve room for identifying materialized states over time.</p>
+
+      <h3>Overlay <span class="badge concept">Future</span></h3>
+      <p>Not an MVP feature yet. A future overlay is a separate authored layer referencing a base page or revision. It may come from a user refinement pass or an agent operation.</p>
+    </section>
+
+    <!-- Data Model -->
+    <section class="section">
+      <h2>Data Model</h2>
+
+      <h3>Page Document (LoroDoc)</h3>
+      <p>For MVP, each page is backed by a <code>LoroDoc</code> with three root containers:</p>
+      <pre>LoroDoc {
+  meta: LoroMap {
+    id: string
+    title: string
+    createdAt: number
+    parentPageId?: string
+    status: 'active' | 'archived'
+  }
+  content: LoroText
+  view: LoroMap {
+    cursorPosition?: number
+    scrollTop?: number
+  }
+}</pre>
+      <p><strong>Notes:</strong></p>
+      <ul>
+        <li><code>content</code> is a single markdown text field for MVP.</li>
+        <li><code>view</code> is UI state only.</li>
+        <li>no overlay containers inside the document yet</li>
+      </ul>
+
+      <h3>SQLite: <code>page_snapshots</code></h3>
+      <pre>CREATE TABLE page_snapshots (
+  id TEXT PRIMARY KEY,
+  title TEXT,
+  snapshot BLOB NOT NULL,
+  parent_page_id TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);</pre>
+      <p>This is the main read path for MVP.</p>
+
+      <h3>SQLite: <code>events</code></h3>
+      <pre>CREATE TABLE events (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL,
+  page_id TEXT,
+  payload TEXT NOT NULL,
+  actor TEXT NOT NULL DEFAULT 'local',
+  parent_event_id TEXT,
+  lamport_clock INTEGER,
+  timestamp INTEGER NOT NULL
+);</pre>
+      <p><strong>Important:</strong></p>
+      <ul>
+        <li><code>parent_event_id</code> and <code>lamport_clock</code> exist as forward-compatible fields</li>
+        <li>MVP does not depend on distributed correctness for these fields</li>
+        <li>we can initially leave <code>lamport_clock</code> null or assign a simple local incrementing value</li>
+      </ul>
+
+      <h3>Event Types For MVP</h3>
+      <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0;">
+        <span class="badge in-mvp">page.created</span>
+        <span class="badge in-mvp">page.branched</span>
+        <span class="badge in-mvp">page.content_saved</span>
+        <span class="badge in-mvp">page.title_changed</span>
+        <span class="badge in-mvp">page.archived</span>
+        <span class="badge in-mvp">search.executed</span>
+      </div>
+      <p><strong>Use coarse events first. Do not log every keystroke.</strong></p>
+    </section>
+
+    <!-- Why Loro -->
+    <section class="section">
+      <h2>Why Loro in MVP</h2>
+      <p>We are using <code>loro-crdt</code> now for two reasons:</p>
+      <ol>
+        <li>It gives us a durable document model with future-friendly edit semantics</li>
+        <li>It makes the future move toward non-destructive patch-based editing easier</li>
+      </ol>
+      <p>We are <strong>not</strong> using it yet for full multi-actor collaboration. For MVP, it behaves mainly as a durable document container with export/import and local undo/redo potential.</p>
+    </section>
+
+    <!-- Storage Strategy -->
+    <section class="section">
+      <h2>Storage Strategy</h2>
+
+      <h3>MVP Read Path</h3>
+      <ol>
+        <li>list pages from <code>page_snapshots</code></li>
+        <li>load active page snapshot</li>
+        <li>hydrate <code>LoroDoc</code></li>
+        <li>render current title and markdown content</li>
+      </ol>
+
+      <h3>MVP Write Path</h3>
+      <ol>
+        <li>user edits title or content</li>
+        <li>update in-memory <code>LoroDoc</code></li>
+        <li>debounce save</li>
+        <li>export snapshot and upsert <code>page_snapshots</code></li>
+        <li>append coarse event</li>
+      </ol>
+
+      <h3>Future Read Path (not MVP)</h3>
+      <ol>
+        <li>replay events to a checkpoint or full state</li>
+        <li>apply overlays on top of a selected base revision</li>
+        <li>materialize effective content for the viewer/editor</li>
+      </ol>
+      <p>This future path is not required in the first implementation, but service APIs should not prevent it.</p>
+    </section>
+
+    <!-- Search -->
+    <section class="section">
+      <h2>Search</h2>
+
+      <h3>MVP Search</h3>
+      <p>Use the <code>@moa.os/search</code> logic over an in-memory index of pages:</p>
+      <ul>
+        <li>title</li>
+        <li>full content or truncated preview</li>
+      </ul>
+      <p>Return page-level results only for first ship unless paragraph-level results are cheap.</p>
+
+      <h3>Future Search Direction</h3>
+      <p>Later add:</p>
+      <ul>
+        <li>paragraph-level matches</li>
+        <li>revision-aware search</li>
+        <li>overlay-aware search</li>
+        <li>agent action search</li>
+      </ul>
+      <p>The current search layer should therefore be isolated from page persistence details.</p>
+    </section>
+
+    <!-- Implementation: What to Port from moav2 -->
+    <section class="section">
+      <h2>Implementation: What to Port from moav2</h2>
+      <p>We reuse battle-tested patterns from moav2 rather than building from scratch. Here's what to grab and adapt:</p>
+
+      <div class="source-box">
+        <h4>1. Loro Schema Pattern</h4>
+        <p><strong>Source:</strong> <code>~/projs/moa/moav2/src/core/services/loro-schema.ts</code></p>
+        <p><strong>What to take:</strong> The functions that handle LoroDoc creation, meta/content/view manipulation, and branching via export/import.</p>
+        <p><strong>Adaptation for pages:</strong> Replace "flow" with "page", simplify the operations list (MVP doesn't need it), keep the three-container structure.</p>
+      </div>
+
+      <div class="source-box">
+        <h4>2. SQLite Persistence Pattern</h4>
+        <p><strong>Source:</strong> <code>~/projs/moa/moav2/src/core/services/flow-persistence.ts</code></p>
+        <p><strong>What to take:</strong> The BLOB-based snapshot storage pattern, the upsert logic, metadata queries.</p>
+        <p><strong>Adaptation for pages:</strong> Replace "flow_snapshots" with "page_snapshots", drop parent_flow_id complexity (simpler tree), adapt schema columns to match page metadata.</p>
+      </div>
+
+      <div class="source-box">
+        <h4>3. Event Store Infrastructure</h4>
+        <p><strong>Source:</strong> <code>~/projs/moa/moav2/src/core/events/</code> (all files)</p>
+        <p><strong>What to take:</strong> The event writer, reader, and schema. The FTS5 setup with triggers. The ID generation (lexicographic base36 + random).</p>
+        <p><strong>Adaptation for pages:</strong> Use same schema shape; adapt event types to page.* instead of flow.*; keep lamport_clock and parent_event_id as forward-compat but don't implement distributed ordering yet.</p>
+      </div>
+
+      <div class="source-box">
+        <h4>4. Search Engine</h4>
+        <p><strong>Source:</strong> <code>~/projs/moa/packages/search/src/</code> (all files)</p>
+        <p><strong>What to take:</strong> The entire @moa.os/search package. It's zero-dependency, pure TS, and directly applicable.</p>
+        <p><strong>Adaptation for pages:</strong> Index pages by title and content preview. No changes to the search logic itself needed.</p>
+      </div>
+
+      <div class="source-box">
+        <h4>5. wa-sqlite Adapter</h4>
+        <p><strong>Source:</strong> <code>~/projs/moa/moav2/src/platform/shared/wa-sqlite-adapter.ts</code></p>
+        <p><strong>What to take:</strong> The PlatformDatabase / PlatformStatement interfaces and the wa-sqlite wrappers with IDBBatchAtomicVFS setup.</p>
+        <p><strong>Adaptation for pages:</strong> No changes needed. This is platform-agnostic and ready to use as-is.</p>
+      </div>
+    </section>
+
+    <!-- Service Boundaries -->
+    <section class="section">
+      <h2>Recommended Service Boundaries</h2>
+      <p>Keep the first codebase small, but split responsibilities cleanly:</p>
+
+      <div class="path-list">
+        <ul>
+          <li><code>core/</code>
+            <ul style="margin-top: 0.5rem; margin-left: 1rem;">
+              <li><code>platform/</code> — SQLite adapter (types.ts, sqlite.ts)</li>
+              <li><code>page/</code> — LoroDoc and persistence (types.ts, loro-schema.ts, persistence.ts)</li>
+              <li><code>events/</code> — Event store (types.ts, schema.ts, writer.ts, reader.ts, index.ts)</li>
+              <li><code>search/</code> — Search engine (types.ts, exact.ts, fuzzy.ts, compose.ts, frecency.ts, index.ts)</li>
+              <li><code>services/</code> — High-level orchestration (db.ts, page-service.ts)</li>
+            </ul>
+          </li>
+          <li><code>ui/</code> — React components and hooks</li>
+        </ul>
+      </div>
+
+      <p><strong>Key boundary principle:</strong> Each service can be tested independently. Page service doesn't know about React. Search doesn't know about persistence. Persistence doesn't know about events.</p>
+    </section>
+
+    <!-- Verification Checklist -->
+    <section class="section checklist">
+      <h2>✅ Verification Checklist</h2>
+      <ol>
+        <li><code>npm run dev</code> → app loads, shows empty state with "New Page" button</li>
+        <li>Click "New Page" → creates a page, appears in sidebar, ready to edit</li>
+        <li>Type markdown → content edits, auto-saves every 500ms</li>
+        <li>Edit title → title updates, event logged</li>
+        <li>Click "Branch" → new child page created under parent in sidebar tree</li>
+        <li>Child page starts with parent's content (copied at branch time)</li>
+        <li>Click between pages in sidebar → switches active page, content loads correctly</li>
+        <li>Cmd+K or search button → opens search, finds pages by title and content</li>
+        <li>Search results show title matches and content matches ranked correctly</li>
+        <li>Clicking search result → navigates to page</li>
+        <li>SQLite events table has entries: page.created, page.branched, page.content_saved, page.title_changed, search.executed</li>
+        <li>Close app and reopen → pages still there, tree structure preserved</li>
+      </ol>
+    </section>
+
+    <!-- Agent Direction -->
+    <section class="section">
+      <h2>Agent Direction (Future, Not MVP)</h2>
+      <p>This is not part of MVP implementation, but the plan should account for it.</p>
+
+      <h3>Future Agent Capabilities</h3>
+      <ul>
+        <li>An agent can inspect page context and related pages</li>
+        <li>An agent can run approved browser-side commands in an execution environment</li>
+        <li>Outputs from those commands can be surfaced back into the agent loop</li>
+        <li>Agent-authored changes should be attributable and separately stored</li>
+      </ul>
+
+      <h3>Future Agent Editing Model</h3>
+      <p>When an agent acts on a document, it should not silently replace the original page.</p>
+      <p>Preferred future model:</p>
+      <ul>
+        <li>base page remains addressable</li>
+        <li>agent operation references base page or revision</li>
+        <li>resulting edit is stored as an overlay, patch stream, or derived revision</li>
+        <li>UI can later show original, edited, or merged view</li>
+      </ul>
+      <p>This implies that current service boundaries should avoid assuming there is only one canonical authored version forever.</p>
+    </section>
+
+    <footer>
+      <p>Branch Continue — Sharpened MVP Plan</p>
+      <p style="font-size: 0.9rem; color: #475569; margin-top: 0.5rem;">Ready to implement →</p>
+    </footer>
+  </div>
+</body>
+</html>
