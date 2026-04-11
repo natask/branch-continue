@@ -4,7 +4,12 @@ import { useEditorSession } from './ui/hooks/use-editor-session'
 import { SearchModal } from './ui/components/SearchModal'
 import { TimeMachine } from './ui/components/TimeMachine'
 import { Editor } from './ui/components/Editor'
-import { formatNotePosition, orderNotes, type NoteSortMode } from './ui/lib/note-order'
+import {
+  formatNotePosition,
+  orderNotes,
+  resolveBoundaryNote,
+  type NoteSortMode,
+} from './ui/lib/note-order'
 import type { QuickNoteSearchHit, SourceNote } from './core/quicknote/types'
 
 export default function App() {
@@ -61,7 +66,7 @@ function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
     updateNote,
   })
 
-  const orderedNotes = useMemo(() => orderNotes(notes, sortMode), [notes, sortMode])
+  const orderedNotes = useMemo(() => orderNotes(notes), [notes])
   const currentEditorNoteId = editorSession.editor?.source?.id ?? activeNoteId
   const editorPositionLabel = useMemo(
     () => formatNotePosition(orderedNotes, currentEditorNoteId, totalCount),
@@ -107,7 +112,7 @@ function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
         return
       }
 
-      const boundary = orderedNotes[0]
+      const boundary = resolveBoundaryNote(orderedNotes, sortMode)
       if (!boundary) return
       event.preventDefault()
       selectNote(boundary)
@@ -115,12 +120,12 @@ function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [editorSession, orderedNotes, searchOpen, selectNote])
+  }, [editorSession, orderedNotes, searchOpen, selectNote, sortMode])
 
   useEffect(() => {
     if (orderedNotes.length === 0) return
     if (activeNoteId && orderedNotes.some((note) => note.id === activeNoteId)) return
-    selectNote(orderedNotes[0])
+    selectNote(orderedNotes[orderedNotes.length - 1]!)
   }, [activeNoteId, orderedNotes, selectNote])
 
   const handleSearchSelect = useCallback(
@@ -156,7 +161,7 @@ function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
 
         <div className="topbar-meta">
           <label className="topbar-sort" htmlFor="sort-mode">
-            <span>Sort</span>
+            <span>Esc Target</span>
             <select
               id="sort-mode"
               value={sortMode}
@@ -165,8 +170,8 @@ function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
                 setSortMode(nextSortMode)
               }}
             >
-              <option value="latest">Latest first</option>
-              <option value="oldest">Oldest first</option>
+              <option value="latest">Latest</option>
+              <option value="oldest">Oldest</option>
             </select>
           </label>
           <span className="meta-pill">{sourceWritable ? 'Direct Auto-Save' : 'Download Auto-Save'}</span>
@@ -188,7 +193,6 @@ function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
       <TimeMachine
         notes={notes}
         activeNoteId={activeNoteId}
-        sortMode={sortMode}
         totalCount={totalCount}
         recentering={recentering}
         navigationEnabled={!searchOpen && !editorSession.editorOpen}
