@@ -13,7 +13,6 @@ interface UseEditorFieldsOptions {
   focusTitle: () => void
   focusTimestamp: () => void
   focusTagInput: () => void
-  tagInputEnteredFromBodyRef: React.RefObject<boolean>
   preferTagFocusRef: React.RefObject<boolean>
   handleBranchFromEditor: () => Promise<void>
 }
@@ -45,7 +44,6 @@ export function useEditorFields({
   focusTitle,
   focusTimestamp,
   focusTagInput,
-  tagInputEnteredFromBodyRef,
   preferTagFocusRef,
   handleBranchFromEditor,
 }: UseEditorFieldsOptions): UseEditorFieldsResult {
@@ -129,18 +127,6 @@ export function useEditorFields({
         return
       }
 
-      if (event.key === 'Enter' && !event.shiftKey && !event.metaKey && !event.ctrlKey) {
-        const textarea = event.currentTarget
-        const { selectionStart, selectionEnd, value } = textarea
-        const atEnd = selectionStart === value.length && selectionEnd === value.length
-        if (atEnd && value.endsWith('\n')) {
-          event.preventDefault()
-          tagInputEnteredFromBodyRef.current = true
-          focusTagInput()
-          return
-        }
-      }
-
       if (
         event.key === 'Backspace' &&
         event.currentTarget.selectionStart === 0 &&
@@ -167,7 +153,7 @@ export function useEditorFields({
         })
       }
     },
-    [focusTagInput, handleBranchFromEditor, tagInputEnteredFromBodyRef, updateBody],
+    [focusTagInput, handleBranchFromEditor, updateBody],
   )
 
   return {

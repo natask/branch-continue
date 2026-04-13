@@ -9,6 +9,7 @@ interface UseEditorTagsOptions {
   markEditorDirty: (patch: Partial<EditorState>) => void
   commitDraftTags: (tags: string[]) => void
   tagInputEnteredFromBodyRef: React.RefObject<boolean>
+  focusBody: () => void
   focusTagInput: () => void
   focusTimestamp: () => void
   focusTitle: () => void
@@ -32,6 +33,7 @@ export function useEditorTags({
   markEditorDirty,
   commitDraftTags,
   tagInputEnteredFromBodyRef,
+  focusBody,
   focusTagInput,
   focusTimestamp,
   focusTitle,
@@ -190,7 +192,8 @@ export function useEditorTags({
           commitDraftTags(nextTags)
           focusTagInput()
         } else if (!trimmedValue) {
-          focusTagInput()
+          tagInputEnteredFromBodyRef.current = false
+          focusBody()
         } else if (/^#\s*$/.test(value)) {
           setEditorState({ ...current, tagInput: '#' })
           focusTagInput()
@@ -256,6 +259,7 @@ export function useEditorTags({
       clearTagLine,
       commitDraftTags,
       editorRef,
+      focusBody,
       focusTagInput,
       focusTimestamp,
       focusTitle,

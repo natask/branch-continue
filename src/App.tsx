@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Leva } from 'leva'
 import { useApp } from './ui/hooks/use-app'
 import { useEditorSession } from './ui/hooks/use-editor-session'
 import { SearchModal } from './ui/components/SearchModal'
@@ -12,11 +13,36 @@ import {
 } from './ui/lib/note-order'
 import type { QuickNoteSearchHit, SourceNote } from './core/quicknote/types'
 
+const CARD_STACK_TUNER_KEY = 'branch-continue:show-card-stack-tuner'
+
 export default function App() {
   const app = useApp()
+  const [showCardStackTuner, setShowCardStackTuner] = useState(resolveInitialCardStackTunerVisibility)
 
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const shortcut = event.metaKey || event.ctrlKey
+      if (!shortcut || !event.shiftKey || event.key.toLowerCase() !== 'l') return
+      if (isInteractiveTarget(event.target)) return
+      event.preventDefault()
+      setShowCardStackTuner((current) => !current)
+    }
+
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CARD_STACK_TUNER_KEY, showCardStackTuner ? '1' : '0')
+    } catch {
+      // Ignore persistence failures.
+    }
+  }, [showCardStackTuner])
+
+  let content: ReactNode
   if (app.error) {
-    return (
+    content = (
       <div className="error-screen">
         <div className="error-panel">
           <p className="error-title">File operation failed.</p>
@@ -27,17 +53,22 @@ export default function App() {
         </div>
       </div>
     )
+  } else if (!app.ready) {
+    content = <div className="loading">loading file session</div>
+  } else if (!app.sourceSelected) {
+    content = (
+      <SourceSelectionScreen selectingSource={app.selectingSource} selectSourceFile={app.selectSourceFile} />
+    )
+  } else {
+    content = <LoadedSourceApp app={app} />
   }
 
-  if (!app.ready) {
-    return <div className="loading">loading file session</div>
-  }
-
-  if (!app.sourceSelected) {
-    return <SourceSelectionScreen selectingSource={app.selectingSource} selectSourceFile={app.selectSourceFile} />
-  }
-
-  return <LoadedSourceApp app={app} />
+  return (
+    <>
+      <Leva hidden={!showCardStackTuner} />
+      {content}
+    </>
+  )
 }
 
 function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
@@ -372,6 +403,35 @@ function resolveInitialSortMode(): NoteSortMode {
   if (typeof window === 'undefined') return 'latest'
   const start = new URLSearchParams(window.location.search).get('start')
   return start?.toLowerCase() === 'oldest' ? 'oldest' : 'latest'
+}
+
+function resolveInitialCardStackTunerVisibility(): boolean {
+  if (typeof window === 'undefined') return false
+
+  const params = new URLSearchParams(window.location.search)
+  const debugCardStack = params.get('card-stack-tuner')?.toLowerCase()
+  if (debugCardStack === '1' || debugCardStack === 'true' || debugCardStack === 'on') {
+    return true
+  }
+  if (debugCardStack === '0' || debugCardStack === 'false' || debugCardStack === 'off') {
+    return false
+  }
+
+  try {
+    const persisted = window.localStorage.getItem(CARD_STACK_TUNER_KEY)
+    if (persisted === '1') return true
+    if (persisted === '0') return false
+  } catch {
+    // Ignore persistence lookup failures.
+  }
+
+  return !import.meta.env.PROD
+}
+
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  if (target.isContentEditable) return true
+  return target.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]') !== null
 }
 
 function resolveLinkedNote(

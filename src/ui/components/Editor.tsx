@@ -51,80 +51,33 @@ export function Editor({ session, positionLabel }: EditorProps) {
       <div className="note-editor-shell">
         <div className="note-editor-header">
           <div className="note-editor-title-area">
-            {editor.title ? (
-              editor.editing && editor.editingTitle ? (
-                <input
-                  ref={session.titleInputRef}
-                  className="note-editor-title-input"
-                  value={editor.title}
-                  onChange={(event) => session.updateTitle(event.target.value)}
-                  onBlur={session.stopTitleEdit}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault()
-                      session.submitTitleEdit()
-                    }
-                  }}
-                />
-              ) : (
-                <h2
-                  className={`note-editor-title ${editor.editing ? 'note-editor-title--editable' : ''}`}
-                  onClick={editor.editing ? session.beginTitleEdit : undefined}
-                >
-                  {editor.title}
-                </h2>
-              )
+            {editor.editing && editor.editingTitle ? (
+              <input
+                ref={session.titleInputRef}
+                className="note-editor-title-input"
+                value={editor.title}
+                onChange={(event) => session.updateTitle(event.target.value)}
+                onBlur={session.stopTitleEdit}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    session.submitTitleEdit()
+                  }
+                }}
+              />
+            ) : editor.title ? (
+              <h2
+                className={`note-editor-title ${editor.editing ? 'note-editor-title--editable' : ''}`}
+                onClick={editor.editing ? session.beginTitleEdit : undefined}
+              >
+                {editor.title}
+              </h2>
             ) : (
-              <>
-                {editor.timestamp &&
-                  (editor.editing && editor.editingTimestamp ? (
-                    <input
-                      ref={session.timestampInputRef}
-                      className="note-editor-timestamp-input note-editor-timestamp-input--promoted"
-                      value={editor.timestamp}
-                      onChange={(event) => session.updateTimestamp(event.target.value)}
-                      onBlur={session.stopTimestampEdit}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault()
-                          session.submitTimestampEdit()
-                        }
-                        if (event.key === 'Backspace' && !event.currentTarget.value) {
-                          event.preventDefault()
-                          session.moveTimestampEditToTitle()
-                        }
-                      }}
-                    />
-                  ) : (
-                    <h2
-                      className="note-editor-timestamp note-editor-timestamp--promoted"
-                      onClick={editor.editing ? session.beginTimestampEdit : undefined}
-                    >
-                      {editor.timestamp}
-                    </h2>
-                  ))}
-                {editor.editing && !editor.editingTitle && (
-                  <span className="note-editor-add-title" onClick={session.beginTitleEdit}>
-                    + add title
-                  </span>
-                )}
-                {editor.editing && editor.editingTitle && (
-                  <input
-                    ref={session.titleInputRef}
-                    className="note-editor-title-input"
-                    value={editor.title}
-                    placeholder=""
-                    onChange={(event) => session.updateTitle(event.target.value)}
-                    onBlur={session.stopTitleEdit}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault()
-                        session.finishTitleEditToTags()
-                      }
-                    }}
-                  />
-                )}
-              </>
+              editor.editing && (
+                <span className="note-editor-add-title" onClick={session.beginTitleEdit}>
+                  + add title
+                </span>
+              )
             )}
           </div>
 
@@ -197,7 +150,7 @@ export function Editor({ session, positionLabel }: EditorProps) {
           </div>
         </div>
 
-        {editor.title && editor.timestamp && (
+        {editor.timestamp && (
           <div className="note-editor-timestamp-row note-editor-timestamp-row--demoted">
             {editor.editing && editor.editingTimestamp ? (
               <input

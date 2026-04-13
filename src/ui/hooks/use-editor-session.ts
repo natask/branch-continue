@@ -142,7 +142,6 @@ export function useEditorSession({
     focusTitle: focus.focusTitle,
     focusTimestamp: focus.focusTimestamp,
     focusTagInput: focus.focusTagInput,
-    tagInputEnteredFromBodyRef,
     preferTagFocusRef,
     handleBranchFromEditor,
   })
@@ -154,6 +153,7 @@ export function useEditorSession({
     markEditorDirty: draft.markEditorDirty,
     commitDraftTags: draft.commitDraftTags,
     tagInputEnteredFromBodyRef,
+    focusBody: focus.focusBody,
     focusTagInput: focus.focusTagInput,
     focusTimestamp: focus.focusTimestamp,
     focusTitle: focus.focusTitle,
