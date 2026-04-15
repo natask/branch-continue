@@ -17,6 +17,9 @@ importers:
       '@tauri-apps/plugin-fs':
         specifier: ~2
         version: 2.5.0
+      better-cmdk:
+        specifier: link:../better-cmdk/packages/better-cmdk
+        version: link:../better-cmdk/packages/better-cmdk
       leva:
         specifier: ^0.10.1
         version: 0.10.1(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)

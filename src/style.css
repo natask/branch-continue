@@ -661,6 +661,7 @@ pre {
   background: rgba(16, 16, 16, 0.96);
   overflow: hidden;
   box-shadow: 0 24px 90px rgba(0, 0, 0, 0.5);
+  outline: none;
 }
 
 .note-editor {
@@ -931,6 +932,20 @@ pre {
   overflow: auto;
 }
 
+.search-modal [cmdk-group-heading] {
+  padding: 12px 22px 6px;
+  color: var(--text-muted);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.search-separator {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 4px 0;
+}
+
 .search-result {
   width: 100%;
   border: none;
@@ -940,8 +955,18 @@ pre {
   transition: background 0.16s ease;
 }
 
-.search-result:hover {
+.search-result:hover,
+.search-result[aria-selected='true'] {
   background: rgba(255, 255, 255, 0.04);
+}
+
+.search-result[data-pointer-over] {
+  background: rgba(232, 168, 76, 0.09);
+}
+
+.search-result[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .search-result-copy {
@@ -982,6 +1007,14 @@ pre {
   color: var(--text-dim);
   font-size: 0.8rem;
   line-height: 1.65;
+}
+
+.search-result-command .search-result-title {
+  font-family: var(--font-mono);
+  font-size: 0.84rem;
+  font-style: normal;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .search-empty {

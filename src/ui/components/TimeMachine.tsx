@@ -16,6 +16,8 @@ interface TimeMachineProps {
   totalCount: number
   recentering: boolean
   navigationEnabled: boolean
+  swipeUpNavTarget: 'previous' | 'next'
+  wheelNavDirection: 'natural' | 'reverse'
   onSelect: (note: SourceNote) => void
   onOpen: (note: SourceNote) => void
   onBranch: (from: SourceNote) => void
@@ -27,6 +29,8 @@ export function TimeMachine({
   totalCount,
   recentering,
   navigationEnabled,
+  swipeUpNavTarget,
+  wheelNavDirection,
   onSelect,
   onOpen,
   onBranch,
@@ -126,14 +130,15 @@ export function TimeMachine({
 
       if (Math.abs(wheelAccumRef.current) < 40) return
 
-      const direction = wheelAccumRef.current > 0 ? 1 : -1
+      const rawDirection = wheelAccumRef.current > 0 ? 1 : -1
+      const direction = wheelNavDirection === 'natural' ? rawDirection : rawDirection * -1
       wheelAccumRef.current = 0
       focusNote(focusIndex + direction)
     }
 
     element.addEventListener('wheel', handler, { passive: false })
     return () => element.removeEventListener('wheel', handler)
-  }, [focusIndex, navigationEnabled, onSelect, sorted])
+  }, [focusIndex, navigationEnabled, onSelect, sorted, wheelNavDirection])
 
   // Touch swipe navigation for mobile
   useEffect(() => {
@@ -185,11 +190,24 @@ export function TimeMachine({
       const dy = touch.clientY - state.startY
       const elapsed = Date.now() - state.startTime
 
-      // Use the dominant axis; require minimum 30px swipe within 500ms
-      const dominant = Math.abs(dx) > Math.abs(dy) ? dx : -dy
+      // Use the dominant axis; require minimum 30px swipe within 500ms.
+      // Horizontal swipes: left -> next, right -> previous.
+      // Vertical swipe-up target is user-configurable.
+      const vertical = Math.abs(dy) >= Math.abs(dx)
+      const dominant = vertical ? dy : dx
       if (Math.abs(dominant) < 30 || elapsed > 500) return
 
-      const direction = dominant < 0 ? 1 : -1
+      const direction = vertical
+        ? swipeUpNavTarget === 'previous'
+          ? dy < 0
+            ? -1
+            : 1
+          : dy < 0
+            ? 1
+            : -1
+        : dx < 0
+          ? 1
+          : -1
       focusNote(focusIndex + direction)
     }
 
@@ -201,7 +219,7 @@ export function TimeMachine({
       element.removeEventListener('touchmove', onTouchMove)
       element.removeEventListener('touchend', onTouchEnd)
     }
-  }, [focusIndex, navigationEnabled, onSelect, sorted])
+  }, [focusIndex, navigationEnabled, onSelect, sorted, swipeUpNavTarget])
 
   const handleCardBodyPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return

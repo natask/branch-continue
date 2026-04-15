@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Leva } from 'leva'
 import { useApp } from './ui/hooks/use-app'
 import { useEditorSession } from './ui/hooks/use-editor-session'
-import { SearchModal } from './ui/components/SearchModal'
+import { SearchModal, type SearchCommandAction } from './ui/components/SearchModal'
 import { TimeMachine } from './ui/components/TimeMachine'
 import { Editor } from './ui/components/Editor'
 import {
@@ -14,6 +14,11 @@ import {
 import type { QuickNoteSearchHit, SourceNote } from './core/quicknote/types'
 
 const CARD_STACK_TUNER_KEY = 'branch-continue:show-card-stack-tuner'
+const SWIPE_UP_NAV_TARGET_KEY = 'branch-continue:swipe-up-nav-target'
+const WHEEL_NAV_DIRECTION_KEY = 'branch-continue:wheel-nav-direction'
+
+type SwipeUpNavTarget = 'previous' | 'next'
+type WheelNavDirection = 'natural' | 'reverse'
 
 export default function App() {
   const app = useApp()
@@ -60,7 +65,13 @@ export default function App() {
       <SourceSelectionScreen selectingSource={app.selectingSource} selectSourceFile={app.selectSourceFile} />
     )
   } else {
-    content = <LoadedSourceApp app={app} />
+    content = (
+      <LoadedSourceApp
+        app={app}
+        showCardStackTuner={showCardStackTuner}
+        setShowCardStackTuner={setShowCardStackTuner}
+      />
+    )
   }
 
   return (
@@ -71,7 +82,15 @@ export default function App() {
   )
 }
 
-function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
+function LoadedSourceApp({
+  app,
+  showCardStackTuner,
+  setShowCardStackTuner,
+}: {
+  app: ReturnType<typeof useApp>
+  showCardStackTuner: boolean
+  setShowCardStackTuner: (value: boolean | ((current: boolean) => boolean)) => void
+}) {
   const {
     notes,
     activeNoteId,
@@ -91,6 +110,9 @@ function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
   } = app
   const [searchOpen, setSearchOpen] = useState(false)
   const [sortMode, setSortMode] = useState<NoteSortMode>(resolveInitialSortMode)
+  const [swipeUpNavTarget, setSwipeUpNavTarget] = useState<SwipeUpNavTarget>(resolveInitialSwipeUpNavTarget)
+  const [wheelNavDirection, setWheelNavDirection] = useState<WheelNavDirection>(resolveInitialWheelNavDirection)
+  const editorWheelAccumRef = useRef(0)
 
   const editorSession = useEditorSession({
     sourceSelected: true,
@@ -188,6 +210,12 @@ function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
     [editorSession],
   )
 
+  const handleGoToBoundary = useCallback(() => {
+    const boundary = resolveBoundaryNote(orderedNotes, sortMode)
+    if (!boundary) return
+    selectNote(boundary)
+  }, [orderedNotes, selectNote, sortMode])
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const shortcut = event.metaKey || event.ctrlKey
@@ -259,10 +287,222 @@ function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
   ])
 
   useEffect(() => {
+    if (!editorSession.editor || orderedNotes.length === 0) return
+
+    const handler = (event: WheelEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return
+
+      const target = event.target
+      if (!(target instanceof HTMLElement)) return
+      if (!target.closest('.note-editor')) return
+
+      event.preventDefault()
+
+      const delta = Math.abs(event.deltaY) > Math.abs(event.deltaX) ? event.deltaY : event.deltaX
+      editorWheelAccumRef.current += delta
+      if (Math.abs(editorWheelAccumRef.current) < 40) return
+
+      const rawDirection = editorWheelAccumRef.current > 0 ? 1 : -1
+      const direction = wheelNavDirection === 'natural' ? rawDirection : rawDirection * -1
+      editorWheelAccumRef.current = 0
+
+      const currentId = editorSession.editor?.source?.id ?? activeNoteId
+      if (!currentId) return
+
+      const currentIndex = orderedNotes.findIndex((note) => note.id === currentId)
+      if (currentIndex < 0) return
+
+      const nextIndex = Math.max(0, Math.min(orderedNotes.length - 1, currentIndex + direction))
+      if (nextIndex === currentIndex) return
+
+      const nextNote = orderedNotes[nextIndex]
+      if (!nextNote) return
+
+      selectNote(nextNote)
+      editorSession.openNoteEditor(nextNote)
+    }
+
+    window.addEventListener('wheel', handler, { passive: false })
+    return () => window.removeEventListener('wheel', handler)
+  }, [activeNoteId, editorSession, orderedNotes, selectNote, wheelNavDirection])
+
+  useEffect(() => {
     if (orderedNotes.length === 0) return
     if (activeNoteId && orderedNotes.some((note) => note.id === activeNoteId)) return
     selectNote(orderedNotes[orderedNotes.length - 1]!)
   }, [activeNoteId, orderedNotes, selectNote])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SWIPE_UP_NAV_TARGET_KEY, swipeUpNavTarget)
+    } catch {
+      // Ignore persistence failures.
+    }
+  }, [swipeUpNavTarget])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(WHEEL_NAV_DIRECTION_KEY, wheelNavDirection)
+    } catch {
+      // Ignore persistence failures.
+    }
+  }, [wheelNavDirection])
+
+  const commandActions = useMemo<SearchCommandAction[]>(
+    () => [
+      {
+        id: 'select-source-file',
+        label: selectingSource ? 'Select Source File (busy...)' : 'Select Source File',
+        hint: '⌘O',
+        keywords: ['open', 'file', 'source'],
+        group: 'Actions',
+        disabled: selectingSource,
+        run: () => void selectSourceFile(),
+      },
+      {
+        id: 'reload-source-file',
+        label: 'Reload Source File',
+        hint: 'refresh',
+        keywords: ['reload', 'refresh', 'source'],
+        group: 'Actions',
+        run: () => void reloadSource(),
+      },
+      {
+        id: 'branch-current-note',
+        label: 'Branch Current Note',
+        hint: '⌘↩',
+        keywords: ['branch', 'split'],
+        group: 'Actions',
+        run: () => editorSession.openBranchEditor(currentContextNote ?? null),
+      },
+      {
+        id: 'open-parent-note',
+        label: 'Open Parent Note',
+        hint: '⌘[',
+        keywords: ['parent', 'source', 'lineage'],
+        group: 'Navigation',
+        disabled: !currentParentNote,
+        run: () => {
+          if (!currentParentNote) return
+          handleOpenLinkedNote(currentParentNote)
+        },
+      },
+      {
+        id: 'open-first-child-note',
+        label: 'Open First Child Branch',
+        hint: '⌘]',
+        keywords: ['child', 'branch', 'lineage'],
+        group: 'Navigation',
+        disabled: currentChildNotes.length === 0,
+        run: () => {
+          const child = currentChildNotes[0]
+          if (!child) return
+          handleOpenLinkedNote(child)
+        },
+      },
+      {
+        id: 'go-boundary',
+        label: sortMode === 'latest' ? 'Go to Latest Note' : 'Go to Oldest Note',
+        hint: 'Esc',
+        keywords: ['boundary', 'jump', sortMode],
+        group: 'Navigation',
+        disabled: orderedNotes.length === 0,
+        run: handleGoToBoundary,
+      },
+      {
+        id: 'set-sort-latest',
+        label: `Jump Target: Latest${sortMode === 'latest' ? ' (current)' : ''}`,
+        keywords: ['sort', 'latest', 'newest', 'jump'],
+        group: 'Settings',
+        run: () => setSortMode('latest'),
+      },
+      {
+        id: 'set-sort-oldest',
+        label: `Jump Target: Oldest${sortMode === 'oldest' ? ' (current)' : ''}`,
+        keywords: ['sort', 'oldest', 'first', 'jump'],
+        group: 'Settings',
+        run: () => setSortMode('oldest'),
+      },
+      {
+        id: 'set-swipe-previous',
+        label: `Swipe Up: Previous${swipeUpNavTarget === 'previous' ? ' (current)' : ''}`,
+        keywords: ['swipe', 'gesture', 'up', 'previous'],
+        group: 'Settings',
+        run: () => setSwipeUpNavTarget('previous'),
+      },
+      {
+        id: 'set-swipe-next',
+        label: `Swipe Up: Next${swipeUpNavTarget === 'next' ? ' (current)' : ''}`,
+        keywords: ['swipe', 'gesture', 'up', 'next'],
+        group: 'Settings',
+        run: () => setSwipeUpNavTarget('next'),
+      },
+      {
+        id: 'set-wheel-natural',
+        label: `Scroll Direction: Natural${wheelNavDirection === 'natural' ? ' (current)' : ''}`,
+        keywords: ['wheel', 'scroll', 'direction', 'natural'],
+        group: 'Settings',
+        run: () => setWheelNavDirection('natural'),
+      },
+      {
+        id: 'set-wheel-reverse',
+        label: `Scroll Direction: Reverse${wheelNavDirection === 'reverse' ? ' (current)' : ''}`,
+        keywords: ['wheel', 'scroll', 'direction', 'reverse'],
+        group: 'Settings',
+        run: () => setWheelNavDirection('reverse'),
+      },
+      {
+        id: 'toggle-card-stack-tuner',
+        label: `${showCardStackTuner ? 'Hide' : 'Show'} Card Stack Tuner`,
+        keywords: ['debug', 'leva', 'card stack'],
+        group: 'Settings',
+        run: () => setShowCardStackTuner((current) => !current),
+      },
+      {
+        id: 'close-editor',
+        label: 'Close Editor',
+        hint: 'Esc',
+        keywords: ['close', 'editor', 'exit'],
+        group: 'Editor',
+        disabled: !editorSession.editor,
+        run: () => editorSession.closeEditor(),
+      },
+      {
+        id: 'editor-undo',
+        label: 'Undo in Editor',
+        hint: '⌘Z',
+        keywords: ['undo', 'editor'],
+        group: 'Editor',
+        disabled: !editorSession.editor,
+        run: () => editorSession.handleUndo(),
+      },
+      {
+        id: 'editor-redo',
+        label: 'Redo in Editor',
+        hint: '⌘⇧Z',
+        keywords: ['redo', 'editor'],
+        group: 'Editor',
+        disabled: !editorSession.editor,
+        run: () => editorSession.handleRedo(),
+      },
+    ],
+    [
+      currentChildNotes,
+      currentContextNote,
+      currentParentNote,
+      editorSession,
+      handleGoToBoundary,
+      handleOpenLinkedNote,
+      orderedNotes.length,
+      reloadSource,
+      selectingSource,
+      selectSourceFile,
+      showCardStackTuner,
+      sortMode,
+      swipeUpNavTarget,
+      wheelNavDirection,
+    ],
+  )
 
   return (
     <div className="app">
@@ -291,10 +531,7 @@ function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
             </button>
             <button
               className="topbar-jump-go"
-              onClick={() => {
-                const boundary = resolveBoundaryNote(orderedNotes, sortMode)
-                if (boundary) selectNote(boundary)
-              }}
+              onClick={handleGoToBoundary}
               type="button"
             >
               Go
@@ -313,8 +550,28 @@ function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
           >
             Branch
           </button>
+          <button
+            className="topbar-search"
+            onClick={() =>
+              setSwipeUpNavTarget((current) => (current === 'previous' ? 'next' : 'previous'))
+            }
+            type="button"
+            title="Toggle swipe-up navigation target"
+          >
+            Swipe Up: {swipeUpNavTarget === 'previous' ? 'Previous' : 'Next'}
+          </button>
+          <button
+            className="topbar-search"
+            onClick={() =>
+              setWheelNavDirection((current) => (current === 'natural' ? 'reverse' : 'natural'))
+            }
+            type="button"
+            title="Toggle scroll direction for wheel note navigation"
+          >
+            Scroll: {wheelNavDirection === 'natural' ? 'Natural' : 'Reverse'}
+          </button>
           <button className="topbar-search" onClick={() => setSearchOpen(true)} type="button">
-            Search
+            Commands
           </button>
         </div>
       </header>
@@ -356,6 +613,8 @@ function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
         totalCount={totalCount}
         recentering={recentering}
         navigationEnabled={!searchOpen && !editorSession.editorOpen}
+        swipeUpNavTarget={swipeUpNavTarget}
+        wheelNavDirection={wheelNavDirection}
         onSelect={selectNote}
         onOpen={handleOpenNote}
         onBranch={handleBranch}
@@ -366,6 +625,7 @@ function LoadedSourceApp({ app }: { app: ReturnType<typeof useApp> }) {
         onClose={() => setSearchOpen(false)}
         onSearch={searchNotes}
         onSelect={handleSearchSelect}
+        commandActions={commandActions}
       />
 
       {editorSession.editor && (
@@ -426,6 +686,32 @@ function resolveInitialCardStackTunerVisibility(): boolean {
   }
 
   return !import.meta.env.PROD
+}
+
+function resolveInitialSwipeUpNavTarget(): SwipeUpNavTarget {
+  if (typeof window === 'undefined') return 'previous'
+
+  try {
+    const stored = window.localStorage.getItem(SWIPE_UP_NAV_TARGET_KEY)
+    if (stored === 'previous' || stored === 'next') return stored
+  } catch {
+    // Ignore persistence lookup failures.
+  }
+
+  return 'previous'
+}
+
+function resolveInitialWheelNavDirection(): WheelNavDirection {
+  if (typeof window === 'undefined') return 'natural'
+
+  try {
+    const stored = window.localStorage.getItem(WHEEL_NAV_DIRECTION_KEY)
+    if (stored === 'natural' || stored === 'reverse') return stored
+  } catch {
+    // Ignore persistence lookup failures.
+  }
+
+  return 'natural'
 }
 
 function isInteractiveTarget(target: EventTarget | null): boolean {

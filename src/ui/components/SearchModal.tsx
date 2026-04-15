@@ -1,20 +1,47 @@
-import { useEffect, useRef, useState } from 'react'
+import { Command } from 'better-cmdk'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { QuickNoteSearchHit } from '../../core/quicknote/types'
+
+export interface SearchCommandAction {
+  id: string
+  label: string
+  hint?: string
+  keywords?: string[]
+  group?: string
+  disabled?: boolean
+  run: () => void
+}
 
 interface SearchModalProps {
   open: boolean
   onClose: () => void
   onSearch: (query: string) => Promise<QuickNoteSearchHit[]>
   onSelect: (hit: QuickNoteSearchHit) => void
+  commandActions: SearchCommandAction[]
 }
 
-export function SearchModal({ open, onClose, onSearch, onSelect }: SearchModalProps) {
+export function SearchModal({ open, onClose, onSearch, onSelect, commandActions }: SearchModalProps) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<QuickNoteSearchHit[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
   const requestIdRef = useRef(0)
+  const openRef = useRef(open)
+
+  const groupedActions = useMemo(() => {
+    const groups = new Map<string, SearchCommandAction[]>()
+    for (const action of commandActions) {
+      const groupName = action.group ?? 'Commands'
+      const existing = groups.get(groupName) ?? []
+      existing.push(action)
+      groups.set(groupName, existing)
+    }
+    return Array.from(groups.entries())
+  }, [commandActions])
+
+  useEffect(() => {
+    openRef.current = open
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -22,70 +49,128 @@ export function SearchModal({ open, onClose, onSearch, onSelect }: SearchModalPr
     setResults([])
     setError(null)
     setLoading(false)
-    const timer = window.setTimeout(() => inputRef.current?.focus(), 30)
-    return () => window.clearTimeout(timer)
   }, [open])
 
-  useEffect(() => {
-    if (!open) return undefined
-    if (!query.trim()) {
-      setResults([])
-      setLoading(false)
+  const handleSearchChange = useCallback(
+    async (nextQuery: string, signal?: AbortSignal) => {
+      setQuery(nextQuery)
+      if (!openRef.current) return
+      if (!nextQuery.trim()) {
+        requestIdRef.current += 1
+        setResults([])
+        setLoading(false)
+        setError(null)
+        return
+      }
+
+      const currentRequest = requestIdRef.current + 1
+      requestIdRef.current = currentRequest
+      setLoading(true)
       setError(null)
-      return undefined
-    }
 
-    const currentRequest = requestIdRef.current + 1
-    requestIdRef.current = currentRequest
-    setLoading(true)
-    setError(null)
-
-    const timer = window.setTimeout(async () => {
       try {
-        const nextResults = await onSearch(query)
-        if (requestIdRef.current !== currentRequest) return
+        const nextResults = await onSearch(nextQuery)
+        if (signal?.aborted || requestIdRef.current !== currentRequest || !openRef.current) return
         setResults(nextResults)
       } catch (nextError) {
-        if (requestIdRef.current !== currentRequest) return
+        if (signal?.aborted || requestIdRef.current !== currentRequest || !openRef.current) return
         setError(nextError instanceof Error ? nextError.message : String(nextError))
         setResults([])
       } finally {
-        if (requestIdRef.current === currentRequest) {
+        if (!signal?.aborted && requestIdRef.current === currentRequest && openRef.current) {
           setLoading(false)
         }
       }
-    }, 120)
+    },
+    [onSearch],
+  )
 
-    return () => window.clearTimeout(timer)
-  }, [onSearch, open, query])
+  const handleActionSelect = useCallback(
+    (action: SearchCommandAction) => {
+      if (action.disabled) return
+      action.run()
+      onClose()
+    },
+    [onClose],
+  )
 
-  if (!open) return null
+  const handleResultSelect = useCallback(
+    (hit: QuickNoteSearchHit) => {
+      onSelect(hit)
+      onClose()
+    },
+    [onClose, onSelect],
+  )
+
+  const hasSearch = query.trim().length > 0
+  const showNotes = hasSearch && !error && results.length > 0
 
   return (
-    <div className="search-overlay" onClick={onClose}>
-      <div className="search-modal" onClick={(event) => event.stopPropagation()}>
-        <input
-          ref={inputRef}
-          className="search-input"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && results[0]) {
-              event.preventDefault()
-              onSelect(results[0])
-            }
-          }}
-          placeholder="Search the selected file..."
-        />
+    <Command.Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose()
+      }}
+      overlayClassName="search-overlay"
+      contentClassName="search-modal"
+      label="Command palette"
+      description="Run commands and search notes."
+      pointerBehavior="split"
+    >
+      <Command.Input
+        className="search-input"
+        value={query}
+        onValueChange={handleSearchChange}
+        debounce={120}
+        placeholder="Type a command or search notes..."
+        autoFocus
+      />
 
-        <div className="search-results">
-          {loading && <p className="search-empty">searching…</p>}
-          {!loading &&
-            results.map((result) => (
-              <button
+      <Command.List className="search-results">
+        {groupedActions.map(([groupName, actions], groupIndex) => (
+          <div key={groupName}>
+            {groupIndex > 0 && <Command.Separator className="search-separator" />}
+            <Command.Group heading={groupName}>
+              {actions.map((action) => (
+                <Command.Item
+                  key={action.id}
+                  className="search-result search-result-command"
+                  value={`${action.label} ${action.id}`}
+                  keywords={action.keywords}
+                  disabled={action.disabled}
+                  onSelect={() => handleActionSelect(action)}
+                >
+                  <div className="search-result-copy">
+                    <div className="search-result-heading">
+                      <span className="search-result-title">{action.label}</span>
+                      {action.hint && <span className="search-result-line">{action.hint}</span>}
+                    </div>
+                    {action.disabled && (
+                      <div className="search-result-meta">
+                        <span>Unavailable right now</span>
+                      </div>
+                    )}
+                  </div>
+                </Command.Item>
+              ))}
+            </Command.Group>
+          </div>
+        ))}
+
+        {showNotes && <Command.Separator className="search-separator" />}
+        {showNotes && (
+          <Command.Group heading={`Notes (${results.length})`}>
+            {results.map((result) => (
+              <Command.Item
                 key={result.id}
                 className="search-result"
-                onClick={() => onSelect(result)}
+                value={`${result.id} ${result.note.title} ${result.preview}`}
+                keywords={[
+                  `line ${result.lineNumber}`,
+                  result.note.timestamp ?? '',
+                  ...result.note.tags,
+                ]}
+                onSelect={() => handleResultSelect(result)}
               >
                 <div className="search-result-copy">
                   <div className="search-result-heading">
@@ -100,16 +185,15 @@ export function SearchModal({ open, onClose, onSearch, onSelect }: SearchModalPr
                   </div>
                   <p className="search-result-preview">{result.preview}</p>
                 </div>
-              </button>
+              </Command.Item>
             ))}
+          </Command.Group>
+        )}
 
-          {!loading && error && <p className="search-empty">{error}</p>}
-          {!loading && !error && query && results.length === 0 && (
-            <p className="search-empty">No matches found.</p>
-          )}
-          {!loading && !query && <p className="search-empty">Type to search the source file.</p>}
-        </div>
-      </div>
-    </div>
+        {loading && <Command.Loading className="search-empty">searching notes…</Command.Loading>}
+        {error && <p className="search-empty">{error}</p>}
+        <Command.Empty className="search-empty">No matching commands or notes.</Command.Empty>
+      </Command.List>
+    </Command.Dialog>
   )
 }
