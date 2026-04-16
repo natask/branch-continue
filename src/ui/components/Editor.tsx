@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo } from 'react'
 import type { UseEditorSessionResult } from '../hooks/use-editor-session'
 
 interface EditorProps {
@@ -8,7 +8,6 @@ interface EditorProps {
 
 export function Editor({ session, positionLabel }: EditorProps) {
   const editor = session.editor
-  const [bodyWheelTarget, setBodyWheelTarget] = useState<HTMLElement | null>(null)
   const saveIndicatorTitle = useMemo(
     () =>
       session.autoSaveEnabled
@@ -17,32 +16,12 @@ export function Editor({ session, positionLabel }: EditorProps) {
     [session.autoSaveEnabled],
   )
 
-  useEffect(() => {
-    if (!bodyWheelTarget) return
-
-    const handleBodyWheel = (event: WheelEvent) => {
-      if (!(event.metaKey || event.ctrlKey)) return
-      event.preventDefault()
-      event.stopPropagation()
-      bodyWheelTarget.scrollTop += event.deltaY
-      bodyWheelTarget.scrollLeft += event.deltaX
-    }
-
-    bodyWheelTarget.addEventListener('wheel', handleBodyWheel, { passive: false })
-    return () => bodyWheelTarget.removeEventListener('wheel', handleBodyWheel)
-  }, [bodyWheelTarget])
-
   const handleBodyRef = useCallback(
     (element: HTMLTextAreaElement | null) => {
       session.bodyRef.current = element
-      setBodyWheelTarget(element)
     },
     [session.bodyRef],
   )
-
-  const handlePreviewRef = useCallback((element: HTMLPreElement | null) => {
-    setBodyWheelTarget(element)
-  }, [])
 
   if (!editor) return null
 
@@ -242,7 +221,7 @@ export function Editor({ session, positionLabel }: EditorProps) {
             onKeyDown={session.handleBodyKeyDown}
           />
         ) : (
-          <pre ref={handlePreviewRef} className="note-editor-body">
+          <pre className="note-editor-body">
             {editor.body}
           </pre>
         )}
