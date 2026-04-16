@@ -3,9 +3,17 @@ const HANDLE_DB_NAME = 'branch-continue-source-db'
 const HANDLE_STORE = 'source'
 const HANDLE_KEY = 'browser-handle'
 const DEFAULT_TAURI_SOURCE_PATH = import.meta.env.VITE_DEFAULT_SOURCE_PATH?.trim() ?? ''
-const LEGACY_DEFAULT_RELATIVE_PATHS = [
+const DEFAULT_RELATIVE_PATHS = [
+  ['sync', 'o.org'],
+  ['sync', 'quicknote.org'],
+  ['sync', 'QuickNote.org'],
+  ['sync', 'markor', 'o.org'],
   ['sync', 'markor', 'quicknote.org'],
   ['sync', 'markor', 'QuickNote.org'],
+  ['Documents', 'sync', 'o.org'],
+  ['Documents', 'sync', 'quicknote.org'],
+  ['Documents', 'sync', 'QuickNote.org'],
+  ['Documents', 'sync', 'markor', 'o.org'],
   ['Documents', 'sync', 'markor', 'quicknote.org'],
   ['Documents', 'sync', 'markor', 'QuickNote.org'],
 ]
@@ -370,10 +378,13 @@ async function selectTauriFile(): Promise<SelectedSource | null> {
   const mobilePlatform = detectMobilePlatform()
   let defaultPath: string | undefined
 
-  try {
-    defaultPath = await pathApi.homeDir()
-  } catch {
-    defaultPath = undefined
+  // Mobile pickers do not reliably use directory-style default paths.
+  if (mobilePlatform === 'other') {
+    try {
+      defaultPath = await pathApi.homeDir()
+    } catch {
+      defaultPath = undefined
+    }
   }
 
   const dialogOptions: Parameters<typeof dialog.open>[0] = {
@@ -385,15 +396,8 @@ async function selectTauriFile(): Promise<SelectedSource | null> {
     fileAccessMode: mobilePlatform === 'android' ? 'copy' : 'scoped',
   }
 
-  // Android uses MIME-based filtering; include octet-stream for providers that classify .org as unknown.
-  if (mobilePlatform === 'android') {
-    dialogOptions.filters = [
-      {
-        name: 'Org and text files',
-        extensions: ['text/plain', 'text/markdown', 'application/octet-stream'],
-      },
-    ]
-  } else {
+  // Keep Android picker unfiltered so SAF providers don't disable .org files.
+  if (mobilePlatform !== 'android') {
     dialogOptions.filters = [
       {
         name: 'Org and text files',
@@ -439,7 +443,7 @@ async function buildTauriCandidatePaths(pathApi: typeof import('@tauri-apps/api/
   }
 
   if (homePath) {
-    for (const relativePath of LEGACY_DEFAULT_RELATIVE_PATHS) {
+    for (const relativePath of DEFAULT_RELATIVE_PATHS) {
       pushUnique(await pathApi.join(homePath, ...relativePath))
     }
   }
