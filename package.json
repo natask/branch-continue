@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "deploy": "pnpm tauri:build",
+    "app:deploy": "pnpm tauri:build",
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "vite preview",
