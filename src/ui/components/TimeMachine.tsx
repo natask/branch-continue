@@ -62,8 +62,8 @@ export function TimeMachine({
     falloff, falloffBalance, minScale,
   } = useControls('Card Stack', {
     Spread: folder({
-      spreadAngle: { value: -30, min: -90, max: 90, step: 1, label: 'Angle (°)' },
-      spreadDistance: { value: 153, min: 20, max: 400, step: 1, label: 'Distance' },
+      spreadAngle: { value: -30, min: -180, max: 180, step: 1, label: 'Angle (°)' },
+      spreadDistance: { value: 306, min: 20, max: 400, step: 1, label: 'Distance' },
     }),
     'Focused Lift': folder({
       liftAngle: { value: -53, min: -180, max: 180, step: 1, label: 'Angle (°)' },
