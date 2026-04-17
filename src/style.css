@@ -825,6 +825,14 @@ pre {
   flex-shrink: 0;
 }
 
+.note-editor-branch-close {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  flex: 0 0 auto;
+}
+
 .note-editor-tags {
   display: flex;
   flex-wrap: wrap;
@@ -1059,10 +1067,14 @@ pre {
 
   .topbar-meta {
     justify-content: flex-start;
+    width: 100%;
+    gap: 8px;
   }
 
   .topbar-search {
-    min-height: 40px;
+    min-height: 36px;
+    padding: 8px 12px;
+    font-size: 0.68rem;
   }
 
   .lineage-strip {
@@ -1081,11 +1093,15 @@ pre {
   }
 
   .tm-card {
-    width: min(78vw, 340px);
-    height: min(52vh, 260px);
-    margin-left: calc(min(78vw, 340px) / -2);
-    margin-top: calc(min(52vh, 260px) / -2);
+    width: clamp(220px, 72vw, 300px);
+    height: clamp(170px, 40vh, 230px);
+    margin-left: calc(clamp(220px, 72vw, 300px) / -2);
+    margin-top: calc(clamp(170px, 40vh, 230px) / -2);
     border-radius: 16px;
+  }
+
+  .tm-window-status {
+    display: none;
   }
 
   .tm-card-name {
@@ -1117,7 +1133,36 @@ pre {
 
   .note-editor-actions {
     width: 100%;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    gap: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 4px;
+  }
+
+  .note-editor-actions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .note-editor-branch-close {
+    margin-left: auto;
+  }
+
+  .note-editor-actions .btn-primary,
+  .note-editor-actions .btn-secondary {
+    padding: 9px 10px;
+    white-space: nowrap;
+    font-size: 0.74rem;
+    border-radius: 10px;
+  }
+
+  .note-editor-actions .btn-icon,
+  .note-editor-actions .save-icon-btn {
+    flex: 0 0 auto;
+    width: 34px;
+    height: 34px;
   }
 
   .note-editor-title,

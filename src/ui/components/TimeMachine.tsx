@@ -10,6 +10,12 @@ import { useControls, folder } from 'leva'
 import type { SourceNote } from '../../core/quicknote/types'
 import { findNoteIndex, orderNotes } from '../lib/note-order'
 
+const NOTE_NAV_SCROLL_STEP_PX = 40
+const TOUCH_NAV_STEP_PX = 56
+const TOUCH_NAV_MAX_DURATION_MS = 900
+const MOBILE_RIGHT_GESTURE_ZONE_PX = 128
+const MOBILE_RIGHT_GESTURE_ZONE_RATIO = 0.3
+
 interface TimeMachineProps {
   notes: SourceNote[]
   activeNoteId: string | null
@@ -35,6 +41,7 @@ export function TimeMachine({
   onOpen,
   onBranch,
 }: TimeMachineProps) {
+  const mobileDevice = useMemo(() => isLikelyMobileDevice(), [])
   const sorted = useMemo(() => orderNotes(notes).reverse(), [notes])
   const activeIndex = Math.max(0, findNoteIndex(sorted, activeNoteId))
   const containerRef = useRef<HTMLDivElement>(null)
@@ -44,6 +51,8 @@ export function TimeMachine({
     startY: number
     startTime: number
     locked: 'x' | 'y' | null
+    rightGestureZone: boolean
+    navIndex: number
   } | null>(null)
   const bodyDragRef = useRef<{
     pointerId: number
@@ -62,21 +71,21 @@ export function TimeMachine({
     falloff, falloffBalance, minScale,
   } = useControls('Card Stack', {
     Spread: folder({
-      spreadAngle: { value: -30, min: -180, max: 180, step: 1, label: 'Angle (°)' },
-      spreadDistance: { value: 306, min: 20, max: 400, step: 1, label: 'Distance' },
+      spreadAngle: { value: mobileDevice ? -24 : -30, min: -180, max: 180, step: 1, label: 'Angle (°)' },
+      spreadDistance: { value: mobileDevice ? 220 : 306, min: 20, max: 400, step: 1, label: 'Distance' },
     }),
     'Focused Lift': folder({
       liftAngle: { value: -53, min: -180, max: 180, step: 1, label: 'Angle (°)' },
-      liftDistance: { value: 80, min: 0, max: 300, step: 1, label: 'Distance' },
+      liftDistance: { value: mobileDevice ? 52 : 80, min: 0, max: 300, step: 1, label: 'Distance' },
       focusScale: { value: 1.04, min: 0.5, max: 1.5, step: 0.01, label: 'Scale' },
     }),
     'Pile Sink': folder({
-      sinkY: { value: 32, min: -100, max: 200, step: 1, label: 'Push Down' },
+      sinkY: { value: mobileDevice ? 22 : 32, min: -100, max: 200, step: 1, label: 'Push Down' },
     }),
     Falloff: folder({
       falloff: { value: 1.0, min: 0, max: 3, step: 0.05, label: 'Intensity' },
       falloffBalance: { value: 0.5, min: 0, max: 1, step: 0.05, label: 'Blur vs Fade' },
-      minScale: { value: 0.85, min: 0.3, max: 1.0, step: 0.01, label: 'Min Scale' },
+      minScale: { value: mobileDevice ? 0.82 : 0.85, min: 0.3, max: 1.0, step: 0.01, label: 'Min Scale' },
     }),
   })
 
@@ -125,20 +134,35 @@ export function TimeMachine({
 
       event.preventDefault()
 
-      const delta = Math.abs(event.deltaY) > Math.abs(event.deltaX) ? event.deltaY : event.deltaX
-      wheelAccumRef.current += delta
+      const verticalGesture = Math.abs(event.deltaY) >= Math.abs(event.deltaX)
+      const dominantDelta = verticalGesture ? event.deltaY : event.deltaX
+      wheelAccumRef.current += dominantDelta
 
-      if (Math.abs(wheelAccumRef.current) < 40) return
+      const accumulated = wheelAccumRef.current
+      const normalizedAccum = wheelNavDirection === 'natural' ? accumulated : accumulated * -1
+      if (Math.abs(normalizedAccum) < NOTE_NAV_SCROLL_STEP_PX) return
 
-      const rawDirection = wheelAccumRef.current > 0 ? 1 : -1
-      const direction = wheelNavDirection === 'natural' ? rawDirection : rawDirection * -1
-      wheelAccumRef.current = 0
-      focusNote(focusIndex + direction)
+      const stepCount = Math.trunc(Math.abs(normalizedAccum) / NOTE_NAV_SCROLL_STEP_PX)
+      const consumedNormalized = Math.sign(normalizedAccum) * stepCount * NOTE_NAV_SCROLL_STEP_PX
+      const consumedRaw = wheelNavDirection === 'natural' ? consumedNormalized : consumedNormalized * -1
+      wheelAccumRef.current = accumulated - consumedRaw
+
+      let direction: number
+      if (verticalGesture) {
+        // TimeMachine cards are in reverse order (newest first), so "previous" is +1.
+        const upDirection = swipeUpNavTarget === 'previous' ? 1 : -1
+        direction = normalizedAccum < 0 ? upDirection : upDirection * -1
+      } else {
+        const rawDirection = normalizedAccum > 0 ? 1 : -1
+        direction = rawDirection
+      }
+
+      focusNote(focusIndex + direction * stepCount)
     }
 
     element.addEventListener('wheel', handler, { passive: false })
     return () => element.removeEventListener('wheel', handler)
-  }, [focusIndex, navigationEnabled, onSelect, sorted, wheelNavDirection])
+  }, [focusIndex, navigationEnabled, onSelect, sorted, swipeUpNavTarget, wheelNavDirection])
 
   // Touch swipe navigation for mobile
   useEffect(() => {
@@ -148,14 +172,23 @@ export function TimeMachine({
     const onTouchStart = (e: TouchEvent) => {
       const touch = e.touches[0]
       if (!touch) return
-      // Ignore touches inside scrollable card body
+      const mobile = isLikelyMobileDevice()
+      const rightZoneStart = Math.max(
+        window.innerWidth - MOBILE_RIGHT_GESTURE_ZONE_PX,
+        window.innerWidth * (1 - MOBILE_RIGHT_GESTURE_ZONE_RATIO),
+      )
+      const rightGestureZone = !mobile || touch.clientX >= rightZoneStart
+
+      // Allow right-edge gesture lane even if the touch starts over a card body.
       const target = e.target
-      if (target instanceof HTMLElement && target.closest('.tm-card-scroll')) return
+      if (target instanceof HTMLElement && target.closest('.tm-card-scroll') && !rightGestureZone) return
       touchRef.current = {
         startX: touch.clientX,
         startY: touch.clientY,
         startTime: Date.now(),
         locked: null,
+        rightGestureZone,
+        navIndex: focusIndex,
       }
     }
 
@@ -175,6 +208,32 @@ export function TimeMachine({
       // Prevent page scroll when swiping horizontally through cards
       if (state.locked === 'x') {
         e.preventDefault()
+        return
+      }
+
+      // Mobile vertical gesture lane on the right controls note navigation.
+      if (state.locked === 'y' && state.rightGestureZone) {
+        e.preventDefault()
+
+        const stepDelta = touch.clientY - state.startY
+        const stepCount = Math.trunc(Math.abs(stepDelta) / TOUCH_NAV_STEP_PX)
+        if (stepCount <= 0) return
+
+        const upDirection = swipeUpNavTarget === 'previous' ? 1 : -1
+        const direction = stepDelta < 0 ? upDirection : upDirection * -1
+        const nextIndex = clamp(state.navIndex + direction * stepCount, 0, sorted.length - 1)
+        if (nextIndex !== state.navIndex) {
+          const nextNote = sorted[nextIndex]
+          if (nextNote) {
+            state.navIndex = nextIndex
+            setFocusIndex(nextIndex)
+            onSelect(nextNote)
+          }
+        }
+
+        // Reset the gesture anchor to keep stepping smooth while dragging.
+        state.startX = touch.clientX
+        state.startY = touch.clientY
       }
     }
 
@@ -190,25 +249,26 @@ export function TimeMachine({
       const dy = touch.clientY - state.startY
       const elapsed = Date.now() - state.startTime
 
-      // Use the dominant axis; require minimum 30px swipe within 500ms.
+      // Use the dominant axis; require minimum 30px movement within max duration.
       // Horizontal swipes: left -> next, right -> previous.
       // Vertical swipe-up target is user-configurable.
       const vertical = Math.abs(dy) >= Math.abs(dx)
       const dominant = vertical ? dy : dx
-      if (Math.abs(dominant) < 30 || elapsed > 500) return
+      if (Math.abs(dominant) < 30 || elapsed > TOUCH_NAV_MAX_DURATION_MS) return
+      if (vertical && !state.rightGestureZone) return
+
+      const stepCount = Math.max(1, Math.trunc(Math.abs(dominant) / TOUCH_NAV_STEP_PX))
 
       const direction = vertical
-        ? swipeUpNavTarget === 'previous'
-          ? dy < 0
-            ? -1
-            : 1
-          : dy < 0
-            ? 1
-            : -1
+        ? (() => {
+            // TimeMachine cards are in reverse order (newest first), so "previous" is +1.
+            const upDirection = swipeUpNavTarget === 'previous' ? 1 : -1
+            return dy < 0 ? upDirection : upDirection * -1
+          })()
         : dx < 0
           ? 1
           : -1
-      focusNote(focusIndex + direction)
+      focusNote(state.navIndex + direction * stepCount)
     }
 
     element.addEventListener('touchstart', onTouchStart, { passive: true })
@@ -223,6 +283,7 @@ export function TimeMachine({
 
   const handleCardBodyPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return
+    if (event.pointerType === 'touch') return
 
     const element = event.currentTarget
     bodyDragRef.current = {
@@ -240,6 +301,7 @@ export function TimeMachine({
   }
 
   const handleCardBodyPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'touch') return
     const dragState = bodyDragRef.current
     if (!dragState || dragState.pointerId !== event.pointerId) return
 
@@ -256,6 +318,7 @@ export function TimeMachine({
   }
 
   const finishCardBodyDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'touch') return
     const dragState = bodyDragRef.current
     if (!dragState || dragState.pointerId !== event.pointerId) return
 
@@ -273,6 +336,7 @@ export function TimeMachine({
   }
 
   const cancelCardBodyDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'touch') return
     const dragState = bodyDragRef.current
     if (!dragState || dragState.pointerId !== event.pointerId) return
 
@@ -453,4 +517,12 @@ function isInteractiveEventTarget(target: EventTarget | null): boolean {
 
   const interactiveSelector = 'input, textarea, select, [contenteditable="true"], [role="textbox"]'
   return target.closest(interactiveSelector) !== null
+}
+
+function isLikelyMobileDevice(): boolean {
+  if (typeof window === 'undefined') return false
+  const ua = window.navigator.userAgent.toLowerCase()
+  const uaMobile = /android|iphone|ipad|ipod|mobile/.test(ua)
+  const coarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false
+  return uaMobile || coarsePointer
 }

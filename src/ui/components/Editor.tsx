@@ -8,6 +8,7 @@ interface EditorProps {
 
 export function Editor({ session, positionLabel }: EditorProps) {
   const editor = session.editor
+  const isMobile = isLikelyMobileDevice()
   const saveIndicatorTitle = useMemo(
     () =>
       session.autoSaveEnabled
@@ -81,7 +82,7 @@ export function Editor({ session, positionLabel }: EditorProps) {
               </svg>
               {!session.autoSaveEnabled && <span className="save-icon-slash" />}
             </button>
-            {editor.editing && (
+            {editor.editing && !isMobile && (
               <>
                 <button
                   className="btn-icon"
@@ -120,12 +121,14 @@ export function Editor({ session, positionLabel }: EditorProps) {
                 <circle cx="12" cy="12" r="3" />
               </svg>
             </button>
-            <button className="btn-primary" onClick={() => void session.handleBranchFromEditor()} type="button">
-              Branch
-            </button>
-            <button className="btn-secondary" onClick={session.closeEditor} type="button">
-              Close
-            </button>
+            <div className="note-editor-branch-close">
+              <button className="btn-primary" onClick={() => void session.handleBranchFromEditor()} type="button">
+                Branch
+              </button>
+              <button className="btn-secondary" onClick={session.closeEditor} type="button">
+                Close
+              </button>
+            </div>
           </div>
         </div>
 
@@ -228,4 +231,12 @@ export function Editor({ session, positionLabel }: EditorProps) {
       </div>
     </article>
   )
+}
+
+function isLikelyMobileDevice(): boolean {
+  if (typeof window === 'undefined') return false
+  const ua = window.navigator.userAgent.toLowerCase()
+  const uaMobile = /android|iphone|ipad|ipod|mobile/.test(ua)
+  const coarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false
+  return uaMobile || coarsePointer
 }
