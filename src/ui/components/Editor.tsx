@@ -38,12 +38,7 @@ export function Editor({ session, positionLabel }: EditorProps) {
                 value={editor.title}
                 onChange={(event) => session.updateTitle(event.target.value)}
                 onBlur={session.stopTitleEdit}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault()
-                    session.submitTitleEdit()
-                  }
-                }}
+                onKeyDown={session.handleTitleKeyDown}
               />
             ) : editor.title ? (
               <h2

@@ -36,6 +36,7 @@ export interface UseEditorSessionResult {
   submitTitleEdit: () => void
   finishTitleEditToTags: () => void
   updateTitle: (title: string) => void
+  handleTitleKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => void
   beginTimestampEdit: () => void
   stopTimestampEdit: () => void
   submitTimestampEdit: () => void
@@ -112,12 +113,12 @@ export function useEditorSession({
   }, [draft, nextSessionKey, setEditorState])
 
   const closeEditor = useCallback(() => {
-    if (draft.autoSaveTimerRef.current !== null) {
-      window.clearTimeout(draft.autoSaveTimerRef.current)
-      draft.autoSaveTimerRef.current = null
-    }
-    draft.clearSaveError()
-    setEditorState(null)
+    void (async () => {
+      const ok = await draft.flushAutoSave()
+      if (!ok) return
+      draft.clearSaveError()
+      setEditorState(null)
+    })()
   }, [draft, setEditorState])
 
   const handleBranchFromEditor = useCallback(async () => {
@@ -139,6 +140,7 @@ export function useEditorSession({
     commitDraftTitle: draft.commitDraftTitle,
     commitDraftTimestamp: draft.commitDraftTimestamp,
     commitDraftBody: draft.commitDraftBody,
+    focusBody: focus.focusBody,
     focusTitle: focus.focusTitle,
     focusTimestamp: focus.focusTimestamp,
     focusTagInput: focus.focusTagInput,
@@ -186,6 +188,7 @@ export function useEditorSession({
     submitTitleEdit: fields.submitTitleEdit,
     finishTitleEditToTags: fields.finishTitleEditToTags,
     updateTitle: fields.updateTitle,
+    handleTitleKeyDown: fields.handleTitleKeyDown,
     beginTimestampEdit: fields.beginTimestampEdit,
     stopTimestampEdit: fields.stopTimestampEdit,
     submitTimestampEdit: fields.submitTimestampEdit,

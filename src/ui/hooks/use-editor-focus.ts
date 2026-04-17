@@ -55,11 +55,6 @@ export function useEditorFocus({ editor, preferTagFocusRef }: UseEditorFocusOpti
       const timer = window.setTimeout(() => timestampInputRef.current?.focus(), 40)
       return () => window.clearTimeout(timer)
     }
-    if (editor.isNew && editor.tags.length === 0 && !editor.body) {
-      if (activeElement === tagInputRef.current) return
-      const timer = window.setTimeout(() => tagInputRef.current?.focus(), 40)
-      return () => window.clearTimeout(timer)
-    }
     if (preferTagFocusRef.current) {
       preferTagFocusRef.current = false
       if (activeElement === tagInputRef.current) return

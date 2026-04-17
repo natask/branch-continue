@@ -10,6 +10,7 @@ interface UseEditorFieldsOptions {
   commitDraftTitle: (title: string) => void
   commitDraftTimestamp: (timestamp: string | null) => void
   commitDraftBody: (body: string) => void
+  focusBody: () => void
   focusTitle: () => void
   focusTimestamp: () => void
   focusTagInput: () => void
@@ -24,6 +25,7 @@ interface UseEditorFieldsResult {
   submitTitleEdit: () => void
   finishTitleEditToTags: () => void
   updateTitle: (title: string) => void
+  handleTitleKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => void
   beginTimestampEdit: () => void
   stopTimestampEdit: () => void
   submitTimestampEdit: () => void
@@ -41,6 +43,7 @@ export function useEditorFields({
   commitDraftTitle,
   commitDraftTimestamp,
   commitDraftBody,
+  focusBody,
   focusTitle,
   focusTimestamp,
   focusTagInput,
@@ -82,6 +85,29 @@ export function useEditorFields({
       commitDraftTitle(title)
     },
     [commitDraftTitle, markEditorDirty],
+  )
+
+  const handleTitleKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        submitTitleEdit()
+        return
+      }
+
+      if (isNextFieldShortcut(event)) {
+        event.preventDefault()
+        const current = editorRef.current
+        if (!current) return
+        setEditorState({
+          ...current,
+          editingTitle: false,
+          editingTimestamp: false,
+        })
+        focusBody()
+      }
+    },
+    [editorRef, focusBody, setEditorState, submitTitleEdit],
   )
 
   const beginTimestampEdit = useCallback(() => {
@@ -127,6 +153,21 @@ export function useEditorFields({
         return
       }
 
+      if (isPreviousFieldShortcut(event)) {
+        event.preventDefault()
+        const current = editorRef.current
+        if (!current) return
+        setEditorState({
+          ...current,
+          editingTitle: true,
+          editingTimestamp: false,
+          editingTagIndex: null,
+          editingTagValue: '',
+        })
+        focusTitle()
+        return
+      }
+
       if (
         event.key === 'Backspace' &&
         event.currentTarget.selectionStart === 0 &&
@@ -153,7 +194,7 @@ export function useEditorFields({
         })
       }
     },
-    [focusTagInput, handleBranchFromEditor, updateBody],
+    [editorRef, focusTagInput, focusTitle, handleBranchFromEditor, setEditorState, updateBody],
   )
 
   return {
@@ -163,6 +204,7 @@ export function useEditorFields({
     submitTitleEdit,
     finishTitleEditToTags,
     updateTitle,
+    handleTitleKeyDown,
     beginTimestampEdit,
     stopTimestampEdit,
     submitTimestampEdit,
@@ -171,4 +213,16 @@ export function useEditorFields({
     updateBody,
     handleBodyKeyDown,
   }
+}
+
+function isPreviousFieldShortcut(event: React.KeyboardEvent<HTMLElement>): boolean {
+  return isFieldShortcut(event, 'p')
+}
+
+function isNextFieldShortcut(event: React.KeyboardEvent<HTMLElement>): boolean {
+  return isFieldShortcut(event, 'n')
+}
+
+function isFieldShortcut(event: React.KeyboardEvent<HTMLElement>, key: 'p' | 'n'): boolean {
+  return (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === key
 }
