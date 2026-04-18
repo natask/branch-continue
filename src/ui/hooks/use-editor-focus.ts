@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef } from 'react'
 import type { EditorState } from './editor-session-shared'
 
+export type EditorCaretPlacement = 'start' | 'end'
+
 interface UseEditorFocusOptions {
   editor: EditorState | null
   preferTagFocusRef: React.RefObject<boolean>
@@ -11,10 +13,10 @@ export interface EditorFocusResult {
   titleInputRef: React.RefObject<HTMLInputElement | null>
   timestampInputRef: React.RefObject<HTMLInputElement | null>
   tagInputRef: React.RefObject<HTMLInputElement | null>
-  focusBody: () => void
-  focusTitle: () => void
-  focusTimestamp: () => void
-  focusTagInput: () => void
+  focusBody: (placement?: EditorCaretPlacement) => void
+  focusTitle: (placement?: EditorCaretPlacement) => void
+  focusTimestamp: (placement?: EditorCaretPlacement) => void
+  focusTagInput: (placement?: EditorCaretPlacement) => void
 }
 
 export function useEditorFocus({ editor, preferTagFocusRef }: UseEditorFocusOptions): EditorFocusResult {
@@ -22,21 +24,22 @@ export function useEditorFocus({ editor, preferTagFocusRef }: UseEditorFocusOpti
   const titleInputRef = useRef<HTMLInputElement>(null)
   const timestampInputRef = useRef<HTMLInputElement>(null)
   const tagInputRef = useRef<HTMLInputElement>(null)
+  const lastBodyPrimedSessionRef = useRef<number | null>(null)
 
-  const focusBody = useCallback(() => {
-    requestAnimationFrame(() => bodyRef.current?.focus())
+  const focusBody = useCallback((placement?: EditorCaretPlacement) => {
+    requestAnimationFrame(() => focusInput(bodyRef.current, placement))
   }, [])
 
-  const focusTitle = useCallback(() => {
-    requestAnimationFrame(() => titleInputRef.current?.focus())
+  const focusTitle = useCallback((placement?: EditorCaretPlacement) => {
+    requestAnimationFrame(() => focusInput(titleInputRef.current, placement))
   }, [])
 
-  const focusTimestamp = useCallback(() => {
-    requestAnimationFrame(() => timestampInputRef.current?.focus())
+  const focusTimestamp = useCallback((placement?: EditorCaretPlacement) => {
+    requestAnimationFrame(() => focusInput(timestampInputRef.current, placement))
   }, [])
 
-  const focusTagInput = useCallback(() => {
-    requestAnimationFrame(() => tagInputRef.current?.focus())
+  const focusTagInput = useCallback((placement?: EditorCaretPlacement) => {
+    requestAnimationFrame(() => focusInput(tagInputRef.current, placement))
   }, [])
 
   useEffect(() => {
@@ -62,6 +65,13 @@ export function useEditorFocus({ editor, preferTagFocusRef }: UseEditorFocusOpti
       return () => window.clearTimeout(timer)
     }
 
+    const needsInitialBodyFocus = lastBodyPrimedSessionRef.current !== editor.sessionKey
+    if (needsInitialBodyFocus) {
+      lastBodyPrimedSessionRef.current = editor.sessionKey
+      const timer = window.setTimeout(() => bodyRef.current?.focus(), 40)
+      return () => window.clearTimeout(timer)
+    }
+
     if (activeInsideEditor) return
 
     const timer = window.setTimeout(() => bodyRef.current?.focus(), 40)
@@ -78,4 +88,17 @@ export function useEditorFocus({ editor, preferTagFocusRef }: UseEditorFocusOpti
     focusTimestamp,
     focusTagInput,
   }
+}
+
+function focusInput(
+  element: HTMLInputElement | HTMLTextAreaElement | null,
+  placement?: EditorCaretPlacement,
+): void {
+  if (!element) return
+
+  element.focus()
+  if (!placement) return
+
+  const position = placement === 'start' ? 0 : element.value.length
+  element.setSelectionRange(position, position)
 }

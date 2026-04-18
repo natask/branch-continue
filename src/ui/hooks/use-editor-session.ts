@@ -42,6 +42,7 @@ export interface UseEditorSessionResult {
   submitTimestampEdit: () => void
   moveTimestampEditToTitle: () => void
   updateTimestamp: (timestamp: string) => void
+  handleTimestampKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => void
   updateBody: (body: string) => void
   handleBodyKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void
   removeTag: (tag: string) => void
@@ -194,6 +195,7 @@ export function useEditorSession({
     submitTimestampEdit: fields.submitTimestampEdit,
     moveTimestampEditToTitle: fields.moveTimestampEditToTitle,
     updateTimestamp: fields.updateTimestamp,
+    handleTimestampKeyDown: fields.handleTimestampKeyDown,
     updateBody: fields.updateBody,
     handleBodyKeyDown: fields.handleBodyKeyDown,
     removeTag: tags.removeTag,

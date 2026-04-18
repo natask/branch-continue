@@ -1,6 +1,8 @@
 import { useCallback } from 'react'
 import type React from 'react'
 import type { EditorState, SetEditorState } from './editor-session-shared'
+import { resolveAdjacentEditorSection } from '../lib/editor-section-nav'
+import type { EditorCaretPlacement } from './use-editor-focus'
 
 interface UseEditorFieldsOptions {
   editorRef: React.RefObject<EditorState | null>
@@ -10,10 +12,10 @@ interface UseEditorFieldsOptions {
   commitDraftTitle: (title: string) => void
   commitDraftTimestamp: (timestamp: string | null) => void
   commitDraftBody: (body: string) => void
-  focusBody: () => void
-  focusTitle: () => void
-  focusTimestamp: () => void
-  focusTagInput: () => void
+  focusBody: (placement?: EditorCaretPlacement) => void
+  focusTitle: (placement?: EditorCaretPlacement) => void
+  focusTimestamp: (placement?: EditorCaretPlacement) => void
+  focusTagInput: (placement?: EditorCaretPlacement) => void
   preferTagFocusRef: React.RefObject<boolean>
   handleBranchFromEditor: () => Promise<void>
 }
@@ -31,6 +33,7 @@ interface UseEditorFieldsResult {
   submitTimestampEdit: () => void
   moveTimestampEditToTitle: () => void
   updateTimestamp: (timestamp: string) => void
+  handleTimestampKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => void
   updateBody: (body: string) => void
   handleBodyKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void
 }
@@ -50,6 +53,49 @@ export function useEditorFields({
   preferTagFocusRef,
   handleBranchFromEditor,
 }: UseEditorFieldsOptions): UseEditorFieldsResult {
+  const moveFromSection = useCallback(
+    (currentSection: 'title' | 'timestamp' | 'body', direction: 'previous' | 'next') => {
+      const current = editorRef.current
+      if (!current) return
+
+      const destination = resolveAdjacentEditorSection(currentSection, direction, Boolean(current.timestamp))
+      if (!destination) return
+
+      const placement: EditorCaretPlacement = direction === 'previous' ? 'end' : 'start'
+      setEditorState({
+        ...current,
+        editingTitle: destination === 'title',
+        editingTimestamp: destination === 'timestamp',
+        editingTagIndex: null,
+        editingTagValue: '',
+      })
+
+      if (destination === 'title') {
+        focusTitle(placement)
+        return
+      }
+      if (destination === 'timestamp') {
+        focusTimestamp(placement)
+        return
+      }
+      if (destination === 'tags') {
+        preferTagFocusRef.current = true
+        focusTagInput(placement)
+        return
+      }
+      focusBody(placement)
+    },
+    [
+      editorRef,
+      focusBody,
+      focusTagInput,
+      focusTimestamp,
+      focusTitle,
+      preferTagFocusRef,
+      setEditorState,
+    ],
+  )
+
   const toggleEdit = useCallback(() => {
     updateCurrent((current) => ({ ...current, editing: !current.editing }))
   }, [updateCurrent])
@@ -97,17 +143,16 @@ export function useEditorFields({
 
       if (isNextFieldShortcut(event)) {
         event.preventDefault()
-        const current = editorRef.current
-        if (!current) return
-        setEditorState({
-          ...current,
-          editingTitle: false,
-          editingTimestamp: false,
-        })
-        focusBody()
+        moveFromSection('title', 'next')
+        return
+      }
+
+      if (isPreviousFieldShortcut(event)) {
+        event.preventDefault()
+        moveFromSection('title', 'previous')
       }
     },
-    [editorRef, focusBody, setEditorState, submitTitleEdit],
+    [moveFromSection, submitTitleEdit],
   )
 
   const beginTimestampEdit = useCallback(() => {
@@ -137,6 +182,34 @@ export function useEditorFields({
     [commitDraftTimestamp, markEditorDirty],
   )
 
+  const handleTimestampKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        submitTimestampEdit()
+        return
+      }
+
+      if (isPreviousFieldShortcut(event)) {
+        event.preventDefault()
+        moveFromSection('timestamp', 'previous')
+        return
+      }
+
+      if (isNextFieldShortcut(event)) {
+        event.preventDefault()
+        moveFromSection('timestamp', 'next')
+        return
+      }
+
+      if (event.key === 'Backspace' && !event.currentTarget.value) {
+        event.preventDefault()
+        moveFromSection('timestamp', 'previous')
+      }
+    },
+    [moveFromSection, submitTimestampEdit],
+  )
+
   const updateBody = useCallback(
     (body: string) => {
       markEditorDirty({ body })
@@ -155,16 +228,13 @@ export function useEditorFields({
 
       if (isPreviousFieldShortcut(event)) {
         event.preventDefault()
-        const current = editorRef.current
-        if (!current) return
-        setEditorState({
-          ...current,
-          editingTitle: true,
-          editingTimestamp: false,
-          editingTagIndex: null,
-          editingTagValue: '',
-        })
-        focusTitle()
+        moveFromSection('body', 'previous')
+        return
+      }
+
+      if (isNextFieldShortcut(event)) {
+        event.preventDefault()
+        moveFromSection('body', 'next')
         return
       }
 
@@ -194,7 +264,7 @@ export function useEditorFields({
         })
       }
     },
-    [editorRef, focusTagInput, focusTitle, handleBranchFromEditor, setEditorState, updateBody],
+    [focusTagInput, handleBranchFromEditor, moveFromSection, updateBody],
   )
 
   return {
@@ -210,6 +280,7 @@ export function useEditorFields({
     submitTimestampEdit,
     moveTimestampEditToTitle,
     updateTimestamp,
+    handleTimestampKeyDown,
     updateBody,
     handleBodyKeyDown,
   }

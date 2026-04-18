@@ -4,11 +4,11 @@ import type { UseEditorSessionResult } from '../hooks/use-editor-session'
 interface EditorProps {
   session: UseEditorSessionResult
   positionLabel: string
+  isMobile: boolean
 }
 
-export function Editor({ session, positionLabel }: EditorProps) {
+export function Editor({ session, positionLabel, isMobile }: EditorProps) {
   const editor = session.editor
-  const isMobile = isLikelyMobileDevice()
   const saveIndicatorTitle = useMemo(
     () =>
       session.autoSaveEnabled
@@ -136,16 +136,7 @@ export function Editor({ session, positionLabel }: EditorProps) {
                 value={editor.timestamp}
                 onChange={(event) => session.updateTimestamp(event.target.value)}
                 onBlur={session.stopTimestampEdit}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault()
-                    session.submitTimestampEdit()
-                  }
-                  if (event.key === 'Backspace' && !event.currentTarget.value) {
-                    event.preventDefault()
-                    session.moveTimestampEditToTitle()
-                  }
-                }}
+                onKeyDown={session.handleTimestampKeyDown}
               />
             ) : (
               <span
@@ -226,12 +217,4 @@ export function Editor({ session, positionLabel }: EditorProps) {
       </div>
     </article>
   )
-}
-
-function isLikelyMobileDevice(): boolean {
-  if (typeof window === 'undefined') return false
-  const ua = window.navigator.userAgent.toLowerCase()
-  const uaMobile = /android|iphone|ipad|ipod|mobile/.test(ua)
-  const coarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false
-  return uaMobile || coarsePointer
 }

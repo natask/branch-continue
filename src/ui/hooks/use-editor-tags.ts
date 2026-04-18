@@ -1,6 +1,8 @@
 import { useCallback } from 'react'
 import type React from 'react'
 import type { EditorState, SetEditorState } from './editor-session-shared'
+import { resolveAdjacentEditorSection } from '../lib/editor-section-nav'
+import type { EditorCaretPlacement } from './use-editor-focus'
 
 interface UseEditorTagsOptions {
   editorRef: React.RefObject<EditorState | null>
@@ -9,10 +11,10 @@ interface UseEditorTagsOptions {
   markEditorDirty: (patch: Partial<EditorState>) => void
   commitDraftTags: (tags: string[]) => void
   tagInputEnteredFromBodyRef: React.RefObject<boolean>
-  focusBody: () => void
-  focusTagInput: () => void
-  focusTimestamp: () => void
-  focusTitle: () => void
+  focusBody: (placement?: EditorCaretPlacement) => void
+  focusTagInput: (placement?: EditorCaretPlacement) => void
+  focusTimestamp: (placement?: EditorCaretPlacement) => void
+  focusTitle: (placement?: EditorCaretPlacement) => void
 }
 
 interface UseEditorTagsResult {
@@ -38,6 +40,36 @@ export function useEditorTags({
   focusTimestamp,
   focusTitle,
 }: UseEditorTagsOptions): UseEditorTagsResult {
+  const moveFromTags = useCallback(
+    (direction: 'previous' | 'next') => {
+      const current = editorRef.current
+      if (!current) return
+
+      const destination = resolveAdjacentEditorSection('tags', direction, Boolean(current.timestamp))
+      if (!destination) return
+
+      const placement: EditorCaretPlacement = direction === 'previous' ? 'end' : 'start'
+      updateCurrent((existing) => ({
+        ...existing,
+        editingTagIndex: null,
+        editingTagValue: '',
+        editingTitle: destination === 'title',
+        editingTimestamp: destination === 'timestamp',
+      }))
+
+      if (destination === 'title') {
+        focusTitle(placement)
+        return
+      }
+      if (destination === 'timestamp') {
+        focusTimestamp(placement)
+        return
+      }
+      focusBody(placement)
+    },
+    [editorRef, focusBody, focusTimestamp, focusTitle, updateCurrent],
+  )
+
   const removeTag = useCallback(
     (tag: string) => {
       const current = editorRef.current
@@ -142,6 +174,20 @@ export function useEditorTags({
         return
       }
 
+      if (isPreviousFieldShortcut(event)) {
+        event.preventDefault()
+        commitTagEdit()
+        moveFromTags('previous')
+        return
+      }
+
+      if (isNextFieldShortcut(event)) {
+        event.preventDefault()
+        commitTagEdit()
+        moveFromTags('next')
+        return
+      }
+
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
         const sliced =
@@ -154,7 +200,7 @@ export function useEditorTags({
         })
       }
     },
-    [cancelTagEdit, commitTagEdit, editorRef, setEditorState],
+    [cancelTagEdit, commitTagEdit, editorRef, moveFromTags, setEditorState],
   )
 
   const handleTagInputChange = useCallback(
@@ -226,6 +272,20 @@ export function useEditorTags({
         return
       }
 
+      if (isPreviousFieldShortcut(event)) {
+        tagInputEnteredFromBodyRef.current = false
+        event.preventDefault()
+        moveFromTags('previous')
+        return
+      }
+
+      if (isNextFieldShortcut(event)) {
+        tagInputEnteredFromBodyRef.current = false
+        event.preventDefault()
+        moveFromTags('next')
+        return
+      }
+
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
 
@@ -264,6 +324,7 @@ export function useEditorTags({
       focusTimestamp,
       focusTitle,
       markEditorDirty,
+      moveFromTags,
       setEditorState,
       tagInputEnteredFromBodyRef,
     ],
@@ -279,4 +340,16 @@ export function useEditorTags({
     handleTagInputChange,
     handleTagInputKeyDown,
   }
+}
+
+function isPreviousFieldShortcut(event: React.KeyboardEvent<HTMLElement>): boolean {
+  return isFieldShortcut(event, 'p')
+}
+
+function isNextFieldShortcut(event: React.KeyboardEvent<HTMLElement>): boolean {
+  return isFieldShortcut(event, 'n')
+}
+
+function isFieldShortcut(event: React.KeyboardEvent<HTMLElement>, key: 'p' | 'n'): boolean {
+  return (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === key
 }
