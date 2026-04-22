@@ -261,6 +261,7 @@ pre {
   align-items: center;
   gap: 8px;
   padding: 0 28px 8px;
+  min-height: 36px;
 }
 
 .lineage-children {
@@ -345,6 +346,207 @@ pre {
   gap: 8px;
 }
 
+/* Parametric tuner: a single scalar (--tune-font) drives every interior dimension.
+   Drag the bottom-right grip to scrub it. See skill: natstack/parametric-ui. */
+.tm-gesture-tuner {
+  position: absolute;
+  top: 54px;
+  left: 18px;
+  width: min(21.5em, calc(100% - 160px));
+  z-index: 190;
+  border-radius: 1.08em;
+  border: 1px solid rgba(232, 168, 76, 0.2);
+  background: rgba(20, 20, 20, 0.82);
+  padding: 0.77em;
+  backdrop-filter: blur(10px);
+  font-size: var(--tune-font, 11px);
+  container-type: inline-size;
+}
+
+.tm-gesture-title {
+  margin: 0 0 0.62em;
+  font-size: 0.9em;
+  color: var(--text-dim);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tm-gesture-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.62em;
+}
+
+.tm-gesture-pad {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 0.31em;
+  height: 6.6em;
+  border-radius: 0.77em;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background:
+    linear-gradient(180deg, rgba(232, 168, 76, 0.12), rgba(232, 168, 76, 0.02)),
+    rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  padding: 0.7em;
+  text-align: left;
+  touch-action: none;
+  user-select: none;
+  cursor: crosshair;
+  font: inherit;
+}
+
+.tm-gesture-pad:active {
+  border-color: rgba(232, 168, 76, 0.44);
+  background:
+    linear-gradient(180deg, rgba(232, 168, 76, 0.2), rgba(232, 168, 76, 0.05)),
+    rgba(255, 255, 255, 0.06);
+}
+
+.tm-gesture-pad-label {
+  font-size: 0.93em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.tm-gesture-pad-hint {
+  font-size: 0.84em;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tm-gesture-pad-dot {
+  position: absolute;
+  width: 0.92em;
+  height: 0.92em;
+  border-radius: 999px;
+  background: var(--accent);
+  border: 0.15em solid rgba(24, 20, 16, 0.84);
+  box-shadow: 0 0 0.92em rgba(232, 168, 76, 0.46);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  touch-action: none;
+}
+
+.tm-gesture-slider {
+  display: grid;
+  grid-template-columns: 4.3em 1fr 3em;
+  align-items: center;
+  gap: 0.62em;
+  margin-top: 0.62em;
+}
+
+.tm-gesture-slider-label {
+  font-size: 0.87em;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tm-gesture-slider input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 0.31em;
+  border-radius: 0.15em;
+  background: rgba(255, 255, 255, 0.1);
+  outline: none;
+  cursor: pointer;
+}
+
+.tm-gesture-slider input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 1.08em;
+  height: 1.08em;
+  border-radius: 999px;
+  background: var(--accent);
+  border: 0.15em solid rgba(24, 20, 16, 0.84);
+  box-shadow: 0 0 0.62em rgba(232, 168, 76, 0.3);
+  cursor: grab;
+}
+
+.tm-gesture-slider input[type='range']::-webkit-slider-thumb:active {
+  cursor: grabbing;
+}
+
+.tm-gesture-slider input[type='range']::-moz-range-thumb {
+  width: 1.08em;
+  height: 1.08em;
+  border-radius: 999px;
+  background: var(--accent);
+  border: 0.15em solid rgba(24, 20, 16, 0.84);
+  box-shadow: 0 0 0.62em rgba(232, 168, 76, 0.3);
+  cursor: grab;
+}
+
+.tm-gesture-slider-value {
+  font-size: 0.84em;
+  color: var(--text-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.tm-gesture-reset {
+  margin-top: 0.46em;
+  align-self: flex-end;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 0.46em;
+  padding: 0.31em 0.62em;
+  font-size: 0.9em;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.tm-gesture-reset:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+}
+
+/* Corner drag-grip — scrubs --tune-font. Contents cascade from font-size. */
+.tm-gesture-resize {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 1.4em;
+  height: 1.4em;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  opacity: 0.55;
+  cursor: nwse-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.tm-gesture-resize::before {
+  content: '';
+  position: absolute;
+  inset: auto 0.23em 0.23em auto;
+  width: 0.7em;
+  height: 0.7em;
+  background:
+    linear-gradient(135deg,
+      transparent 0 48%,
+      currentColor 48% 56%,
+      transparent 56% 68%,
+      currentColor 68% 80%,
+      transparent 80% 100%);
+}
+
+.tm-gesture-resize:hover,
+.tm-gesture-resize:active {
+  opacity: 1;
+}
+
 .tm-window-status {
   display: inline-flex;
   align-items: center;
@@ -377,20 +579,32 @@ pre {
   position: relative;
   width: 100%;
   height: 100%;
+  transform-style: preserve-3d;
   animation: card-rise 0.9s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
+}
+
+.tm-world {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  transform-origin: 50% 53%;
+  will-change: transform;
+  transition: transform 0.42s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .tm-card {
   position: absolute;
   top: 53%;
   left: 50%;
-  margin-left: -310px;
-  margin-top: -192px;
-  width: 620px;
-  height: 384px;
+  margin-left: -296px;
+  margin-top: -178px;
+  width: 592px;
+  height: 356px;
   padding: 0;
   border: none;
   border-radius: 20px;
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
   background: rgba(28, 28, 28, 0.92);
   color: var(--text);
   text-align: left;
@@ -485,6 +699,137 @@ pre {
 .tm-card-scroll[data-dragging='true'] {
   cursor: grabbing;
   user-select: none;
+}
+
+.app-mobile-preview {
+  width: min(430px, 100%);
+  margin: 0 auto;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.app-mobile-preview .topbar {
+  flex-direction: column;
+}
+
+.app-mobile-preview .topbar-title {
+  font-size: 2.2rem;
+}
+
+.app-mobile-preview .topbar-meta {
+  justify-content: flex-start;
+  width: 100%;
+  gap: 8px;
+}
+
+.app-mobile-preview .topbar-search {
+  min-height: 36px;
+  padding: 8px 12px;
+  font-size: 0.68rem;
+}
+
+.app-mobile-preview .lineage-strip {
+  padding: 0 12px 8px;
+}
+
+.app-mobile-preview .tm-layout {
+  padding: 0 12px 12px;
+}
+
+.app-mobile-preview .tm-stage {
+  min-height: 0;
+  border-radius: 20px;
+  padding: 16px 12px 58px;
+}
+
+.app-mobile-preview .tm-card {
+  width: clamp(172px, 62vw, 220px);
+  height: clamp(142px, 33vh, 188px);
+  margin-left: calc(clamp(172px, 62vw, 220px) / -2);
+  margin-top: calc(clamp(142px, 33vh, 188px) / -2);
+  border-radius: 16px;
+}
+
+.app-mobile-preview .tm-window-status {
+  display: none;
+}
+
+.app-mobile-preview .tm-card-titlebar {
+  padding: 16px 18px 10px;
+  gap: 6px;
+}
+
+.app-mobile-preview .tm-card-name {
+  font-size: 1.15rem;
+}
+
+.app-mobile-preview .tm-card-body {
+  padding: 10px 14px 14px;
+  gap: 8px;
+}
+
+.app-mobile-preview .tm-card-preview {
+  font-size: 0.74rem;
+  line-height: 1.52;
+}
+
+.app-mobile-preview .tm-card-scroll,
+.app-mobile-preview .tm-card-scroll[data-dragging='true'] {
+  cursor: auto;
+}
+
+.app-mobile-preview .note-editor-shell {
+  padding: 18px;
+}
+
+.app-mobile-preview .tm-gesture-tuner {
+  top: 52px;
+  left: 12px;
+  width: calc(100% - 24px);
+  --tune-font: 9px;
+}
+
+.app-mobile-preview .note-editor-header {
+  flex-direction: column;
+}
+
+.app-mobile-preview .note-editor-actions {
+  width: 100%;
+  flex-wrap: nowrap;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding-bottom: 4px;
+}
+
+.app-mobile-preview .note-editor-actions::-webkit-scrollbar {
+  display: none;
+}
+
+.app-mobile-preview .note-editor-branch-close {
+  margin-left: auto;
+}
+
+.app-mobile-preview .note-editor-actions .btn-primary,
+.app-mobile-preview .note-editor-actions .btn-secondary {
+  padding: 9px 10px;
+  white-space: nowrap;
+  font-size: 0.74rem;
+  border-radius: 10px;
+}
+
+.app-mobile-preview .note-editor-actions .btn-icon,
+.app-mobile-preview .note-editor-actions .save-icon-btn {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+}
+
+.app-mobile-preview .note-editor-title,
+.app-mobile-preview .note-editor-title-input {
+  font-size: 1.8rem;
 }
 
 .tm-card-preview {
@@ -1093,10 +1438,10 @@ pre {
   }
 
   .tm-card {
-    width: clamp(220px, 72vw, 300px);
-    height: clamp(170px, 40vh, 230px);
-    margin-left: calc(clamp(220px, 72vw, 300px) / -2);
-    margin-top: calc(clamp(170px, 40vh, 230px) / -2);
+    width: clamp(172px, 62vw, 220px);
+    height: clamp(142px, 33vh, 188px);
+    margin-left: calc(clamp(172px, 62vw, 220px) / -2);
+    margin-top: calc(clamp(142px, 33vh, 188px) / -2);
     border-radius: 16px;
   }
 
@@ -1114,13 +1459,25 @@ pre {
   }
 
   .tm-card-body {
-    padding: 12px 18px 16px;
-    gap: 10px;
+    padding: 10px 14px 14px;
+    gap: 8px;
   }
 
   .tm-card-preview {
-    font-size: 0.78rem;
-    line-height: 1.6;
+    font-size: 0.74rem;
+    line-height: 1.52;
+  }
+
+  .tm-gesture-tuner {
+    top: 52px;
+    left: 12px;
+    width: calc(100% - 24px);
+    --tune-font: 9px;
+  }
+
+  .tm-card-scroll,
+  .tm-card-scroll[data-dragging='true'] {
+    cursor: auto;
   }
 
   .note-editor-shell {

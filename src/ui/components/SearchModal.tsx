@@ -1,4 +1,4 @@
-import { Command } from 'better-cmdk'
+import { Command } from 'master-cmdk'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { QuickNoteSearchHit } from '../../core/quicknote/types'
 

@@ -6,6 +6,11 @@ import path from 'path'
 
 export default defineConfig({
   plugins: [react(), wasm(), topLevelAwait()],
+  server: {
+    host: '0.0.0.0',
+    port: 5173,
+    strictPort: true,
+  },
   build: {
     target: 'esnext',
   },

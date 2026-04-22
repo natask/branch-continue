@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Leva } from 'leva'
 import { useApp } from './ui/hooks/use-app'
 import { useEditorSession } from './ui/hooks/use-editor-session'
 import { SearchModal, type SearchCommandAction } from './ui/components/SearchModal'
@@ -14,8 +13,7 @@ import {
 import type { QuickNoteSearchHit, SourceNote } from './core/quicknote/types'
 
 const CARD_STACK_TUNER_KEY = 'branch-continue:show-card-stack-tuner'
-const SWIPE_UP_NAV_TARGET_KEY = 'branch-continue:swipe-up-nav-target'
-const WHEEL_NAV_DIRECTION_KEY = 'branch-continue:wheel-nav-direction'
+const MOBILE_PREVIEW_KEY = 'branch-continue:mobile-preview'
 const NOTE_NAV_SCROLL_STEP_PX = 40
 
 type SwipeUpNavTarget = 'previous' | 'next'
@@ -23,24 +21,21 @@ type WheelNavDirection = 'natural' | 'reverse'
 
 export default function App() {
   const app = useApp()
-  const [isMobile, setIsMobile] = useState(() => isLikelyMobileDevice())
+  const [isMobileDevice, setIsMobileDevice] = useState(() => isLikelyMobileDevice())
+  const [mobilePreview, setMobilePreview] = useState(resolveInitialMobilePreview)
+  const isMobile = isMobileDevice || mobilePreview
   const [showCardStackTuner, setShowCardStackTuner] = useState(resolveInitialCardStackTunerVisibility)
 
   useEffect(() => {
-    const updateMobile = () => setIsMobile(isLikelyMobileDevice())
+    const updateMobile = () => setIsMobileDevice(isLikelyMobileDevice())
     updateMobile()
     window.addEventListener('resize', updateMobile)
     return () => window.removeEventListener('resize', updateMobile)
   }, [])
 
   useEffect(() => {
-    if (!isMobile) return
-    setShowCardStackTuner(false)
-  }, [isMobile])
-
-  useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (isMobile) return
+      if (isMobileDevice) return
       const shortcut = event.metaKey || event.ctrlKey
       if (!shortcut || !event.shiftKey || event.key.toLowerCase() !== 'l') return
       if (isInteractiveTarget(event.target)) return
@@ -50,7 +45,7 @@ export default function App() {
 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [isMobile])
+  }, [isMobileDevice])
 
   useEffect(() => {
     try {
@@ -59,6 +54,32 @@ export default function App() {
       // Ignore persistence failures.
     }
   }, [showCardStackTuner])
+
+  useEffect(() => {
+    if (isMobileDevice && mobilePreview) {
+      setMobilePreview(false)
+      return
+    }
+    try {
+      window.localStorage.setItem(MOBILE_PREVIEW_KEY, mobilePreview ? '1' : '0')
+    } catch {
+      // Ignore persistence failures.
+    }
+  }, [isMobileDevice, mobilePreview])
+
+  useEffect(() => {
+    if (isMobileDevice) return
+    const handler = (event: KeyboardEvent) => {
+      const shortcut = event.metaKey || event.ctrlKey
+      if (!shortcut || !event.shiftKey || event.key.toLowerCase() !== 'm') return
+      if (isInteractiveTarget(event.target)) return
+      event.preventDefault()
+      setMobilePreview((current) => !current)
+    }
+
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [isMobileDevice])
 
   let content: ReactNode
   if (app.error) {
@@ -84,28 +105,32 @@ export default function App() {
       <LoadedSourceApp
         app={app}
         isMobile={isMobile}
+        isMobileDevice={isMobileDevice}
+        mobilePreview={mobilePreview}
+        setMobilePreview={setMobilePreview}
         showCardStackTuner={showCardStackTuner}
         setShowCardStackTuner={setShowCardStackTuner}
       />
     )
   }
 
-  return (
-    <>
-      <Leva hidden={!showCardStackTuner || isMobile} />
-      {content}
-    </>
-  )
+  return <>{content}</>
 }
 
 function LoadedSourceApp({
   app,
   isMobile,
+  isMobileDevice,
+  mobilePreview,
+  setMobilePreview,
   showCardStackTuner,
   setShowCardStackTuner,
 }: {
   app: ReturnType<typeof useApp>
   isMobile: boolean
+  isMobileDevice: boolean
+  mobilePreview: boolean
+  setMobilePreview: (value: boolean | ((current: boolean) => boolean)) => void
   showCardStackTuner: boolean
   setShowCardStackTuner: (value: boolean | ((current: boolean) => boolean)) => void
 }) {
@@ -128,8 +153,8 @@ function LoadedSourceApp({
   } = app
   const [searchOpen, setSearchOpen] = useState(false)
   const [sortMode, setSortMode] = useState<NoteSortMode>(resolveInitialSortMode)
-  const [swipeUpNavTarget, setSwipeUpNavTarget] = useState<SwipeUpNavTarget>(resolveInitialSwipeUpNavTarget)
-  const [wheelNavDirection, setWheelNavDirection] = useState<WheelNavDirection>(resolveInitialWheelNavDirection)
+  const swipeUpNavTarget: SwipeUpNavTarget = 'previous'
+  const wheelNavDirection: WheelNavDirection = 'natural'
   const editorWheelAccumRef = useRef(0)
 
   const editorSession = useEditorSession({
@@ -252,9 +277,6 @@ function LoadedSourceApp({
       }
 
       if (shortcut && key === 'k') {
-        if (isMobile) return
-        const target = event.target as HTMLElement
-        if (target.tagName === 'TEXTAREA') return
         event.preventDefault()
         setSearchOpen((current) => !current)
         return
@@ -302,7 +324,6 @@ function LoadedSourceApp({
     orderedNotes,
     searchOpen,
     selectNote,
-    isMobile,
     sortMode,
   ])
 
@@ -368,22 +389,6 @@ function LoadedSourceApp({
     selectNote(orderedNotes[orderedNotes.length - 1]!)
   }, [activeNoteId, orderedNotes, selectNote])
 
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(SWIPE_UP_NAV_TARGET_KEY, swipeUpNavTarget)
-    } catch {
-      // Ignore persistence failures.
-    }
-  }, [swipeUpNavTarget])
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(WHEEL_NAV_DIRECTION_KEY, wheelNavDirection)
-    } catch {
-      // Ignore persistence failures.
-    }
-  }, [wheelNavDirection])
-
   const commandActions = useMemo<SearchCommandAction[]>(
     () => [
       {
@@ -445,6 +450,17 @@ function LoadedSourceApp({
         disabled: orderedNotes.length === 0,
         run: handleGoToBoundary,
       },
+      ...(!isMobileDevice
+        ? [
+            {
+              id: 'toggle-mobile-preview',
+              label: `Mobile Preview: ${mobilePreview ? 'On' : 'Off'}${mobilePreview ? ' (current)' : ''}`,
+              keywords: ['mobile', 'preview', 'simulate', 'phone', 'layout'],
+              group: 'Settings',
+              run: () => setMobilePreview((current) => !current),
+            },
+          ]
+        : []),
       ...(isMobile
         ? []
         : [
@@ -462,42 +478,18 @@ function LoadedSourceApp({
               group: 'Settings',
               run: () => setSortMode('oldest'),
             },
-            {
-              id: 'set-swipe-previous',
-              label: `Swipe Up: Previous${swipeUpNavTarget === 'previous' ? ' (current)' : ''}`,
-              keywords: ['swipe', 'gesture', 'up', 'previous'],
-              group: 'Settings',
-              run: () => setSwipeUpNavTarget('previous'),
-            },
-            {
-              id: 'set-swipe-next',
-              label: `Swipe Up: Next${swipeUpNavTarget === 'next' ? ' (current)' : ''}`,
-              keywords: ['swipe', 'gesture', 'up', 'next'],
-              group: 'Settings',
-              run: () => setSwipeUpNavTarget('next'),
-            },
-            {
-              id: 'set-wheel-natural',
-              label: `Scroll Direction: Natural${wheelNavDirection === 'natural' ? ' (current)' : ''}`,
-              keywords: ['wheel', 'scroll', 'direction', 'natural'],
-              group: 'Settings',
-              run: () => setWheelNavDirection('natural'),
-            },
-            {
-              id: 'set-wheel-reverse',
-              label: `Scroll Direction: Reverse${wheelNavDirection === 'reverse' ? ' (current)' : ''}`,
-              keywords: ['wheel', 'scroll', 'direction', 'reverse'],
-              group: 'Settings',
-              run: () => setWheelNavDirection('reverse'),
-            },
+          ]),
+      ...(!isMobileDevice
+        ? [
             {
               id: 'toggle-card-stack-tuner',
               label: `${showCardStackTuner ? 'Hide' : 'Show'} Card Stack Tuner`,
-              keywords: ['debug', 'leva', 'card stack'],
+              keywords: ['debug', 'leva', 'card stack', 'gesture'],
               group: 'Settings',
               run: () => setShowCardStackTuner((current) => !current),
             },
-          ]),
+          ]
+        : []),
       {
         id: 'close-editor',
         label: 'Close Editor',
@@ -542,15 +534,18 @@ function LoadedSourceApp({
       selectingSource,
       selectSourceFile,
       showCardStackTuner,
+      isMobileDevice,
+      mobilePreview,
       isMobile,
       sortMode,
       swipeUpNavTarget,
       wheelNavDirection,
+      setMobilePreview,
     ],
   )
 
   return (
-    <div className="app">
+    <div className={`app${mobilePreview ? ' app-mobile-preview' : ''}`}>
       <header className="topbar">
         <div className="topbar-copy">
           <h1 className="topbar-title">Branch Continue</h1>
@@ -594,6 +589,20 @@ function LoadedSourceApp({
               Reload
             </button>
           )}
+          {!isMobileDevice && (
+            <button className="topbar-search" onClick={() => setMobilePreview((current) => !current)} type="button">
+              Mobile Preview: {mobilePreview ? 'On' : 'Off'}
+            </button>
+          )}
+          {!isMobileDevice && (
+            <button
+              className="topbar-search"
+              onClick={() => setShowCardStackTuner((current) => !current)}
+              type="button"
+            >
+              Tune Stack: {showCardStackTuner ? 'On' : 'Off'}
+            </button>
+          )}
           <button
             className="topbar-search topbar-search-strong"
             onClick={() => editorSession.openBranchEditor(currentContextNote ?? null)}
@@ -601,68 +610,50 @@ function LoadedSourceApp({
           >
             Branch
           </button>
-          {!isMobile && (
-            <button
-              className="topbar-search"
-              onClick={() =>
-                setSwipeUpNavTarget((current) => (current === 'previous' ? 'next' : 'previous'))
-              }
-              type="button"
-              title="Toggle swipe-up navigation target"
-            >
-              Swipe Up: {swipeUpNavTarget === 'previous' ? 'Previous' : 'Next'}
-            </button>
-          )}
-          {!isMobile && (
-            <button
-              className="topbar-search"
-              onClick={() =>
-                setWheelNavDirection((current) => (current === 'natural' ? 'reverse' : 'natural'))
-              }
-              type="button"
-              title="Toggle scroll direction for wheel note navigation"
-            >
-              Scroll: {wheelNavDirection === 'natural' ? 'Natural' : 'Reverse'}
-            </button>
-          )}
           <button className="topbar-search" onClick={() => setSearchOpen(true)} type="button">
             {isMobile ? 'Search' : 'Commands'}
           </button>
         </div>
       </header>
-      {(currentParentNote || currentChildNotes.length > 0) && (
-        <section className="lineage-strip">
-          {currentParentNote && (
-            <button
-              className="lineage-pill lineage-pill-parent"
-              onClick={() => handleOpenLinkedNote(currentParentNote)}
-              type="button"
-            >
-              Back to source: {describeNote(currentParentNote)}
-            </button>
-          )}
-          {currentChildNotes.length > 0 && (
-            <div className="lineage-children">
-              <span className="lineage-label">Branches</span>
-              {currentChildNotes.slice(0, 3).map((child) => (
-                <button
-                  key={child.id}
-                  className="lineage-pill"
-                  onClick={() => handleOpenLinkedNote(child)}
-                  type="button"
-                >
-                  {describeNote(child)}
-                </button>
-              ))}
-              {currentChildNotes.length > 3 && (
-                <span className="lineage-more">+{currentChildNotes.length - 3} more</span>
-              )}
-            </div>
-          )}
-        </section>
-      )}
+      <section
+        className="lineage-strip"
+        style={
+          !currentParentNote && currentChildNotes.length === 0
+            ? { visibility: 'hidden' }
+            : undefined
+        }
+      >
+        {currentParentNote && (
+          <button
+            className="lineage-pill lineage-pill-parent"
+            onClick={() => handleOpenLinkedNote(currentParentNote)}
+            type="button"
+          >
+            Back to source: {describeNote(currentParentNote)}
+          </button>
+        )}
+        {currentChildNotes.length > 0 && (
+          <div className="lineage-children">
+            <span className="lineage-label">Branches</span>
+            {currentChildNotes.slice(0, 3).map((child) => (
+              <button
+                key={child.id}
+                className="lineage-pill"
+                onClick={() => handleOpenLinkedNote(child)}
+                type="button"
+              >
+                {describeNote(child)}
+              </button>
+            ))}
+            {currentChildNotes.length > 3 && (
+              <span className="lineage-more">+{currentChildNotes.length - 3} more</span>
+            )}
+          </div>
+        )}
+      </section>
 
       <TimeMachine
+        key={isMobile ? 'mobile-stack' : 'desktop-stack'}
         notes={notes}
         activeNoteId={activeNoteId}
         totalCount={totalCount}
@@ -670,6 +661,8 @@ function LoadedSourceApp({
         navigationEnabled={!searchOpen && !editorSession.editorOpen}
         swipeUpNavTarget={swipeUpNavTarget}
         wheelNavDirection={wheelNavDirection}
+        isMobile={isMobile}
+        showGestureTuner={showCardStackTuner && !editorSession.editorOpen}
         onSelect={selectNote}
         onOpen={handleOpenNote}
         onBranch={handleBranch}
@@ -684,7 +677,7 @@ function LoadedSourceApp({
       />
 
       {editorSession.editor && (
-        <Editor session={editorSession} positionLabel={editorPositionLabel} />
+        <Editor session={editorSession} positionLabel={editorPositionLabel} isMobile={isMobile} />
       )}
     </div>
   )
@@ -722,7 +715,7 @@ function resolveInitialSortMode(): NoteSortMode {
 
 function resolveInitialCardStackTunerVisibility(): boolean {
   if (typeof window === 'undefined') return false
-  if (isLikelyMobileDevice()) return false
+  if (isLikelyMobileDevice() || resolveInitialMobilePreview()) return false
 
   const params = new URLSearchParams(window.location.search)
   const debugCardStack = params.get('card-stack-tuner')?.toLowerCase()
@@ -744,32 +737,6 @@ function resolveInitialCardStackTunerVisibility(): boolean {
   return !import.meta.env.PROD
 }
 
-function resolveInitialSwipeUpNavTarget(): SwipeUpNavTarget {
-  if (typeof window === 'undefined') return 'previous'
-
-  try {
-    const stored = window.localStorage.getItem(SWIPE_UP_NAV_TARGET_KEY)
-    if (stored === 'previous' || stored === 'next') return stored
-  } catch {
-    // Ignore persistence lookup failures.
-  }
-
-  return isLikelyMobileDevice() ? 'next' : 'previous'
-}
-
-function resolveInitialWheelNavDirection(): WheelNavDirection {
-  if (typeof window === 'undefined') return 'natural'
-
-  try {
-    const stored = window.localStorage.getItem(WHEEL_NAV_DIRECTION_KEY)
-    if (stored === 'natural' || stored === 'reverse') return stored
-  } catch {
-    // Ignore persistence lookup failures.
-  }
-
-  return 'natural'
-}
-
 function isInteractiveTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false
   if (target.isContentEditable) return true
@@ -782,6 +749,27 @@ function isLikelyMobileDevice(): boolean {
   const uaMobile = /android|iphone|ipad|ipod|mobile/.test(ua)
   const coarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false
   return uaMobile || coarsePointer
+}
+
+function resolveInitialMobilePreview(): boolean {
+  if (typeof window === 'undefined') return false
+
+  const params = new URLSearchParams(window.location.search)
+  const raw = params.get('mobile-preview') ?? params.get('mobile')
+  const normalized = raw?.toLowerCase()
+
+  if (normalized === '1' || normalized === 'true' || normalized === 'on') return true
+  if (normalized === '0' || normalized === 'false' || normalized === 'off') return false
+
+  try {
+    const stored = window.localStorage.getItem(MOBILE_PREVIEW_KEY)
+    if (stored === '1') return true
+    if (stored === '0') return false
+  } catch {
+    // Ignore persistence lookup failures.
+  }
+
+  return false
 }
 
 function resolveLinkedNote(
