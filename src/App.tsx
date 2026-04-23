@@ -68,7 +68,7 @@ export default function App() {
   }, [isMobileDevice, mobilePreview])
 
   useEffect(() => {
-    if (isMobileDevice) return
+    if (isMobileDevice || import.meta.env.PROD) return
     const handler = (event: KeyboardEvent) => {
       const shortcut = event.metaKey || event.ctrlKey
       if (!shortcut || !event.shiftKey || event.key.toLowerCase() !== 'm') return
@@ -139,9 +139,7 @@ function LoadedSourceApp({
     activeNoteId,
     activeNote,
     totalCount,
-    recentering,
     sourcePath,
-    sourceWritable,
     selectingSource,
     selectNote,
     searchNotes,
@@ -273,12 +271,6 @@ function LoadedSourceApp({
       if (editorSession.editor && shortcut && ((key === 'z' && event.shiftKey) || key === 'y')) {
         event.preventDefault()
         editorSession.handleRedo()
-        return
-      }
-
-      if (shortcut && key === 'k') {
-        event.preventDefault()
-        setSearchOpen((current) => !current)
         return
       }
 
@@ -450,7 +442,7 @@ function LoadedSourceApp({
         disabled: orderedNotes.length === 0,
         run: handleGoToBoundary,
       },
-      ...(!isMobileDevice
+      ...(!isMobileDevice && !import.meta.env.PROD
         ? [
             {
               id: 'toggle-mobile-preview',
@@ -461,35 +453,27 @@ function LoadedSourceApp({
             },
           ]
         : []),
-      ...(isMobile
-        ? []
-        : [
-            {
-              id: 'set-sort-latest',
-              label: `Jump Target: Latest${sortMode === 'latest' ? ' (current)' : ''}`,
-              keywords: ['sort', 'latest', 'newest', 'jump'],
-              group: 'Settings',
-              run: () => setSortMode('latest'),
-            },
-            {
-              id: 'set-sort-oldest',
-              label: `Jump Target: Oldest${sortMode === 'oldest' ? ' (current)' : ''}`,
-              keywords: ['sort', 'oldest', 'first', 'jump'],
-              group: 'Settings',
-              run: () => setSortMode('oldest'),
-            },
-          ]),
-      ...(!isMobileDevice
-        ? [
-            {
-              id: 'toggle-card-stack-tuner',
-              label: `${showCardStackTuner ? 'Hide' : 'Show'} Card Stack Tuner`,
-              keywords: ['debug', 'leva', 'card stack', 'gesture'],
-              group: 'Settings',
-              run: () => setShowCardStackTuner((current) => !current),
-            },
-          ]
-        : []),
+      {
+        id: 'set-sort-latest',
+        label: `Jump Target: Latest${sortMode === 'latest' ? ' (current)' : ''}`,
+        keywords: ['sort', 'latest', 'newest', 'jump'],
+        group: 'Settings',
+        run: () => setSortMode('latest'),
+      },
+      {
+        id: 'set-sort-oldest',
+        label: `Jump Target: Oldest${sortMode === 'oldest' ? ' (current)' : ''}`,
+        keywords: ['sort', 'oldest', 'first', 'jump'],
+        group: 'Settings',
+        run: () => setSortMode('oldest'),
+      },
+      {
+        id: 'toggle-card-stack-tuner',
+        label: `${showCardStackTuner ? 'Hide' : 'Show'} Card Stack Tuner`,
+        keywords: ['debug', 'leva', 'card stack', 'gesture', 'tune'],
+        group: 'Settings',
+        run: () => setShowCardStackTuner((current) => !current),
+      },
       {
         id: 'close-editor',
         label: 'Close Editor',
@@ -553,7 +537,6 @@ function LoadedSourceApp({
         </div>
 
         <div className="topbar-meta">
-          {!isMobile && <span className="meta-pill">{sourceWritable ? 'Direct Auto-Save' : 'Download Auto-Save'}</span>}
           {!isMobile && (
             <div className="topbar-jump">
               <button
@@ -580,38 +563,22 @@ function LoadedSourceApp({
             </div>
           )}
           {!isMobile && (
-            <button className="topbar-search" onClick={() => void selectSourceFile()} type="button">
-              {selectingSource ? 'Selecting...' : 'Select File'}
-            </button>
-          )}
-          {!isMobile && (
             <button className="topbar-search" onClick={() => void reloadSource()} type="button">
               Reload
             </button>
           )}
-          {!isMobileDevice && (
-            <button className="topbar-search" onClick={() => setMobilePreview((current) => !current)} type="button">
-              Mobile Preview: {mobilePreview ? 'On' : 'Off'}
-            </button>
-          )}
-          {!isMobileDevice && (
-            <button
-              className="topbar-search"
-              onClick={() => setShowCardStackTuner((current) => !current)}
-              type="button"
-            >
-              Tune Stack: {showCardStackTuner ? 'On' : 'Off'}
-            </button>
-          )}
           <button
-            className="topbar-search topbar-search-strong"
-            onClick={() => editorSession.openBranchEditor(currentContextNote ?? null)}
+            className="topbar-search"
+            onClick={() => setShowCardStackTuner((current) => !current)}
             type="button"
           >
-            Branch
+            Tune: {showCardStackTuner ? 'On' : 'Off'}
           </button>
           <button className="topbar-search" onClick={() => setSearchOpen(true)} type="button">
-            {isMobile ? 'Search' : 'Commands'}
+            Search
+          </button>
+          <button className="topbar-search topbar-search-strong" onClick={() => setSearchOpen(true)} type="button">
+            Commands
           </button>
         </div>
       </header>
@@ -657,7 +624,6 @@ function LoadedSourceApp({
         notes={notes}
         activeNoteId={activeNoteId}
         totalCount={totalCount}
-        recentering={recentering}
         navigationEnabled={!searchOpen && !editorSession.editorOpen}
         swipeUpNavTarget={swipeUpNavTarget}
         wheelNavDirection={wheelNavDirection}
@@ -677,7 +643,12 @@ function LoadedSourceApp({
       />
 
       {editorSession.editor && (
-        <Editor session={editorSession} positionLabel={editorPositionLabel} isMobile={isMobile} />
+        <Editor
+          session={editorSession}
+          positionLabel={editorPositionLabel}
+          isMobile={isMobile}
+          onOpenCommands={() => setSearchOpen(true)}
+        />
       )}
     </div>
   )
@@ -715,7 +686,6 @@ function resolveInitialSortMode(): NoteSortMode {
 
 function resolveInitialCardStackTunerVisibility(): boolean {
   if (typeof window === 'undefined') return false
-  if (isLikelyMobileDevice() || resolveInitialMobilePreview()) return false
 
   const params = new URLSearchParams(window.location.search)
   const debugCardStack = params.get('card-stack-tuner')?.toLowerCase()
@@ -734,6 +704,7 @@ function resolveInitialCardStackTunerVisibility(): boolean {
     // Ignore persistence lookup failures.
   }
 
+  if (isLikelyMobileDevice() || resolveInitialMobilePreview()) return false
   return !import.meta.env.PROD
 }
 

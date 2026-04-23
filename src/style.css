@@ -337,15 +337,6 @@ pre {
   opacity: 1;
 }
 
-.tm-stage-actions {
-  position: absolute;
-  top: 18px;
-  right: 20px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
 /* Parametric tuner: a single scalar (--tune-font) drives every interior dimension.
    Drag the bottom-right grip to scrub it. See skill: natstack/parametric-ui. */
 .tm-gesture-tuner {
@@ -547,34 +538,6 @@ pre {
   opacity: 1;
 }
 
-.tm-window-status {
-  display: inline-flex;
-  align-items: center;
-  border: none;
-  border-radius: 999px;
-  padding: 9px 12px;
-  background: rgba(232, 168, 76, 0.08);
-  color: var(--accent);
-  font-size: 0.72rem;
-  letter-spacing: 0.04em;
-}
-
-.tm-branch-button {
-  border: none;
-  border-radius: 999px;
-  padding: 9px 14px;
-  background: var(--accent);
-  color: #23170a;
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-}
-
-.tm-branch-button:disabled {
-  opacity: 0.56;
-  cursor: not-allowed;
-}
-
 .tm-scene {
   position: relative;
   width: 100%;
@@ -615,6 +578,11 @@ pre {
     filter 0.42s cubic-bezier(0.16, 1, 0.3, 1),
     background 0.18s ease,
     box-shadow 0.24s ease;
+}
+
+.tm-scene.tm-scene-tuning .tm-world,
+.tm-scene.tm-scene-tuning .tm-card {
+  transition: none;
 }
 
 .tm-card:hover {
@@ -750,10 +718,6 @@ pre {
   border-radius: 16px;
 }
 
-.app-mobile-preview .tm-window-status {
-  display: none;
-}
-
 .app-mobile-preview .tm-card-titlebar {
   padding: 16px 18px 10px;
   gap: 6px;
@@ -783,10 +747,51 @@ pre {
 }
 
 .app-mobile-preview .tm-gesture-tuner {
-  top: 52px;
-  left: 12px;
-  width: calc(100% - 24px);
-  --tune-font: 9px;
+  top: 46px;
+  left: 8px;
+  width: min(16.5em, calc(100% - 16px));
+}
+
+.app-mobile-preview .tm-gesture-grid {
+  gap: 0.45em;
+}
+
+.app-mobile-preview .tm-gesture-pad {
+  height: 5.15em;
+  padding: 0.52em;
+  border-radius: 0.64em;
+}
+
+.app-mobile-preview .tm-gesture-pad-label {
+  font-size: 0.86em;
+}
+
+.app-mobile-preview .tm-gesture-pad-hint {
+  font-size: 0.74em;
+}
+
+.app-mobile-preview .tm-gesture-slider {
+  grid-template-columns: 3.8em 1fr 2.6em;
+  gap: 0.48em;
+  margin-top: 0.48em;
+}
+
+.app-mobile-preview .tm-gesture-slider-label {
+  font-size: 0.8em;
+}
+
+.app-mobile-preview .tm-gesture-slider-value {
+  font-size: 0.76em;
+}
+
+.app-mobile-preview .tm-gesture-reset {
+  font-size: 0.8em;
+  padding: 0.24em 0.5em;
+}
+
+.app-mobile-preview .tm-gesture-resize {
+  width: 1.1em;
+  height: 1.1em;
 }
 
 .app-mobile-preview .note-editor-header {
@@ -991,22 +996,25 @@ pre {
   inset: 0;
   background: rgba(0, 0, 0, 0.7);
   backdrop-filter: blur(12px);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 12vh 18px 18px;
-  z-index: 10;
+  z-index: 300;
 }
 
 .search-modal {
-  width: min(820px, 100%);
+  position: fixed;
+  top: 12vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(820px, calc(100% - 36px));
   max-height: 72vh;
+  display: flex;
+  flex-direction: column;
   border: none;
   border-radius: 24px;
   background: rgba(16, 16, 16, 0.96);
   overflow: hidden;
   box-shadow: 0 24px 90px rgba(0, 0, 0, 0.5);
   outline: none;
+  z-index: 301;
 }
 
 .note-editor {
@@ -1300,6 +1308,7 @@ pre {
 }
 
 .search-result {
+  position: relative;
   width: 100%;
   border: none;
   background: transparent;
@@ -1308,18 +1317,23 @@ pre {
   transition: background 0.16s ease;
 }
 
-.search-result:hover,
-.search-result[aria-selected='true'] {
+.search-result[data-pointer-over] {
   background: rgba(255, 255, 255, 0.04);
 }
 
-.search-result[data-pointer-over] {
-  background: rgba(232, 168, 76, 0.09);
+.search-result[aria-selected='true'] {
+  background: rgba(232, 168, 76, 0.12);
 }
 
-.search-result[aria-disabled='true'] {
-  opacity: 0.5;
-  cursor: not-allowed;
+.search-result[aria-selected='true']::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
 }
 
 .search-result-copy {
@@ -1445,10 +1459,6 @@ pre {
     border-radius: 16px;
   }
 
-  .tm-window-status {
-    display: none;
-  }
-
   .tm-card-name {
     font-size: 1.15rem;
   }
@@ -1469,10 +1479,51 @@ pre {
   }
 
   .tm-gesture-tuner {
-    top: 52px;
-    left: 12px;
-    width: calc(100% - 24px);
-    --tune-font: 9px;
+    top: 46px;
+    left: 8px;
+    width: min(16.5em, calc(100% - 16px));
+  }
+
+  .tm-gesture-grid {
+    gap: 0.45em;
+  }
+
+  .tm-gesture-pad {
+    height: 5.15em;
+    padding: 0.52em;
+    border-radius: 0.64em;
+  }
+
+  .tm-gesture-pad-label {
+    font-size: 0.86em;
+  }
+
+  .tm-gesture-pad-hint {
+    font-size: 0.74em;
+  }
+
+  .tm-gesture-slider {
+    grid-template-columns: 3.8em 1fr 2.6em;
+    gap: 0.48em;
+    margin-top: 0.48em;
+  }
+
+  .tm-gesture-slider-label {
+    font-size: 0.8em;
+  }
+
+  .tm-gesture-slider-value {
+    font-size: 0.76em;
+  }
+
+  .tm-gesture-reset {
+    font-size: 0.8em;
+    padding: 0.24em 0.5em;
+  }
+
+  .tm-gesture-resize {
+    width: 1.1em;
+    height: 1.1em;
   }
 
   .tm-card-scroll,

@@ -5,9 +5,10 @@ interface EditorProps {
   session: UseEditorSessionResult
   positionLabel: string
   isMobile: boolean
+  onOpenCommands: () => void
 }
 
-export function Editor({ session, positionLabel, isMobile }: EditorProps) {
+export function Editor({ session, positionLabel, isMobile, onOpenCommands }: EditorProps) {
   const editor = session.editor
   const saveIndicatorTitle = useMemo(
     () =>
@@ -117,6 +118,9 @@ export function Editor({ session, positionLabel, isMobile }: EditorProps) {
               </svg>
             </button>
             <div className="note-editor-branch-close">
+              <button className="btn-secondary" onClick={onOpenCommands} type="button">
+                Commands
+              </button>
               <button className="btn-primary" onClick={() => void session.handleBranchFromEditor()} type="button">
                 Branch
               </button>

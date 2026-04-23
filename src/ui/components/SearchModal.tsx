@@ -31,6 +31,7 @@ export function SearchModal({ open, onClose, onSearch, onSelect, commandActions 
   const groupedActions = useMemo(() => {
     const groups = new Map<string, SearchCommandAction[]>()
     for (const action of commandActions) {
+      if (action.disabled) continue
       const groupName = action.group ?? 'Commands'
       const existing = groups.get(groupName) ?? []
       existing.push(action)
@@ -87,7 +88,6 @@ export function SearchModal({ open, onClose, onSearch, onSelect, commandActions 
 
   const handleActionSelect = useCallback(
     (action: SearchCommandAction) => {
-      if (action.disabled) return
       action.run()
       onClose()
     },
@@ -121,7 +121,6 @@ export function SearchModal({ open, onClose, onSearch, onSelect, commandActions 
         className="search-input"
         value={query}
         onValueChange={handleSearchChange}
-        debounce={120}
         placeholder="Type a command or search notes..."
         autoFocus
       />
@@ -137,7 +136,6 @@ export function SearchModal({ open, onClose, onSearch, onSelect, commandActions 
                   className="search-result search-result-command"
                   value={`${action.label} ${action.id}`}
                   keywords={action.keywords}
-                  disabled={action.disabled}
                   onSelect={() => handleActionSelect(action)}
                 >
                   <div className="search-result-copy">
@@ -145,11 +143,6 @@ export function SearchModal({ open, onClose, onSearch, onSelect, commandActions 
                       <span className="search-result-title">{action.label}</span>
                       {action.hint && <span className="search-result-line">{action.hint}</span>}
                     </div>
-                    {action.disabled && (
-                      <div className="search-result-meta">
-                        <span>Unavailable right now</span>
-                      </div>
-                    )}
                   </div>
                 </Command.Item>
               ))}

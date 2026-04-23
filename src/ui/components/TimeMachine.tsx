@@ -8,6 +8,13 @@ import {
 } from 'react'
 import type { SourceNote } from '../../core/quicknote/types'
 import { findNoteIndex, orderNotes } from '../lib/note-order'
+import {
+  cameraAnglesRelativeToLine,
+  cardLinePosition,
+  cardRotationFromLine,
+  facingAdjustedLineAngles,
+  sphericalDirection,
+} from '../lib/card-stack-3d'
 
 const NOTE_NAV_SCROLL_STEP_PX = 40
 const TOUCH_NAV_STEP_PX = 14
@@ -19,11 +26,13 @@ const TOUCH_NAV_MOMENTUM_SCALE = 40
 const SWIPE_LOCK_THRESHOLD_PX = 6
 const STACK_CONTROLS_KEY_DESKTOP = 'branch-continue:stack-controls:desktop'
 const STACK_CONTROLS_KEY_MOBILE = 'branch-continue:stack-controls:mobile'
-const TUNER_FONT_KEY = 'branch-continue:tuner-font-px'
-const TUNER_FONT_MIN = 7
+const TUNER_FONT_KEY_LEGACY = 'branch-continue:tuner-font-px'
+const TUNER_FONT_KEY_DESKTOP = 'branch-continue:tuner-font-px:desktop'
+const TUNER_FONT_KEY_MOBILE = 'branch-continue:tuner-font-px:mobile'
+const TUNER_FONT_MIN = 6
 const TUNER_FONT_MAX = 24
 const TUNER_FONT_DEFAULT_DESKTOP = 11
-const TUNER_FONT_DEFAULT_MOBILE = 9
+const TUNER_FONT_DEFAULT_MOBILE = 6.8
 const TUNER_RESIZE_SENSITIVITY = 0.05
 
 type StackControlKey =
@@ -62,15 +71,15 @@ const GESTURE_PADS: readonly GesturePadConfig[] = [
     id: 'camera',
     label: 'Camera',
     hint: 'drag: azimuth + elevation',
-    x: { key: 'camTheta', min: -180, max: 180, step: 1, label: 'azimuth' },
-    y: { key: 'camPhi', min: -90, max: 90, step: 1, label: 'elevation', invert: true },
+    x: { key: 'camTheta', min: -360, max: 360, step: 1, label: 'azimuth' },
+    y: { key: 'camPhi', min: -180, max: 180, step: 1, label: 'elevation', invert: true },
   },
   {
     id: 'line',
     label: 'Card Line',
     hint: 'drag: line azimuth + elevation',
-    x: { key: 'lineTheta', min: -180, max: 180, step: 1, label: 'azimuth' },
-    y: { key: 'linePhi', min: -90, max: 90, step: 1, label: 'elevation', invert: true },
+    x: { key: 'lineTheta', min: -360, max: 360, step: 1, label: 'azimuth' },
+    y: { key: 'linePhi', min: -180, max: 180, step: 1, label: 'elevation', invert: true },
   },
   {
     id: 'focus',
@@ -95,19 +104,10 @@ const GESTURE_PADS: readonly GesturePadConfig[] = [
   },
 ]
 
-// Spherical to Cartesian: theta = azimuth (XZ plane), phi = elevation from XZ plane
-function sphericalDir(thetaDeg: number, phiDeg: number): [number, number, number] {
-  const t = (thetaDeg * Math.PI) / 180
-  const p = (phiDeg * Math.PI) / 180
-  const cosP = Math.cos(p)
-  return [Math.cos(t) * cosP, Math.sin(p), Math.sin(t) * cosP]
-}
-
 interface TimeMachineProps {
   notes: SourceNote[]
   activeNoteId: string | null
   totalCount: number
-  recentering: boolean
   navigationEnabled: boolean
   swipeUpNavTarget: 'previous' | 'next'
   wheelNavDirection: 'natural' | 'reverse'
@@ -122,7 +122,6 @@ export function TimeMachine({
   notes,
   activeNoteId,
   totalCount,
-  recentering,
   navigationEnabled,
   swipeUpNavTarget,
   wheelNavDirection,
@@ -185,13 +184,14 @@ export function TimeMachine({
     loadStackControls(isMobile),
   )
   const [tunerFontPx, setTunerFontPx] = useState<number>(() => loadTunerFontPx(isMobile))
+  const [suppressSceneTransitions, setSuppressSceneTransitions] = useState(false)
   useEffect(() => {
     try {
-      window.localStorage.setItem(TUNER_FONT_KEY, String(tunerFontPx))
+      window.localStorage.setItem(getTunerFontStorageKey(isMobile), String(tunerFontPx))
     } catch {
       // Ignore persistence failures.
     }
-  }, [tunerFontPx])
+  }, [isMobile, tunerFontPx])
   useEffect(() => {
     try {
       window.localStorage.setItem(
@@ -238,7 +238,14 @@ export function TimeMachine({
   }
 
   // Card line direction (unit vector from spherical coords)
-  const [lineDirX, lineDirY, lineDirZ] = sphericalDir(lineTheta, linePhi)
+  const lineDirection = sphericalDirection(lineTheta, linePhi)
+  const cameraWorld = cameraAnglesRelativeToLine(lineTheta, linePhi, camTheta, camPhi)
+  const orientedLineAngles = facingAdjustedLineAngles(
+    lineTheta,
+    linePhi,
+    cameraWorld.thetaDeg,
+    cameraWorld.phiDeg,
+  )
 
   // Focal length (lens) is independent of camRadius (dolly distance).
   // Coupling them cancels out apparent-size change and breaks the Cam Dist slider.
@@ -280,6 +287,7 @@ export function TimeMachine({
   ) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return
 
+    setSuppressSceneTransitions(true)
     tunerDragRef.current = { pointerId: event.pointerId, padId: pad.id }
     event.currentTarget.setPointerCapture(event.pointerId)
     handleGesturePadPoint(event, pad)
@@ -306,6 +314,7 @@ export function TimeMachine({
     const active = tunerDragRef.current
     if (!active || active.pointerId !== event.pointerId || active.padId !== pad.id) return
 
+    setSuppressSceneTransitions(false)
     tunerDragRef.current = null
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
@@ -316,6 +325,7 @@ export function TimeMachine({
 
   const handleTunerResizePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return
+    setSuppressSceneTransitions(true)
     tunerResizeRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -346,6 +356,7 @@ export function TimeMachine({
   const handleTunerResizePointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
     const active = tunerResizeRef.current
     if (!active || active.pointerId !== event.pointerId) return
+    setSuppressSceneTransitions(false)
     tunerResizeRef.current = null
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
@@ -357,6 +368,25 @@ export function TimeMachine({
   const handleTunerResizeDoubleClick = () => {
     setTunerFontPx(isMobile ? TUNER_FONT_DEFAULT_MOBILE : TUNER_FONT_DEFAULT_DESKTOP)
   }
+
+  useEffect(() => {
+    if (!showGestureTuner && suppressSceneTransitions) {
+      setSuppressSceneTransitions(false)
+    }
+  }, [showGestureTuner, suppressSceneTransitions])
+
+  useEffect(() => {
+    if (!suppressSceneTransitions) return
+    const reset = () => setSuppressSceneTransitions(false)
+    window.addEventListener('pointerup', reset)
+    window.addEventListener('pointercancel', reset)
+    window.addEventListener('blur', reset)
+    return () => {
+      window.removeEventListener('pointerup', reset)
+      window.removeEventListener('pointercancel', reset)
+      window.removeEventListener('blur', reset)
+    }
+  }, [suppressSceneTransitions])
 
   useEffect(() => {
     setFocusIndex(activeIndex)
@@ -779,26 +809,12 @@ export function TimeMachine({
 
   const totalDisplayCount = totalCount || sorted.length
   const displayPosition = Math.min(Math.max(focusIndex + 1, 1), totalDisplayCount)
-  const focusedNote = sorted[focusIndex] ?? null
 
   return (
     <div className="tm-layout">
       <section className="tm-stage" ref={containerRef}>
         <div className="tm-counter">
           {displayPosition} / {totalDisplayCount}
-        </div>
-        <div className="tm-stage-actions">
-          <span className="tm-window-status">{recentering ? 'Refreshing' : 'Live'}</span>
-          <button
-            className="tm-branch-button"
-            onClick={() => {
-              if (!focusedNote) return
-              onBranch(focusedNote)
-            }}
-            type="button"
-          >
-            Branch
-          </button>
         </div>
 
         {showGestureTuner && (
@@ -848,6 +864,9 @@ export function TimeMachine({
                 step={1}
                 value={cardGap}
                 onChange={(e) => setControls({ cardGap: parseFloat(e.currentTarget.value) })}
+                onPointerDown={() => setSuppressSceneTransitions(true)}
+                onPointerUp={() => setSuppressSceneTransitions(false)}
+                onPointerCancel={() => setSuppressSceneTransitions(false)}
               />
               <span className="tm-gesture-slider-value">{cardGap}px</span>
             </label>
@@ -860,6 +879,9 @@ export function TimeMachine({
                 step={10}
                 value={camRadius}
                 onChange={(e) => setControls({ camRadius: parseFloat(e.currentTarget.value) })}
+                onPointerDown={() => setSuppressSceneTransitions(true)}
+                onPointerUp={() => setSuppressSceneTransitions(false)}
+                onPointerCancel={() => setSuppressSceneTransitions(false)}
               />
               <span className="tm-gesture-slider-value">{camRadius}</span>
             </label>
@@ -886,7 +908,7 @@ export function TimeMachine({
         )}
 
         <div
-          className="tm-scene"
+          className={`tm-scene ${showGestureTuner && suppressSceneTransitions ? 'tm-scene-tuning' : ''}`}
           style={{
             perspective: `${focalLength}px`,
             perspectiveOrigin: `calc(50% + ${focusX}px) calc(53% + ${focusY}px)`,
@@ -897,8 +919,8 @@ export function TimeMachine({
             style={{
               transform:
                 `translate3d(0px, 0px, ${-camRadius}px)` +
-                ` rotateX(${-camPhi}deg)` +
-                ` rotateY(${camTheta - 90}deg)`,
+                ` rotateX(${-cameraWorld.phiDeg}deg)` +
+                ` rotateY(${cameraWorld.thetaDeg - 90}deg)`,
             }}
           >
           {sorted.map((entry, index) => {
@@ -907,10 +929,12 @@ export function TimeMachine({
 
             const isFocused = index === focusIndex
 
-            // Card 3D world position along the line direction. CSS Y is down, so negate.
-            const cardWorldX = offset * cardGap * lineDirX
-            const cardWorldY = -offset * cardGap * lineDirY + (isFocused ? 0 : sinkY)
-            const cardWorldZ = offset * cardGap * lineDirZ
+            // Card center stays strictly on the theta/phi line with cardGap spacing.
+            const [lineX, lineY, lineZ] = cardLinePosition(offset, cardGap, lineDirection)
+            // CSS uses +Y downward; scene math uses +Y upward.
+            const cardWorldX = lineX
+            const cardWorldY = -lineY + (isFocused ? 0 : sinkY)
+            const cardWorldZ = lineZ
 
             const focusScale = isMobile ? 1.01 : 1.03
             const scale = isFocused
@@ -918,11 +942,10 @@ export function TimeMachine({
               : Math.max(minScale, 1 - Math.abs(offset) * scaleFalloff)
             const opacity = Math.max(0.1, 1 - Math.abs(offset) * opacityFalloff)
             const blur = Math.min(6, Math.abs(offset) * blurFalloff)
-
-            // Each card tilts with the line direction (true orientation, not billboarded).
-            const cardRotY = lineTheta
-            const cardRotX = -linePhi
-
+            const { rotYDeg: cardRotY, rotXDeg: cardRotX } = cardRotationFromLine(
+              orientedLineAngles.thetaDeg,
+              orientedLineAngles.phiDeg,
+            )
             return (
               <div
                 key={entry.id}
@@ -1001,18 +1024,18 @@ export function TimeMachine({
 
 function defaultStackControls(isMobile: boolean): Record<StackControlKey, number> {
   return {
-    cardGap: isMobile ? 112 : 230,
-    lineTheta: 0,
-    linePhi: 0,
-    camTheta: 90,
-    camPhi: isMobile ? -8 : -14,
-    camRadius: isMobile ? 600 : 1200,
-    focusX: 0,
-    focusY: 0,
-    sinkY: isMobile ? 8 : 24,
-    falloff: 0.92,
-    falloffBalance: 0.56,
-    minScale: isMobile ? 0.92 : 0.88,
+    cardGap: isMobile ? 112 : 97,
+    lineTheta: isMobile ? -63 : -14,
+    linePhi: isMobile ? 27 : 22,
+    camTheta: isMobile ? 66 : 88,
+    camPhi: isMobile ? -8 : 7,
+    camRadius: isMobile ? 600 : 120,
+    focusX: isMobile ? 0 : 41,
+    focusY: isMobile ? 0 : 7,
+    sinkY: isMobile ? 8 : 37,
+    falloff: isMobile ? 0.92 : 1.4,
+    falloffBalance: isMobile ? 0.56 : 0.5,
+    minScale: isMobile ? 0.92 : 0.82,
   }
 }
 
@@ -1020,14 +1043,27 @@ function loadTunerFontPx(isMobile: boolean): number {
   const fallback = isMobile ? TUNER_FONT_DEFAULT_MOBILE : TUNER_FONT_DEFAULT_DESKTOP
   if (typeof window === 'undefined') return fallback
   try {
-    const raw = window.localStorage.getItem(TUNER_FONT_KEY)
-    if (!raw) return fallback
-    const parsed = parseFloat(raw)
-    if (!Number.isFinite(parsed)) return fallback
-    return Math.min(TUNER_FONT_MAX, Math.max(TUNER_FONT_MIN, parsed))
+    for (const key of getTunerFontStorageKeys(isMobile)) {
+      const raw = window.localStorage.getItem(key)
+      if (!raw) continue
+      const parsed = parseFloat(raw)
+      if (!Number.isFinite(parsed)) continue
+      return Math.min(TUNER_FONT_MAX, Math.max(TUNER_FONT_MIN, parsed))
+    }
+    return fallback
   } catch {
     return fallback
   }
+}
+
+function getTunerFontStorageKey(isMobile: boolean): string {
+  return isMobile ? TUNER_FONT_KEY_MOBILE : TUNER_FONT_KEY_DESKTOP
+}
+
+function getTunerFontStorageKeys(isMobile: boolean): readonly string[] {
+  return isMobile
+    ? [TUNER_FONT_KEY_MOBILE]
+    : [TUNER_FONT_KEY_DESKTOP, TUNER_FONT_KEY_LEGACY]
 }
 
 function loadStackControls(isMobile: boolean): Record<StackControlKey, number> {
