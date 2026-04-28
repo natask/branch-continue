@@ -6,7 +6,7 @@ A set of flat cards arranged along a line in 3D space. A camera observes them. T
 
 ---
 
-## Two Independent Systems
+## Three Independent Systems
 
 ### 1. Card Line
 
@@ -46,6 +46,15 @@ Camera properties:
 
 **Camera controls only change viewpoint. They never move, resize, or re-space the cards in world space.**
 
+### 3. Card Orientation
+
+Each card plane has its own orientation, independent of both the camera and the card line:
+
+- **cardLeftRight**: yaw the card plane left/right.
+- **cardFrontBack**: pitch the card plane forward/back.
+
+Changing card orientation only rotates the card surfaces. It does not move card centers, change the line direction, or move the camera.
+
 ---
 
 ## Projection
@@ -81,6 +90,8 @@ These are applied after projection and are independent of both camera and card l
 | `camTheta` | Camera | Horizontal orbit angle | -180 to 180 |
 | `camPhi` | Camera | Vertical orbit angle | -90 to 90 |
 | `camRadius` | Camera | Distance from focused card | 100 - 3000 |
+| `cardLeftRight` | Card Orientation | Card yaw left/right | -180 to 180 |
+| `cardFrontBack` | Card Orientation | Card pitch forward/back | -90 to 90 |
 | `sinkY` | Visual FX | Screen-space push-down for non-focused cards | -100 to 200 |
 | `falloff` | Visual FX | Intensity of scale/opacity/blur falloff | 0 - 3 |
 | `falloffBalance` | Visual FX | Blur vs fade ratio | 0 - 1 |
@@ -91,8 +102,9 @@ These are applied after projection and are independent of both camera and card l
 ## Independence Guarantees
 
 - Changing `cardGap` only changes distance between cards. Line direction, camera, and visual FX stay fixed.
-- Changing `lineTheta/linePhi` only rotates where cards sit in 3D. Camera stays put, gap stays the same.
+- Changing `lineTheta/linePhi` only rotates where card centers sit in 3D. Camera, gap, and card orientation stay fixed.
 - Changing `camTheta/camPhi/camRadius` only moves the viewpoint. Cards do not move in world space.
+- Changing `cardLeftRight/cardFrontBack` only rotates the card plane. Card centers and camera stay fixed.
 - Changing visual FX (sink, falloff, etc.) only affects screen-space appearance per card offset. No world-space or camera changes.
 
 ---
@@ -101,5 +113,4 @@ These are applied after projection and are independent of both camera and card l
 
 1. Should the line direction default to `(1, 0, 0)` (horizontal) or match the current default spread angle?
 2. Should focal length become a user-facing control, or stay a platform-fixed constant?
-
 

@@ -219,6 +219,19 @@ function LoadedSourceApp({
     }
     return Array.from(unique.values()).sort((a, b) => a.startLine - b.startLine)
   }, [childrenByParentRef, currentContextNote])
+  const currentEditorNoteIndex = useMemo(
+    () =>
+      currentEditorNoteId
+        ? orderedNotes.findIndex((note) => note.id === currentEditorNoteId)
+        : -1,
+    [currentEditorNoteId, orderedNotes],
+  )
+  const olderEditorNote =
+    currentEditorNoteIndex > 0 ? orderedNotes[currentEditorNoteIndex - 1] ?? null : null
+  const newerEditorNote =
+    currentEditorNoteIndex >= 0 && currentEditorNoteIndex + 1 < orderedNotes.length
+      ? orderedNotes[currentEditorNoteIndex + 1] ?? null
+      : null
 
   const handleSearchSelect = useCallback(
     (hit: QuickNoteSearchHit) => {
@@ -243,6 +256,21 @@ function LoadedSourceApp({
     },
     [editorSession, selectNote],
   )
+  const handleOpenRelativeEditorNote = useCallback(
+    (direction: -1 | 1) => {
+      if (currentEditorNoteIndex < 0) return
+      const nextNote = orderedNotes[currentEditorNoteIndex + direction]
+      if (!nextNote) return
+      handleOpenLinkedNote(nextNote)
+    },
+    [currentEditorNoteIndex, handleOpenLinkedNote, orderedNotes],
+  )
+  const handleOpenOlderEditorNote = useCallback(() => {
+    handleOpenRelativeEditorNote(-1)
+  }, [handleOpenRelativeEditorNote])
+  const handleOpenNewerEditorNote = useCallback(() => {
+    handleOpenRelativeEditorNote(1)
+  }, [handleOpenRelativeEditorNote])
 
   const handleBranch = useCallback(
     (from: SourceNote) => {
@@ -256,6 +284,24 @@ function LoadedSourceApp({
     if (!boundary) return
     selectNote(boundary)
   }, [orderedNotes, selectNote, sortMode])
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const shortcut = event.metaKey || event.ctrlKey
+      const key = event.key.toLowerCase()
+      const openSearchShortcut =
+        (key === 'k' && !event.shiftKey && !event.altKey) ||
+        (key === 'x' && event.shiftKey && !event.altKey)
+
+      if (!shortcut || !openSearchShortcut) return
+      if (isInteractiveTarget(event.target)) return
+      event.preventDefault()
+      setSearchOpen(true)
+    }
+
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -434,6 +480,28 @@ function LoadedSourceApp({
         },
       },
       {
+        id: 'open-older-note',
+        label: 'Open Older Note',
+        keywords: ['older', 'previous', 'back', 'note'],
+        group: 'Navigation',
+        disabled: !olderEditorNote,
+        run: () => {
+          if (!olderEditorNote) return
+          handleOpenLinkedNote(olderEditorNote)
+        },
+      },
+      {
+        id: 'open-newer-note',
+        label: 'Open Newer Note',
+        keywords: ['newer', 'next', 'forward', 'note'],
+        group: 'Navigation',
+        disabled: !newerEditorNote,
+        run: () => {
+          if (!newerEditorNote) return
+          handleOpenLinkedNote(newerEditorNote)
+        },
+      },
+      {
         id: 'go-boundary',
         label: sortMode === 'latest' ? 'Go to Latest Note' : 'Go to Oldest Note',
         hint: 'Esc',
@@ -513,6 +581,8 @@ function LoadedSourceApp({
       editorSession,
       handleGoToBoundary,
       handleOpenLinkedNote,
+      olderEditorNote,
+      newerEditorNote,
       orderedNotes.length,
       reloadSource,
       selectingSource,
@@ -647,7 +717,11 @@ function LoadedSourceApp({
           session={editorSession}
           positionLabel={editorPositionLabel}
           isMobile={isMobile}
-          onOpenCommands={() => setSearchOpen(true)}
+          canOpenOlderNote={Boolean(olderEditorNote)}
+          canOpenNewerNote={Boolean(newerEditorNote)}
+          onOpenSearch={() => setSearchOpen(true)}
+          onOpenOlderNote={handleOpenOlderEditorNote}
+          onOpenNewerNote={handleOpenNewerEditorNote}
         />
       )}
     </div>

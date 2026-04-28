@@ -5,10 +5,23 @@ interface EditorProps {
   session: UseEditorSessionResult
   positionLabel: string
   isMobile: boolean
-  onOpenCommands: () => void
+  canOpenOlderNote: boolean
+  canOpenNewerNote: boolean
+  onOpenSearch: () => void
+  onOpenOlderNote: () => void
+  onOpenNewerNote: () => void
 }
 
-export function Editor({ session, positionLabel, isMobile, onOpenCommands }: EditorProps) {
+export function Editor({
+  session,
+  positionLabel,
+  isMobile,
+  canOpenOlderNote,
+  canOpenNewerNote,
+  onOpenSearch,
+  onOpenOlderNote,
+  onOpenNewerNote,
+}: EditorProps) {
   const editor = session.editor
   const saveIndicatorTitle = useMemo(
     () =>
@@ -118,8 +131,8 @@ export function Editor({ session, positionLabel, isMobile, onOpenCommands }: Edi
               </svg>
             </button>
             <div className="note-editor-branch-close">
-              <button className="btn-secondary" onClick={onOpenCommands} type="button">
-                Commands
+              <button className="btn-secondary" onClick={onOpenSearch} type="button">
+                {isMobile ? 'Search' : 'Commands'}
               </button>
               <button className="btn-primary" onClick={() => void session.handleBranchFromEditor()} type="button">
                 Branch
@@ -217,6 +230,34 @@ export function Editor({ session, positionLabel, isMobile, onOpenCommands }: Edi
           <pre className="note-editor-body">
             {editor.body}
           </pre>
+        )}
+
+        {isMobile && (
+          <div className="note-editor-mobile-nav" aria-label="Note navigation">
+            <button
+              className="btn-secondary note-editor-mobile-nav-btn"
+              onClick={onOpenOlderNote}
+              disabled={!canOpenOlderNote}
+              type="button"
+            >
+              Older
+            </button>
+            <button
+              className="btn-primary note-editor-mobile-nav-btn note-editor-mobile-nav-search"
+              onClick={onOpenSearch}
+              type="button"
+            >
+              Search Notes
+            </button>
+            <button
+              className="btn-secondary note-editor-mobile-nav-btn"
+              onClick={onOpenNewerNote}
+              disabled={!canOpenNewerNote}
+              type="button"
+            >
+              Newer
+            </button>
+          </div>
         )}
       </div>
     </article>

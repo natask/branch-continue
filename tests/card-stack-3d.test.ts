@@ -1,10 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
-  cameraAnglesRelativeToLine,
-  cameraForwardDirection,
   cardLinePosition,
-  cardRotationFromLine,
-  facingAdjustedLineAngles,
+  cardRotationFromNormal,
+  cardRotationFromOrientation,
   sphericalDirection,
   type Vec3,
 } from '../src/ui/lib/card-stack-3d'
@@ -35,10 +33,6 @@ function cardNormalFromRotation(rotYDeg: number, rotXDeg: number): Vec3 {
   const y = toRadians(rotYDeg)
   const x = toRadians(rotXDeg)
   return [Math.sin(y) * Math.cos(x), -Math.sin(x), Math.cos(y) * Math.cos(x)]
-}
-
-function cssToScene(v: Vec3): Vec3 {
-  return [v[0], -v[1], v[2]]
 }
 
 describe('sphericalDirection', () => {
@@ -92,8 +86,8 @@ describe('cardLinePosition', () => {
   })
 })
 
-describe('cardRotationFromLine', () => {
-  it('keeps card normal aligned with line direction in CSS coordinates', () => {
+describe('cardRotationFromNormal', () => {
+  it('keeps card normal aligned with the requested spherical direction in CSS coordinates', () => {
     const probes: Array<[number, number]> = [
       [0, 0],
       [90, 0],
@@ -106,7 +100,7 @@ describe('cardRotationFromLine', () => {
 
     for (const [theta, phi] of probes) {
       const direction = sphericalDirection(theta, phi)
-      const { rotYDeg, rotXDeg } = cardRotationFromLine(theta, phi)
+      const { rotYDeg, rotXDeg } = cardRotationFromNormal(theta, phi)
       const normal = cardNormalFromRotation(rotYDeg, rotXDeg)
       const expectedCssDirection: Vec3 = [direction[0], -direction[1], direction[2]]
       expectVecClose(normal, expectedCssDirection, 7)
@@ -114,81 +108,20 @@ describe('cardRotationFromLine', () => {
   })
 
   it('keeps yaw continuous across the -90 azimuth seam', () => {
-    const before = cardRotationFromLine(-90.5, 0)
-    const at = cardRotationFromLine(-90, 0)
-    const after = cardRotationFromLine(-89.5, 0)
+    const before = cardRotationFromNormal(-90.5, 0)
+    const at = cardRotationFromNormal(-90, 0)
+    const after = cardRotationFromNormal(-89.5, 0)
     expect(before.rotYDeg).toBeCloseTo(180.5, 8)
     expect(at.rotYDeg).toBeCloseTo(180, 8)
     expect(after.rotYDeg).toBeCloseTo(179.5, 8)
   })
 })
 
-describe('facingAdjustedLineAngles', () => {
-  it('keeps cards on the line axis and biases front-face toward camera', () => {
-    const probes: Array<[number, number, number, number]> = [
-      [0, 0, 90, 0],
-      [90, 0, 90, 0],
-      [-90, 0, 90, 0],
-      [35, 20, 90, -14],
-      [-135, 35, 160, -22],
-      [170, -40, -60, 18],
-      [-170, 65, 250, -35],
-    ]
-
-    for (const [lineTheta, linePhi, camTheta, camPhi] of probes) {
-      const adjusted = facingAdjustedLineAngles(lineTheta, linePhi, camTheta, camPhi)
-      const lineDirection = sphericalDirection(lineTheta, linePhi)
-      const cameraForward = cameraForwardDirection(camTheta, camPhi)
-      const { rotYDeg, rotXDeg } = cardRotationFromLine(adjusted.thetaDeg, adjusted.phiDeg)
-      const normalScene = cssToScene(cardNormalFromRotation(rotYDeg, rotXDeg))
-
-      // The card normal must stay aligned to the same line axis (+d or -d).
-      expect(Math.abs(dot(normalScene, lineDirection))).toBeCloseTo(1, 7)
-      // And the chosen sign should keep front-face toward the camera direction.
-      expect(dot(normalScene, cameraForward)).toBeLessThanOrEqual(1e-8)
-    }
-  })
-
-  it('flips when line points away from camera and keeps when it points toward camera', () => {
-    expect(facingAdjustedLineAngles(-90, 0, 90, 0).flipped).toBe(true)
-    expect(facingAdjustedLineAngles(90, 0, 90, 0).flipped).toBe(false)
-  })
-})
-
-describe('cameraAnglesRelativeToLine', () => {
-  it('is identity when line is aligned to default +X frame', () => {
-    const probes: Array<[number, number]> = [
-      [90, -14],
-      [0, 0],
-      [150, 20],
-      [-170, -55],
-    ]
-    for (const [camTheta, camPhi] of probes) {
-      const result = cameraAnglesRelativeToLine(0, 0, camTheta, camPhi)
-      expect(result.thetaDeg).toBeCloseTo(camTheta, 8)
-      expect(result.phiDeg).toBeCloseTo(camPhi, 8)
-    }
-  })
-
-  it('keeps camera orientation consistent relative to card line frame', () => {
-    const camTheta = 90
-    const camPhi = -14
-    const baselineAngles = cameraAnglesRelativeToLine(0, 0, camTheta, camPhi)
-    const baselineForward = cameraForwardDirection(baselineAngles.thetaDeg, baselineAngles.phiDeg)
-    const baselineDot = dot(baselineForward, sphericalDirection(0, 0))
-
-    const lineProbes: Array<[number, number]> = [
-      [35, 20],
-      [-120, -30],
-      [170, 65],
-      [-170, -65],
-    ]
-
-    for (const [lineTheta, linePhi] of lineProbes) {
-      const worldAngles = cameraAnglesRelativeToLine(lineTheta, linePhi, camTheta, camPhi)
-      const forward = cameraForwardDirection(worldAngles.thetaDeg, worldAngles.phiDeg)
-      const lineDir = sphericalDirection(lineTheta, linePhi)
-      expect(dot(forward, lineDir)).toBeCloseTo(baselineDot, 7)
-    }
+describe('cardRotationFromOrientation', () => {
+  it('uses card orientation controls directly instead of deriving them from the stack line', () => {
+    expect(cardRotationFromOrientation(42, -17)).toEqual({
+      rotYDeg: 42,
+      rotXDeg: -17,
+    })
   })
 })
