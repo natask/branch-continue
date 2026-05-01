@@ -1,7 +1,7 @@
 import { useCallback } from 'react'
 import type React from 'react'
 import type { EditorState, SetEditorState } from './editor-session-shared'
-import { resolveAdjacentEditorSection } from '../lib/editor-section-nav'
+import { resolveAdjacentEditorSection, resolveBodyCaretLineMove } from '../lib/editor-section-nav'
 import type { EditorCaretPlacement } from './use-editor-focus'
 
 interface UseEditorFieldsOptions {
@@ -226,15 +226,21 @@ export function useEditorFields({
         return
       }
 
-      if (isPreviousFieldShortcut(event)) {
+      const sectionMoveDirection = resolveFieldShortcutDirection(event)
+      if (sectionMoveDirection) {
+        const textarea = event.currentTarget
+        const nextCaret = resolveBodyCaretLineMove({
+          value: textarea.value,
+          selectionStart: textarea.selectionStart,
+          selectionEnd: textarea.selectionEnd,
+          direction: sectionMoveDirection,
+        })
         event.preventDefault()
-        moveFromSection('body', 'previous')
-        return
-      }
-
-      if (isNextFieldShortcut(event)) {
-        event.preventDefault()
-        moveFromSection('body', 'next')
+        if (nextCaret === null) {
+          if (sectionMoveDirection === 'previous') moveFromSection('body', 'previous')
+          return
+        }
+        textarea.setSelectionRange(nextCaret, nextCaret)
         return
       }
 
@@ -292,6 +298,12 @@ function isPreviousFieldShortcut(event: React.KeyboardEvent<HTMLElement>): boole
 
 function isNextFieldShortcut(event: React.KeyboardEvent<HTMLElement>): boolean {
   return isFieldShortcut(event, 'n')
+}
+
+function resolveFieldShortcutDirection(event: React.KeyboardEvent<HTMLElement>): 'previous' | 'next' | null {
+  if (isPreviousFieldShortcut(event)) return 'previous'
+  if (isNextFieldShortcut(event)) return 'next'
+  return null
 }
 
 function isFieldShortcut(event: React.KeyboardEvent<HTMLElement>, key: 'p' | 'n'): boolean {

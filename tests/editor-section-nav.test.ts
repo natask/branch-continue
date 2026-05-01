@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { resolveAdjacentEditorSection } from '../src/ui/lib/editor-section-nav'
+import {
+  resolveAdjacentEditorSection,
+  resolveBodyCaretLineMove,
+} from '../src/ui/lib/editor-section-nav'
 
 describe('resolveAdjacentEditorSection', () => {
   it('walks title, timestamp, tags, and body when timestamp exists', () => {
@@ -20,5 +23,51 @@ describe('resolveAdjacentEditorSection', () => {
   it('returns null past the ends of the sequence', () => {
     expect(resolveAdjacentEditorSection('title', 'previous', true)).toBeNull()
     expect(resolveAdjacentEditorSection('body', 'next', true)).toBeNull()
+  })
+})
+
+describe('resolveBodyCaretLineMove', () => {
+  it('moves between text lines while preserving the caret column', () => {
+    const value = 'abc\ndef'
+
+    expect(
+      resolveBodyCaretLineMove({
+        value,
+        selectionStart: 1,
+        selectionEnd: 1,
+        direction: 'next',
+      }),
+    ).toBe(5)
+
+    expect(
+      resolveBodyCaretLineMove({
+        value,
+        selectionStart: 5,
+        selectionEnd: 5,
+        direction: 'previous',
+      }),
+    ).toBe(1)
+  })
+
+  it('returns null at the body boundaries instead of wrapping', () => {
+    const value = 'abc\ndef'
+
+    expect(
+      resolveBodyCaretLineMove({
+        value,
+        selectionStart: 1,
+        selectionEnd: 1,
+        direction: 'previous',
+      }),
+    ).toBeNull()
+
+    expect(
+      resolveBodyCaretLineMove({
+        value,
+        selectionStart: 5,
+        selectionEnd: 5,
+        direction: 'next',
+      }),
+    ).toBeNull()
   })
 })
