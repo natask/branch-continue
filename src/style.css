@@ -766,7 +766,7 @@ pre {
 }
 
 .app-mobile-preview .note-editor-shell {
-  padding: 18px;
+  padding: 18px 18px calc(18px + env(safe-area-inset-bottom, 0px));
 }
 
 .app-mobile-preview .tm-gesture-tuner {
@@ -1056,6 +1056,7 @@ pre {
 .note-editor {
   position: fixed;
   inset: 0;
+  bottom: var(--editor-keyboard-inset, 0px);
   z-index: 20;
   background:
     radial-gradient(circle at top left, rgba(232, 168, 76, 0.04), transparent 28%),
@@ -1071,7 +1072,7 @@ pre {
   box-shadow: none;
   display: flex;
   flex-direction: column;
-  padding: 28px;
+  padding: 28px 28px calc(28px + env(safe-area-inset-bottom, 0px));
 }
 
 .note-editor-position {
@@ -1318,10 +1319,14 @@ pre {
 .note-editor-mobile-nav {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
   gap: 10px;
   padding-top: 16px;
   margin-top: 10px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
+  position: relative;
+  z-index: 2;
+  touch-action: manipulation;
 }
 
 .note-editor-mobile-nav-btn {
@@ -1588,7 +1593,7 @@ pre {
   }
 
   .note-editor-shell {
-    padding: 18px;
+    padding: 18px 18px calc(18px + env(safe-area-inset-bottom, 0px));
   }
 
   .note-editor-header {

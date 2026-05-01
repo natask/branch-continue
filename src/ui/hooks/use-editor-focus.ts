@@ -6,6 +6,7 @@ export type EditorCaretPlacement = 'start' | 'end'
 interface UseEditorFocusOptions {
   editor: EditorState | null
   preferTagFocusRef: React.RefObject<boolean>
+  suppressNextBodyFocusRef: React.RefObject<boolean>
 }
 
 export interface EditorFocusResult {
@@ -19,7 +20,11 @@ export interface EditorFocusResult {
   focusTagInput: (placement?: EditorCaretPlacement) => void
 }
 
-export function useEditorFocus({ editor, preferTagFocusRef }: UseEditorFocusOptions): EditorFocusResult {
+export function useEditorFocus({
+  editor,
+  preferTagFocusRef,
+  suppressNextBodyFocusRef,
+}: UseEditorFocusOptions): EditorFocusResult {
   const bodyRef = useRef<HTMLTextAreaElement>(null)
   const titleInputRef = useRef<HTMLInputElement>(null)
   const timestampInputRef = useRef<HTMLInputElement>(null)
@@ -68,6 +73,10 @@ export function useEditorFocus({ editor, preferTagFocusRef }: UseEditorFocusOpti
     const needsInitialBodyFocus = lastBodyPrimedSessionRef.current !== editor.sessionKey
     if (needsInitialBodyFocus) {
       lastBodyPrimedSessionRef.current = editor.sessionKey
+      if (suppressNextBodyFocusRef.current) {
+        suppressNextBodyFocusRef.current = false
+        return
+      }
       const timer = window.setTimeout(() => bodyRef.current?.focus(), 40)
       return () => window.clearTimeout(timer)
     }
@@ -76,7 +85,7 @@ export function useEditorFocus({ editor, preferTagFocusRef }: UseEditorFocusOpti
 
     const timer = window.setTimeout(() => bodyRef.current?.focus(), 40)
     return () => window.clearTimeout(timer)
-  }, [editor, preferTagFocusRef])
+  }, [editor, preferTagFocusRef, suppressNextBodyFocusRef])
 
   return {
     bodyRef,

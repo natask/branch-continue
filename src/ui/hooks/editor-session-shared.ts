@@ -25,6 +25,10 @@ export interface UseEditorSessionOptions {
   updateNote: (noteId: string, request: QuickNoteCreateRequest) => Promise<SourceNote>
 }
 
+export interface OpenEditorOptions {
+  focusBody?: boolean
+}
+
 export type SetEditorState = (next: EditorState | null) => void
 
 export function formatNewTimestamp(): string {

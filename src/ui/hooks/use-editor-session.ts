@@ -1,7 +1,13 @@
 import { useCallback, useRef, useState } from 'react'
 import type React from 'react'
 import type { SourceNote } from '../../core/quicknote/types'
-import { editorForBranch, editorFromNote, type EditorState, type UseEditorSessionOptions } from './editor-session-shared'
+import {
+  editorForBranch,
+  editorFromNote,
+  type EditorState,
+  type OpenEditorOptions,
+  type UseEditorSessionOptions,
+} from './editor-session-shared'
 import { useEditorDraft } from './use-editor-draft'
 import { useEditorFields } from './use-editor-fields'
 import { useEditorFocus } from './use-editor-focus'
@@ -21,7 +27,7 @@ export interface UseEditorSessionResult {
   titleInputRef: React.RefObject<HTMLInputElement | null>
   timestampInputRef: React.RefObject<HTMLInputElement | null>
   tagInputRef: React.RefObject<HTMLInputElement | null>
-  openNoteEditor: (note: SourceNote) => void
+  openNoteEditor: (note: SourceNote, options?: OpenEditorOptions) => void
   openBranchEditor: (source?: SourceNote | null) => void
   closeEditor: () => void
   flushAutoSave: () => Promise<boolean>
@@ -66,6 +72,7 @@ export function useEditorSession({
   const editorSessionCounterRef = useRef(1)
   const tagInputEnteredFromBodyRef = useRef(false)
   const preferTagFocusRef = useRef(false)
+  const suppressNextBodyFocusRef = useRef(false)
 
   const editorOpen = editor !== null
 
@@ -89,7 +96,7 @@ export function useEditorSession({
     return key
   }, [])
 
-  const focus = useEditorFocus({ editor, preferTagFocusRef })
+  const focus = useEditorFocus({ editor, preferTagFocusRef, suppressNextBodyFocusRef })
 
   const draft = useEditorDraft({
     editor,
@@ -101,11 +108,19 @@ export function useEditorSession({
   })
 
   const openNoteEditor = useCallback(
-    (note: SourceNote) => {
+    (note: SourceNote, options?: OpenEditorOptions) => {
       draft.clearSaveError()
+      preferTagFocusRef.current = false
+      suppressNextBodyFocusRef.current = options?.focusBody === false
+      if (suppressNextBodyFocusRef.current) {
+        const activeElement = typeof document !== 'undefined' ? document.activeElement : null
+        if (activeElement instanceof HTMLElement && activeElement.closest('.note-editor')) {
+          activeElement.blur()
+        }
+      }
       setEditorState(editorFromNote(note, nextSessionKey()))
     },
-    [draft, nextSessionKey, setEditorState],
+    [draft, nextSessionKey, preferTagFocusRef, setEditorState, suppressNextBodyFocusRef],
   )
 
   const openBranchEditor = useCallback((source?: SourceNote | null) => {

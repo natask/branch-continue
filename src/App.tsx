@@ -257,20 +257,21 @@ function LoadedSourceApp({
     [editorSession, selectNote],
   )
   const handleOpenRelativeEditorNote = useCallback(
-    (direction: -1 | 1) => {
+    (direction: -1 | 1, focusBody = true) => {
       if (currentEditorNoteIndex < 0) return
       const nextNote = orderedNotes[currentEditorNoteIndex + direction]
       if (!nextNote) return
-      handleOpenLinkedNote(nextNote)
+      selectNote(nextNote)
+      editorSession.openNoteEditor(nextNote, { focusBody })
     },
-    [currentEditorNoteIndex, handleOpenLinkedNote, orderedNotes],
+    [currentEditorNoteIndex, editorSession, orderedNotes, selectNote],
   )
   const handleOpenOlderEditorNote = useCallback(() => {
-    handleOpenRelativeEditorNote(-1)
-  }, [handleOpenRelativeEditorNote])
+    handleOpenRelativeEditorNote(-1, !isMobile)
+  }, [handleOpenRelativeEditorNote, isMobile])
   const handleOpenNewerEditorNote = useCallback(() => {
-    handleOpenRelativeEditorNote(1)
-  }, [handleOpenRelativeEditorNote])
+    handleOpenRelativeEditorNote(1, !isMobile)
+  }, [handleOpenRelativeEditorNote, isMobile])
 
   const handleBranch = useCallback(
     (from: SourceNote) => {

@@ -1,5 +1,11 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
+import type React from 'react'
 import type { UseEditorSessionResult } from '../hooks/use-editor-session'
+
+type MobileNavTarget = 'older' | 'newer'
+
+const MOBILE_NAV_REPEAT_DELAY_MS = 320
+const MOBILE_NAV_REPEAT_INTERVAL_MS = 170
 
 interface EditorProps {
   session: UseEditorSessionResult
@@ -23,6 +29,20 @@ export function Editor({
   onOpenNewerNote,
 }: EditorProps) {
   const editor = session.editor
+  const navRepeatTimerRef = useRef<number | null>(null)
+  const ignorePointerClickRef = useRef(false)
+  const navStateRef = useRef({
+    older: onOpenOlderNote,
+    newer: onOpenNewerNote,
+    canOlder: canOpenOlderNote,
+    canNewer: canOpenNewerNote,
+  })
+  navStateRef.current = {
+    older: onOpenOlderNote,
+    newer: onOpenNewerNote,
+    canOlder: canOpenOlderNote,
+    canNewer: canOpenNewerNote,
+  }
   const saveIndicatorTitle = useMemo(
     () =>
       session.autoSaveEnabled
@@ -37,6 +57,79 @@ export function Editor({
     },
     [session.bodyRef],
   )
+
+  function stopMobileNavRepeat() {
+    if (navRepeatTimerRef.current === null) return
+    window.clearTimeout(navRepeatTimerRef.current)
+    navRepeatTimerRef.current = null
+  }
+
+  function runMobileNav(target: MobileNavTarget) {
+    const nav = navStateRef.current
+    if (target === 'older') {
+      if (!nav.canOlder) return false
+      nav.older()
+      return true
+    }
+    if (!nav.canNewer) return false
+    nav.newer()
+    return true
+  }
+
+  function cancelMobileNavRepeat() {
+    stopMobileNavRepeat()
+    ignorePointerClickRef.current = false
+  }
+
+  function startMobileNavRepeat(target: MobileNavTarget, event: React.PointerEvent<HTMLButtonElement>) {
+    if (event.button !== 0 || !runMobileNav(target)) return
+    event.preventDefault()
+    ignorePointerClickRef.current = true
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    stopMobileNavRepeat()
+
+    const repeat = () => {
+      if (!runMobileNav(target)) {
+        stopMobileNavRepeat()
+        return
+      }
+      navRepeatTimerRef.current = window.setTimeout(repeat, MOBILE_NAV_REPEAT_INTERVAL_MS)
+    }
+
+    navRepeatTimerRef.current = window.setTimeout(repeat, MOBILE_NAV_REPEAT_DELAY_MS)
+  }
+
+  function handleMobileNavClick(target: MobileNavTarget) {
+    if (ignorePointerClickRef.current) {
+      ignorePointerClickRef.current = false
+      return
+    }
+    runMobileNav(target)
+  }
+
+  useEffect(() => () => stopMobileNavRepeat(), [])
+
+  useEffect(() => {
+    if (!isMobile || typeof window === 'undefined') return
+
+    const root = document.documentElement
+    const viewport = window.visualViewport
+    const updateInset = () => {
+      const rawInset = viewport ? window.innerHeight - viewport.height - viewport.offsetTop : 0
+      root.style.setProperty('--editor-keyboard-inset', `${rawInset > 80 ? Math.round(rawInset) : 0}px`)
+    }
+
+    updateInset()
+    viewport?.addEventListener('resize', updateInset)
+    viewport?.addEventListener('scroll', updateInset)
+    window.addEventListener('resize', updateInset)
+    return () => {
+      viewport?.removeEventListener('resize', updateInset)
+      viewport?.removeEventListener('scroll', updateInset)
+      window.removeEventListener('resize', updateInset)
+      root.style.removeProperty('--editor-keyboard-inset')
+    }
+  }, [isMobile])
 
   if (!editor) return null
 
@@ -236,7 +329,11 @@ export function Editor({
           <div className="note-editor-mobile-nav" aria-label="Note navigation">
             <button
               className="btn-secondary note-editor-mobile-nav-btn"
-              onClick={onOpenOlderNote}
+              onPointerDown={(event) => startMobileNavRepeat('older', event)}
+              onPointerUp={stopMobileNavRepeat}
+              onPointerCancel={cancelMobileNavRepeat}
+              onLostPointerCapture={stopMobileNavRepeat}
+              onClick={() => handleMobileNavClick('older')}
               disabled={!canOpenOlderNote}
               type="button"
             >
@@ -251,7 +348,11 @@ export function Editor({
             </button>
             <button
               className="btn-secondary note-editor-mobile-nav-btn"
-              onClick={onOpenNewerNote}
+              onPointerDown={(event) => startMobileNavRepeat('newer', event)}
+              onPointerUp={stopMobileNavRepeat}
+              onPointerCancel={cancelMobileNavRepeat}
+              onLostPointerCapture={stopMobileNavRepeat}
+              onClick={() => handleMobileNavClick('newer')}
               disabled={!canOpenNewerNote}
               type="button"
             >
