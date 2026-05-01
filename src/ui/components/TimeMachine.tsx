@@ -21,9 +21,9 @@ import {
 const TOUCH_NAV_MIN_DISTANCE_PX = 10
 const TOUCH_NAV_MAX_DURATION_MS = 2400
 const SWIPE_LOCK_THRESHOLD_PX = 6
-const GESTURE_DRAG_PX_PER_CARD_MOBILE = 72
+const GESTURE_DRAG_PX_PER_CARD_MOBILE = 96
 const GESTURE_DRAG_PX_PER_CARD_DESKTOP = 92
-const GESTURE_WHEEL_PX_PER_CARD_MOBILE = 72
+const GESTURE_WHEEL_PX_PER_CARD_MOBILE = 96
 const GESTURE_WHEEL_PX_PER_CARD_DESKTOP = 80
 const GESTURE_MOMENTUM_PROJECTION_MS = 240
 const GESTURE_MOMENTUM_MAX_CARD_DELTA = 12
@@ -43,6 +43,8 @@ const TUNER_FONT_MAX = 24
 const TUNER_FONT_DEFAULT_DESKTOP = 11
 const TUNER_FONT_DEFAULT_MOBILE = 6.8
 const TUNER_RESIZE_SENSITIVITY = 0.05
+const CARD_SCROLLBAR_MOUSE_HIT_SLOP_PX = 14
+const CARD_SCROLLBAR_TOUCH_HIT_SLOP_PX = 24
 
 type SwipeAxis = 'x' | 'y'
 
@@ -506,7 +508,15 @@ export function TimeMachine({
     const onTouchStart = (e: TouchEvent) => {
       const touch = e.touches[0]
       if (!touch) return
-      if (isSwipeGestureBlockedTarget(e.target)) return
+      if (
+        isSwipeGestureBlockedTarget(e.target, {
+          clientX: touch.clientX,
+          clientY: touch.clientY,
+          pointerType: 'touch',
+        })
+      ) {
+        return
+      }
 
       const startTime = Date.now()
       touchRef.current = {
@@ -630,7 +640,15 @@ export function TimeMachine({
     const onPointerDown = (event: PointerEvent) => {
       if (event.pointerType === 'touch') return
       if (event.button !== 0) return
-      if (isSwipeGestureBlockedTarget(event.target)) return
+      if (
+        isSwipeGestureBlockedTarget(event.target, {
+          clientX: event.clientX,
+          clientY: event.clientY,
+          pointerType: event.pointerType,
+        })
+      ) {
+        return
+      }
 
       suppressCardClickRef.current = false
       const startTime = Date.now()
@@ -751,10 +769,13 @@ export function TimeMachine({
   }, [dragPxPerCard, navigationEnabled, sorted, swipeUpNavTarget])
 
   const handleCardBodyPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return
-    if (event.pointerType === 'touch') return
+    if (event.pointerType === 'mouse' && event.button !== 0) return
 
     const element = event.currentTarget
+    if (!isCardScrollBarAreaPointer(element, event.clientX, event.clientY, event.pointerType)) {
+      return
+    }
+
     bodyDragRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -770,7 +791,6 @@ export function TimeMachine({
   }
 
   const handleCardBodyPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.pointerType === 'touch') return
     const dragState = bodyDragRef.current
     if (!dragState || dragState.pointerId !== event.pointerId) return
 
@@ -787,7 +807,6 @@ export function TimeMachine({
   }
 
   const finishCardBodyDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.pointerType === 'touch') return
     const dragState = bodyDragRef.current
     if (!dragState || dragState.pointerId !== event.pointerId) return
 
@@ -805,7 +824,6 @@ export function TimeMachine({
   }
 
   const cancelCardBodyDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.pointerType === 'touch') return
     const dragState = bodyDragRef.current
     if (!dragState || dragState.pointerId !== event.pointerId) return
 
@@ -1036,7 +1054,7 @@ export function TimeMachine({
                     return
                   }
 
-                  if (isFocused) {
+                  if (!isMobile || isFocused) {
                     onOpen(entry)
                     return
                   }
@@ -1206,9 +1224,51 @@ function isInteractiveEventTarget(target: EventTarget | null): boolean {
   return target.closest(interactiveSelector) !== null
 }
 
-function isSwipeGestureBlockedTarget(target: EventTarget | null): boolean {
+function isSwipeGestureBlockedTarget(
+  target: EventTarget | null,
+  point?: { clientX: number; clientY: number; pointerType: string },
+): boolean {
   if (!(target instanceof HTMLElement)) return false
+
+  const cardScroll = target.closest<HTMLElement>('.tm-card-scroll')
+  if (cardScroll) {
+    if (!point) return true
+    return isCardScrollBarAreaPointer(
+      cardScroll,
+      point.clientX,
+      point.clientY,
+      point.pointerType,
+    )
+  }
+
   const selector =
-    '.tm-card-scroll, .tm-gesture-tuner, input, textarea, select, [contenteditable="true"], [role="textbox"], input[type="range"]'
+    '.tm-gesture-tuner, input, textarea, select, [contenteditable="true"], [role="textbox"], input[type="range"]'
   return target.closest(selector) !== null
+}
+
+function isCardScrollBarAreaPointer(
+  element: HTMLElement,
+  clientX: number,
+  clientY: number,
+  pointerType: string,
+): boolean {
+  const rect = element.getBoundingClientRect()
+  const hitSlop =
+    pointerType === 'touch' ? CARD_SCROLLBAR_TOUCH_HIT_SLOP_PX : CARD_SCROLLBAR_MOUSE_HIT_SLOP_PX
+  const canScrollY = element.scrollHeight - element.clientHeight > 1
+  const canScrollX = element.scrollWidth - element.clientWidth > 1
+  const inVerticalGutter =
+    canScrollY &&
+    clientX >= rect.right - hitSlop &&
+    clientX <= rect.right &&
+    clientY >= rect.top &&
+    clientY <= rect.bottom
+  const inHorizontalGutter =
+    canScrollX &&
+    clientY >= rect.bottom - hitSlop &&
+    clientY <= rect.bottom &&
+    clientX >= rect.left &&
+    clientX <= rect.right
+
+  return inVerticalGutter || inHorizontalGutter
 }

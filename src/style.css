@@ -681,9 +681,10 @@ pre {
   overflow-x: hidden;
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
-  touch-action: pan-y;
+  touch-action: none;
+  scrollbar-gutter: stable;
   padding-right: 6px;
-  cursor: grab;
+  cursor: inherit;
 }
 
 .tm-card-scroll[data-dragging='true'] {
