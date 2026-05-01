@@ -5,6 +5,7 @@ import type {
 } from './types'
 
 const TIMESTAMP_RE = /\[\d{4}-\d{2}-\d{2} [^\]]+\]/
+const ORG_HEADLINE_RE = /^\*+\s/
 const ORG_SUFFIX_TAGS_RE = /\s+(:[^\s:]+(?::[^\s:]+)*:)\s*$/
 const HASH_TAG_LINE_RE = /^\s*(#[A-Za-z0-9_-]+(?:\s+#[A-Za-z0-9_-]+)*)\s*$/
 const ORG_PROPERTIES_START_RE = /^\s*:PROPERTIES:\s*$/i
@@ -33,7 +34,7 @@ export function parseQuickNoteFile(content: string, sourcePath: string): ParsedQ
   const idUsage = new Map<string, number>()
 
   for (let index = 0; index < lines.length; index += 1) {
-    if (lines[index].startsWith('* ')) {
+    if (isTimestampedOrgHeadline(lines[index])) {
       headlineIndexes.push(index)
     }
   }
@@ -180,7 +181,7 @@ function parseNote(
       ? headlineIndexes[headlineIndex + 1]
       : lines.length
 
-  const rawHeadline = lines[startIndex].slice(2)
+  const rawHeadline = lines[startIndex].replace(ORG_HEADLINE_RE, '')
   const bodyLines = lines.slice(startIndex + 1, endIndex)
   const rawHeadlineTrimmed = rawHeadline.trim()
 
@@ -214,6 +215,10 @@ function parseNote(
     body: contentLines.join('\n'),
     preview: clip(previewSource.trim() || 'No body content.', 220),
   }
+}
+
+function isTimestampedOrgHeadline(line: string): boolean {
+  return ORG_HEADLINE_RE.test(line) && TIMESTAMP_RE.test(line)
 }
 
 function buildNoteId(

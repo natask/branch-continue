@@ -23,6 +23,28 @@ describe('parseQuickNoteFile note ids', () => {
     expect(parsed.entries.every((entry) => entry.id.startsWith('qn-ts-'))).toBe(true)
   })
 
+  it('only splits on timestamped org headlines', () => {
+    const content = [
+      '* First [2026-04-11 Sat 10:00:00 +0000]',
+      'body',
+      '*',
+      '* text',
+      '** Nested without timestamp',
+      'tail',
+      '* Second [2026-04-11 Sat 10:00:01 +0000] extra :tag:',
+      'second body',
+      '',
+    ].join('\n')
+
+    const parsed = parseQuickNoteFile(content, SOURCE_PATH)
+    const first = parsed.entries.find((entry) => entry.title === 'First')
+
+    expect(parsed.entries.length).toBe(2)
+    expect(first?.body).toContain('*\n* text\n** Nested without timestamp')
+    expect(parsed.entries[0]?.title).toContain('extra')
+    expect(parsed.entries[0]?.tags).toEqual(['tag'])
+  })
+
   it('keeps ids stable when line numbers shift', () => {
     const content = [
       '* First [2026-04-11 Sat 10:00:00 +0000]',
