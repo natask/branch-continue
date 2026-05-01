@@ -1,0 +1,36 @@
+{
+  "name": "@natnaelkahssay/card-stack-3d",
+  "version": "0.1.0",
+  "description": "A shadcn-style spatial 3D card stack for notes, documents, timelines, and version history.",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": [
+    "./dist/styles.css",
+    "./src/styles.css"
+  ],
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./styles.css": "./dist/styles.css"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && cp src/styles.css dist/styles.css",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "pnpm clean && pnpm build"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "typescript": "~5.7.2"
+  }
+}

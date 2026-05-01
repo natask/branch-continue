@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canConsumeScrollDelta } from '../src/ui/lib/scroll-bridge'
+import { canConsumeScrollDelta } from '../packages/card-stack-3d/src'
 
 describe('canConsumeScrollDelta', () => {
   it('allows downward vertical scroll when content extends below the viewport', () => {

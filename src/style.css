@@ -80,17 +80,6 @@ pre {
   }
 }
 
-@keyframes card-rise {
-  from {
-    opacity: 0;
-    transform: translateY(60px) scale(0.92);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
 .loading,
 .error-screen,
 .empty-panel {

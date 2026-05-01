@@ -1,15 +1,16 @@
-# Card System Package Plan
+# Card System Package
 
-Extract `TimeMachine` as a reusable React package without the QuickNote parser,
-app shell, editor, search, project promotion, or source bridge.
+`TimeMachine` has been extracted as a reusable React package without the
+QuickNote parser, app shell, editor, search, project promotion, or source
+bridge.
 
 ## Shape
 
-- Package: `@branch-continue/card-stack` or workspace `packages/card-stack`.
-- Entry points: main JS/TS export plus `@branch-continue/card-stack/styles.css`.
+- Package: `@natnaelkahssay/card-stack-3d` in `packages/card-stack-3d`.
+- Entry points: main JS/TS export plus `@natnaelkahssay/card-stack-3d/styles.css`.
 - Build: ESM + `.d.ts`; peer deps are `react` and `react-dom`.
-- Extract: `TimeMachine.tsx`, `card-stack-3d.ts`, required navigation helpers,
-  and only `.tm-*` rules from `src/style.css`.
+- Extracted: `CardStack3D.tsx`, `card-stack-3d.ts`, scroll helpers, gesture
+  navigation, control persistence, and `.tm-*` package styles.
 
 ## API
 
@@ -42,8 +43,9 @@ export interface CardStackProps<T extends CardStackItem = CardStackItem> {
 }
 ```
 
-Also export `CardStack`, `defaultDesktopControls`, `defaultMobileControls`,
-`cardLinePosition`, `sphericalDirection`, `cardRotationFromOrientation`.
+Also exports `CardStack3D`, `defaultStackControls`, `cardLinePosition`,
+`sphericalDirection`, `cardRotationFromNormal`, `cardRotationFromOrientation`,
+and scroll-bridge helpers.
 
 ## Styling
 
@@ -65,14 +67,11 @@ Also export `CardStack`, `defaultDesktopControls`, `defaultMobileControls`,
 
 ## Migration
 
-1. Copy `TimeMachine` to `packages/card-stack/src/CardStack.tsx`.
-2. Rename props from note-specific names to item-specific names.
-3. Replace direct `SourceNote` use with generic `CardStackItem`; map app notes
-   at the call site.
-4. Move `card-stack-3d.ts` unchanged and export it as utilities.
-5. Move stack CSS into package `styles.css`.
-6. Swap current usage to:
-   `<CardStack items={notes} activeId={activeNoteId} onSelect={selectNote} />`.
+1. `src/ui/components/TimeMachine.tsx` is now a thin app adapter.
+2. App notes are sorted in the adapter and rendered through `renderCard`.
+3. The package owns card stack gestures, transforms, scroll handling, storage,
+   defaults, CSS, and exported geometry utilities.
+4. Root scripts build the workspace package before app build/test.
 
 Keep sorting, editor open state, search disabling, branch creation, source-file
 persistence, and app-level keyboard policy in the app.

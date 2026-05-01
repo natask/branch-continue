@@ -4,12 +4,12 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "dev": "pnpm --filter @natnaelkahssay/card-stack-3d build && vite",
+    "build": "pnpm --filter @natnaelkahssay/card-stack-3d build && tsc -b && vite build",
     "deploy": "pnpm app:deploy",
     "app:package": "pnpm tauri:build",
     "app:deploy": "pnpm app:package && ./scripts/deploy-single-app.sh",
-    "test": "vitest run",
+    "test": "pnpm --filter @natnaelkahssay/card-stack-3d build && vitest run",
     "test:watch": "vitest",
     "preview": "vite preview",
     "tauri": "tauri",
@@ -21,6 +21,7 @@
     "tauri:ios:build": "tauri ios build"
   },
   "dependencies": {
+    "@natnaelkahssay/card-stack-3d": "workspace:*",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-dialog": "~2",
     "@tauri-apps/plugin-fs": "~2",

@@ -5,7 +5,7 @@ import {
   cardRotationFromOrientation,
   sphericalDirection,
   type Vec3,
-} from '../src/ui/lib/card-stack-3d'
+} from '../packages/card-stack-3d/src'
 
 function dot(a: Vec3, b: Vec3): number {
   return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
