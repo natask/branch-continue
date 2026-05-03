@@ -31,7 +31,7 @@ Upload the `current/` directory to the HTTPS URL used by the mobile shell. The d
 https://branch-continue.elocute.main.lan/
 ```
 
-That hostname resolves to `10.147.17.10` on the local network and is served by Caddy from the release symlink at `/home/reclaim-ethiopia/agent-stations/apps/branch-continue/current`.
+That hostname resolves to `10.147.17.10` on the local network. Caddy terminates HTTPS with the private `*.elocute.main.lan` certificate and proxies to the static server on `127.0.0.1:43017`, which serves the release symlink at `/home/reclaim-ethiopia/agent-stations/apps/branch-continue/current`.
 
 Useful overrides:
 
