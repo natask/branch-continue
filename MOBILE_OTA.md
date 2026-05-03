@@ -28,17 +28,17 @@ The command builds Vite with relative asset URLs and writes:
 Upload the `current/` directory to the HTTPS URL used by the mobile shell. The default Branch Continue OTA URL is:
 
 ```text
-https://branch-continue.elocute.main.lan/
+https://branch-continue.elocute.main.lan/mobile/
 ```
 
-That hostname resolves to `10.147.17.10` on the local network. Caddy terminates HTTPS with the private `*.elocute.main.lan` certificate and proxies to the static server on `127.0.0.1:43017`, which serves the release symlink at `/home/reclaim-ethiopia/agent-stations/apps/branch-continue/current`.
+That hostname resolves to `10.147.17.10` on the local network. Caddy terminates HTTPS with the private `*.elocute.main.lan` certificate and proxies `/mobile/` to the mobile OTA static server on `127.0.0.1:43018`, which serves the release symlink at `/home/reclaim-ethiopia/agent-stations/apps/branch-continue/mobile-ota/current`.
 
 Useful overrides:
 
 ```sh
 MOBILE_OTA_CHANNEL=staging pnpm mobile:ota:bundle
 MOBILE_OTA_RUNTIME=tauri-mobile-v2 pnpm mobile:ota:bundle
-MOBILE_OTA_PUBLIC_URL=https://branch-continue.elocute.main.lan/ pnpm mobile:ota:bundle
+MOBILE_OTA_PUBLIC_URL=https://branch-continue.elocute.main.lan/mobile/ pnpm mobile:ota:bundle
 ```
 
 ## Deploy an OTA update
@@ -47,13 +47,13 @@ MOBILE_OTA_PUBLIC_URL=https://branch-continue.elocute.main.lan/ pnpm mobile:ota:
 pnpm mobile:ota:deploy
 ```
 
-The deploy command builds a fresh OTA bundle, uploads it to `reclaim@10.147.17.10:/home/reclaim-ethiopia/agent-stations/apps/branch-continue/releases/<release-id>/`, and atomically moves the remote `current` symlink to that release.
+The deploy command builds a fresh OTA bundle, uploads it to `reclaim@10.147.17.10:/home/reclaim-ethiopia/agent-stations/apps/branch-continue/mobile-ota/releases/<release-id>/`, and atomically moves the remote `current` symlink to that release.
 
 Useful overrides:
 
 ```sh
 MOBILE_OTA_SSH_HOST=reclaim@10.147.17.10 pnpm mobile:ota:deploy
-MOBILE_OTA_REMOTE_BASE=/home/reclaim-ethiopia/agent-stations/apps/branch-continue pnpm mobile:ota:deploy
+MOBILE_OTA_REMOTE_BASE=/home/reclaim-ethiopia/agent-stations/apps/branch-continue/mobile-ota pnpm mobile:ota:deploy
 ```
 
 ## Build the native mobile shell

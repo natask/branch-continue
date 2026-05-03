@@ -10,9 +10,9 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const appName = 'branch-continue'
 const defaultRuntime = 'tauri-mobile-v1'
 const defaultChannel = 'production'
-const defaultMobileOtaUrl = 'https://branch-continue.elocute.main.lan/'
+const defaultMobileOtaUrl = 'https://branch-continue.elocute.main.lan/mobile/'
 const defaultRemoteHost = 'reclaim@10.147.17.10'
-const defaultRemoteBase = '/home/reclaim-ethiopia/agent-stations/apps/branch-continue'
+const defaultRemoteBase = '/home/reclaim-ethiopia/agent-stations/apps/branch-continue/mobile-ota'
 const outputRoot = path.join(repoRoot, '.mobile-ota')
 
 const command = process.argv[2]
