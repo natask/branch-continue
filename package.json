@@ -26,6 +26,7 @@
     "tauri:ios:build": "tauri ios build"
   },
   "dependencies": {
+    "@master-orch/client": "link:../master-orch/packages/master-orch-client",
     "@natnaelkahssay/card-stack-3d": "workspace:*",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-dialog": "~2",

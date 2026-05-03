@@ -4,6 +4,7 @@ import { useEditorSession } from './ui/hooks/use-editor-session'
 import { SearchModal, type SearchCommandAction } from './ui/components/SearchModal'
 import { TimeMachine } from './ui/components/TimeMachine'
 import { Editor } from './ui/components/Editor'
+import { useAgentStationCommands } from './ui/agent-station/use-agent-station'
 import {
   formatNotePosition,
   orderNotes,
@@ -167,6 +168,7 @@ function LoadedSourceApp({
     createNote,
     updateNote,
   })
+  const stationCommandActions = useAgentStationCommands({ sourcePath })
 
   const orderedNotes = useMemo(() => orderNotes(notes), [notes])
   const notesById = useMemo(() => {
@@ -463,6 +465,7 @@ function LoadedSourceApp({
 
   const commandActions = useMemo<SearchCommandAction[]>(
     () => [
+      ...stationCommandActions,
       {
         id: 'select-source-file',
         label: selectingSource ? 'Select Source File (busy...)' : 'Select Source File',
@@ -657,6 +660,7 @@ function LoadedSourceApp({
       resetWheelNavDirections,
       selectingSource,
       selectSourceFile,
+      stationCommandActions,
       showCardStackTuner,
       isMobileDevice,
       mobilePreview,
