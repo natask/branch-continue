@@ -108,7 +108,7 @@ export function SearchModal({ open, onClose, onSearch, onSelect, commandActions 
   return (
     <Command.Dialog
       open={open}
-      onOpenChange={(nextOpen) => {
+      onOpenChange={(nextOpen: boolean) => {
         if (!nextOpen) onClose()
       }}
       overlayClassName="search-overlay"

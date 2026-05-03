@@ -14,10 +14,13 @@ import type { QuickNoteSearchHit, SourceNote } from './core/quicknote/types'
 
 const CARD_STACK_TUNER_KEY = 'branch-continue:show-card-stack-tuner'
 const MOBILE_PREVIEW_KEY = 'branch-continue:mobile-preview'
+const SCROLL_DIRECTION_KEY = 'branch-continue:scroll-direction:v1'
 const NOTE_NAV_SCROLL_STEP_PX = 40
 
 type SwipeUpNavTarget = 'previous' | 'next'
 type WheelNavDirection = 'natural' | 'reverse'
+type ScrollDirectionViewport = 'desktop' | 'mobile'
+type WheelNavDirectionByViewport = Partial<Record<ScrollDirectionViewport, WheelNavDirection>>
 
 export default function App() {
   const app = useApp()
@@ -151,8 +154,12 @@ function LoadedSourceApp({
   } = app
   const [searchOpen, setSearchOpen] = useState(false)
   const [sortMode, setSortMode] = useState<NoteSortMode>(resolveInitialSortMode)
+  const [wheelNavDirections, setWheelNavDirections] =
+    useState<WheelNavDirectionByViewport>(resolveInitialWheelNavDirections)
   const swipeUpNavTarget: SwipeUpNavTarget = 'previous'
-  const wheelNavDirection: WheelNavDirection = 'natural'
+  const desktopWheelNavDirection = wheelNavDirections.desktop ?? 'natural'
+  const mobileWheelNavDirection = wheelNavDirections.mobile ?? oppositeWheelNavDirection(desktopWheelNavDirection)
+  const wheelNavDirection = isMobile ? mobileWheelNavDirection : desktopWheelNavDirection
   const editorWheelAccumRef = useRef(0)
 
   const editorSession = useEditorSession({
@@ -285,6 +292,32 @@ function LoadedSourceApp({
     if (!boundary) return
     selectNote(boundary)
   }, [orderedNotes, selectNote, sortMode])
+
+  const setWheelNavDirectionForViewport = useCallback(
+    (viewport: ScrollDirectionViewport, direction: WheelNavDirection) => {
+      setWheelNavDirections((current) => {
+        if (current[viewport] === direction) return current
+        return { ...current, [viewport]: direction }
+      })
+    },
+    [],
+  )
+
+  const resetWheelNavDirections = useCallback(() => {
+    setWheelNavDirections({})
+  }, [])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SCROLL_DIRECTION_KEY, JSON.stringify(wheelNavDirections))
+    } catch {
+      // Ignore persistence failures.
+    }
+  }, [wheelNavDirections])
+
+  useEffect(() => {
+    editorWheelAccumRef.current = 0
+  }, [wheelNavDirection])
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -537,6 +570,41 @@ function LoadedSourceApp({
         run: () => setSortMode('oldest'),
       },
       {
+        id: 'set-desktop-scroll-direction-natural',
+        label: `Desktop Scroll Direction: Natural${desktopWheelNavDirection === 'natural' ? ' (current)' : ''}`,
+        keywords: ['desktop', 'scroll', 'wheel', 'trackpad', 'direction', 'natural'],
+        group: 'Settings',
+        run: () => setWheelNavDirectionForViewport('desktop', 'natural'),
+      },
+      {
+        id: 'set-desktop-scroll-direction-reverse',
+        label: `Desktop Scroll Direction: Reverse${desktopWheelNavDirection === 'reverse' ? ' (current)' : ''}`,
+        keywords: ['desktop', 'scroll', 'wheel', 'trackpad', 'direction', 'reverse', 'invert'],
+        group: 'Settings',
+        run: () => setWheelNavDirectionForViewport('desktop', 'reverse'),
+      },
+      {
+        id: 'set-mobile-scroll-direction-natural',
+        label: `Mobile Scroll Direction: Natural${mobileWheelNavDirection === 'natural' ? ' (current)' : ''}`,
+        keywords: ['mobile', 'phone', 'scroll', 'swipe', 'wheel', 'trackpad', 'direction', 'natural'],
+        group: 'Settings',
+        run: () => setWheelNavDirectionForViewport('mobile', 'natural'),
+      },
+      {
+        id: 'set-mobile-scroll-direction-reverse',
+        label: `Mobile Scroll Direction: Reverse${mobileWheelNavDirection === 'reverse' ? ' (current)' : ''}`,
+        keywords: ['mobile', 'phone', 'scroll', 'swipe', 'wheel', 'trackpad', 'direction', 'reverse', 'invert'],
+        group: 'Settings',
+        run: () => setWheelNavDirectionForViewport('mobile', 'reverse'),
+      },
+      {
+        id: 'reset-scroll-directions',
+        label: 'Reset Scroll Directions: Desktop Natural, Mobile Reverse',
+        keywords: ['scroll', 'wheel', 'trackpad', 'direction', 'reset', 'default'],
+        group: 'Settings',
+        run: resetWheelNavDirections,
+      },
+      {
         id: 'toggle-card-stack-tuner',
         label: `${showCardStackTuner ? 'Hide' : 'Show'} Card Stack Tuner`,
         keywords: ['debug', 'leva', 'card stack', 'gesture', 'tune'],
@@ -586,6 +654,7 @@ function LoadedSourceApp({
       newerEditorNote,
       orderedNotes.length,
       reloadSource,
+      resetWheelNavDirections,
       selectingSource,
       selectSourceFile,
       showCardStackTuner,
@@ -595,6 +664,9 @@ function LoadedSourceApp({
       sortMode,
       swipeUpNavTarget,
       wheelNavDirection,
+      desktopWheelNavDirection,
+      mobileWheelNavDirection,
+      setWheelNavDirectionForViewport,
       setMobilePreview,
     ],
   )
@@ -757,6 +829,61 @@ function resolveInitialSortMode(): NoteSortMode {
   if (typeof window === 'undefined') return 'latest'
   const start = new URLSearchParams(window.location.search).get('start')
   return start?.toLowerCase() === 'oldest' ? 'oldest' : 'latest'
+}
+
+function resolveInitialWheelNavDirections(): WheelNavDirectionByViewport {
+  if (typeof window === 'undefined') return {}
+
+  const params = new URLSearchParams(window.location.search)
+  const initial: WheelNavDirectionByViewport = {}
+  const sharedDirection = parseWheelNavDirection(params.get('scroll-direction'))
+  if (sharedDirection) {
+    initial.desktop = sharedDirection
+    initial.mobile = sharedDirection
+  }
+
+  const desktopDirection = parseWheelNavDirection(params.get('desktop-scroll-direction'))
+  if (desktopDirection) initial.desktop = desktopDirection
+
+  const mobileDirection = parseWheelNavDirection(params.get('mobile-scroll-direction'))
+  if (mobileDirection) initial.mobile = mobileDirection
+
+  if (initial.desktop || initial.mobile) return initial
+
+  try {
+    const stored = window.localStorage.getItem(SCROLL_DIRECTION_KEY)
+    if (!stored) return {}
+
+    const parsed: unknown = JSON.parse(stored)
+    if (!parsed || typeof parsed !== 'object') return {}
+
+    const storedDirections: WheelNavDirectionByViewport = {}
+    const record = parsed as Record<string, unknown>
+    if (record.desktop === 'natural' || record.desktop === 'reverse') {
+      storedDirections.desktop = record.desktop
+    }
+    if (record.mobile === 'natural' || record.mobile === 'reverse') {
+      storedDirections.mobile = record.mobile
+    }
+    return storedDirections
+  } catch {
+    // Ignore persistence lookup failures.
+  }
+
+  return {}
+}
+
+function parseWheelNavDirection(value: string | null): WheelNavDirection | null {
+  const normalized = value?.toLowerCase()
+  if (normalized === 'natural' || normalized === 'normal') return 'natural'
+  if (normalized === 'reverse' || normalized === 'reversed' || normalized === 'invert' || normalized === 'inverted') {
+    return 'reverse'
+  }
+  return null
+}
+
+function oppositeWheelNavDirection(direction: WheelNavDirection): WheelNavDirection {
+  return direction === 'natural' ? 'reverse' : 'natural'
 }
 
 function resolveInitialCardStackTunerVisibility(): boolean {

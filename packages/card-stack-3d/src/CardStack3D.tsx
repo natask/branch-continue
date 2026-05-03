@@ -533,8 +533,7 @@ export function CardStack3D<T extends CardStackItem = CardStackItem>({
 
       event.preventDefault()
 
-      const normalizedDelta =
-        wheelNavDirection === 'natural' ? dominantDelta : dominantDelta * -1
+      const normalizedDelta = normalizeNavigationDelta(dominantDelta, wheelNavDirection)
       gestureActiveRef.current = true
       setSuppressGestureTransitions(true)
       const nextScene = applySceneIndex(
@@ -609,10 +608,11 @@ export function CardStack3D<T extends CardStackItem = CardStackItem>({
       e.preventDefault()
       gestureActiveRef.current = true
       setSuppressGestureTransitions(true)
+      const dragDelta = state.locked === 'y' ? dy : dx
       const nextScene = applySceneIndex(
         state.originSceneIndex +
           gestureDeltaToCardDelta(
-            state.locked === 'y' ? dy : dx,
+            normalizeNavigationDelta(dragDelta, wheelNavDirection),
             state.locked,
             swipeUpNavTarget,
             dragPxPerCard,
@@ -637,19 +637,21 @@ export function CardStack3D<T extends CardStackItem = CardStackItem>({
       const axis = state.locked ?? (Math.abs(totalY) >= Math.abs(totalX) ? 'y' : 'x')
       const totalDelta = axis === 'y' ? totalY : totalX
       const releaseDelta = axis === 'y' ? touch.clientY - state.lastY : touch.clientX - state.lastX
+      const normalizedTotalDelta = normalizeNavigationDelta(totalDelta, wheelNavDirection)
+      const normalizedReleaseDelta = normalizeNavigationDelta(releaseDelta, wheelNavDirection)
 
       if (!state.moved) {
         if (Math.abs(totalDelta) < TOUCH_NAV_MIN_DISTANCE_PX || elapsed > TOUCH_NAV_MAX_DURATION_MS) return
       }
 
-      const totalVelocity = totalDelta / Math.max(1, elapsed)
-      const releaseVelocity = releaseDelta / Math.max(1, now - state.lastMoveTime)
+      const totalVelocity = normalizedTotalDelta / Math.max(1, elapsed)
+      const releaseVelocity = normalizedReleaseDelta / Math.max(1, now - state.lastMoveTime)
       const velocity = Math.abs(releaseVelocity) >= Math.abs(totalVelocity) ? releaseVelocity : totalVelocity
       const releaseScene = state.moved
         ? sceneIndexRef.current
         : clamp(
             state.originSceneIndex +
-              gestureDeltaToCardDelta(totalDelta, axis, swipeUpNavTarget, dragPxPerCard),
+              gestureDeltaToCardDelta(normalizedTotalDelta, axis, swipeUpNavTarget, dragPxPerCard),
             0,
             sorted.length - 1,
           )
@@ -688,7 +690,7 @@ export function CardStack3D<T extends CardStackItem = CardStackItem>({
       element.removeEventListener('touchend', onTouchEnd)
       element.removeEventListener('touchcancel', onTouchCancel)
     }
-  }, [dragPxPerCard, navigationEnabled, sorted, swipeUpNavTarget])
+  }, [dragPxPerCard, navigationEnabled, sorted, swipeUpNavTarget, wheelNavDirection])
 
   // Mouse/pen drag navigation on desktop so swipe speed can be tested without phone launch.
   useEffect(() => {
@@ -742,10 +744,11 @@ export function CardStack3D<T extends CardStackItem = CardStackItem>({
       event.preventDefault()
       gestureActiveRef.current = true
       setSuppressGestureTransitions(true)
+      const dragDelta = state.locked === 'y' ? dy : dx
       const nextScene = applySceneIndex(
         state.originSceneIndex +
           gestureDeltaToCardDelta(
-            state.locked === 'y' ? dy : dx,
+            normalizeNavigationDelta(dragDelta, wheelNavDirection),
             state.locked,
             swipeUpNavTarget,
             dragPxPerCard,
@@ -767,6 +770,8 @@ export function CardStack3D<T extends CardStackItem = CardStackItem>({
       const axis = state.locked ?? (Math.abs(totalY) >= Math.abs(totalX) ? 'y' : 'x')
       const totalDelta = axis === 'y' ? totalY : totalX
       const releaseDelta = axis === 'y' ? event.clientY - state.lastY : event.clientX - state.lastX
+      const normalizedTotalDelta = normalizeNavigationDelta(totalDelta, wheelNavDirection)
+      const normalizedReleaseDelta = normalizeNavigationDelta(releaseDelta, wheelNavDirection)
 
       if (state.moved) {
         suppressCardClickRef.current = true
@@ -776,14 +781,14 @@ export function CardStack3D<T extends CardStackItem = CardStackItem>({
         if (Math.abs(totalDelta) < TOUCH_NAV_MIN_DISTANCE_PX || elapsed > TOUCH_NAV_MAX_DURATION_MS) return
       }
 
-      const totalVelocity = totalDelta / Math.max(1, elapsed)
-      const releaseVelocity = releaseDelta / Math.max(1, now - state.lastMoveTime)
+      const totalVelocity = normalizedTotalDelta / Math.max(1, elapsed)
+      const releaseVelocity = normalizedReleaseDelta / Math.max(1, now - state.lastMoveTime)
       const velocity = Math.abs(releaseVelocity) >= Math.abs(totalVelocity) ? releaseVelocity : totalVelocity
       const releaseScene = state.moved
         ? sceneIndexRef.current
         : clamp(
             state.originSceneIndex +
-              gestureDeltaToCardDelta(totalDelta, axis, swipeUpNavTarget, dragPxPerCard),
+              gestureDeltaToCardDelta(normalizedTotalDelta, axis, swipeUpNavTarget, dragPxPerCard),
             0,
             sorted.length - 1,
           )
@@ -824,7 +829,7 @@ export function CardStack3D<T extends CardStackItem = CardStackItem>({
       window.removeEventListener('pointerup', onPointerUp)
       window.removeEventListener('pointercancel', onPointerCancel)
     }
-  }, [dragPxPerCard, navigationEnabled, sorted, swipeUpNavTarget])
+  }, [dragPxPerCard, navigationEnabled, sorted, swipeUpNavTarget, wheelNavDirection])
 
   const handleCardBodyPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return
@@ -1327,6 +1332,10 @@ function gestureDeltaToCardDelta(
   if (axis === 'x') return -deltaPx / pxPerCard
   const verticalSign = swipeUpNavTarget === 'previous' ? -1 : 1
   return (deltaPx * verticalSign) / pxPerCard
+}
+
+function normalizeNavigationDelta(deltaPx: number, direction: 'natural' | 'reverse'): number {
+  return direction === 'natural' ? deltaPx : deltaPx * -1
 }
 
 function sceneMotionDurationMs(distanceCards: number): number {
