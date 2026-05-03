@@ -10,6 +10,7 @@
     "app:package": "pnpm tauri:build",
     "app:deploy": "pnpm app:package && ./scripts/deploy-single-app.sh",
     "mobile:ota:bundle": "node scripts/mobile-ota.mjs bundle",
+    "mobile:ota:deploy": "node scripts/mobile-ota.mjs deploy",
     "mobile:shell:android": "node scripts/mobile-ota.mjs shell android",
     "mobile:shell:android:apk": "node scripts/mobile-ota.mjs shell android --apk",
     "mobile:shell:ios": "node scripts/mobile-ota.mjs shell ios",

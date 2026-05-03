@@ -11,6 +11,8 @@ const appName = 'branch-continue'
 const defaultRuntime = 'tauri-mobile-v1'
 const defaultChannel = 'production'
 const defaultMobileOtaUrl = 'https://branch-continue.elocute.main.lan/'
+const defaultRemoteHost = 'reclaim@10.147.17.10'
+const defaultRemoteBase = '/home/reclaim-ethiopia/agent-stations/apps/branch-continue'
 const outputRoot = path.join(repoRoot, '.mobile-ota')
 
 const command = process.argv[2]
@@ -24,6 +26,8 @@ if (!command || command === '--help' || command === '-h') {
 try {
   if (command === 'bundle') {
     await bundle(args)
+  } else if (command === 'deploy') {
+    await deploy(args)
   } else if (command === 'shell') {
     await shell(args)
   } else {
@@ -100,6 +104,38 @@ async function bundle(rawArgs) {
   console.log(`mobile-ota: current bundle ${path.relative(repoRoot, currentDir)}`)
   console.log(`mobile-ota: release bundle ${path.relative(repoRoot, releaseDir)}`)
   console.log(`mobile-ota: manifest ${path.relative(repoRoot, channelManifestPath)}`)
+  return { manifest, currentDir }
+}
+
+async function deploy(rawArgs) {
+  const { options, passthrough } = parseArgs(rawArgs)
+  if (passthrough.length > 0) {
+    throw new Error(`Unexpected deploy arguments: ${passthrough.join(' ')}`)
+  }
+
+  const remoteHost = options.host ?? process.env.MOBILE_OTA_SSH_HOST ?? defaultRemoteHost
+  const remoteBase = options['remote-base'] ?? process.env.MOBILE_OTA_REMOTE_BASE ?? defaultRemoteBase
+  const { manifest, currentDir } = await bundle(rawArgs)
+  const remoteRelease = `${remoteBase.replace(/\/+$/, '')}/releases/${manifest.releaseId}`
+
+  run('ssh', [remoteHost, `mkdir -p ${shellQuote(remoteRelease)}`], process.env)
+  run('rsync', ['-az', '--delete', `${currentDir}/`, `${remoteHost}:${remoteRelease}/`], process.env)
+  run(
+    'ssh',
+    [
+      remoteHost,
+      [
+        'set -e',
+        `cd ${shellQuote(remoteBase)}`,
+        `ln -sfn ${shellQuote(remoteRelease)} current.next`,
+        'mv -Tf current.next current',
+        'readlink -f current',
+      ].join('; '),
+    ],
+    process.env,
+  )
+
+  console.log(`mobile-ota: deployed ${manifest.releaseId} to ${remoteHost}:${remoteRelease}`)
 }
 
 async function shell(rawArgs) {
@@ -366,9 +402,14 @@ function hashManifestFiles(fileEntries) {
   return hash.digest('hex')
 }
 
+function shellQuote(value) {
+  return `'${value.replaceAll("'", "'\\''")}'`
+}
+
 function printUsage() {
   console.log(`Usage:
   pnpm mobile:ota:bundle
+  pnpm mobile:ota:deploy
   pnpm mobile:shell:android
   pnpm mobile:shell:ios
 
@@ -378,5 +419,7 @@ Environment:
   MOBILE_OTA_OUT_DIR       Bundle output directory, default .mobile-ota
   MOBILE_OTA_PUBLIC_URL    Optional public URL recorded in the manifest, default ${defaultMobileOtaUrl}
   MOBILE_OTA_URL           HTTPS URL the native mobile shell loads, default ${defaultMobileOtaUrl}
+  MOBILE_OTA_SSH_HOST      SSH upload target, default ${defaultRemoteHost}
+  MOBILE_OTA_REMOTE_BASE   Remote release base, default ${defaultRemoteBase}
 `)
 }

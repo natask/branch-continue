@@ -41,6 +41,21 @@ MOBILE_OTA_RUNTIME=tauri-mobile-v2 pnpm mobile:ota:bundle
 MOBILE_OTA_PUBLIC_URL=https://branch-continue.elocute.main.lan/ pnpm mobile:ota:bundle
 ```
 
+## Deploy an OTA update
+
+```sh
+pnpm mobile:ota:deploy
+```
+
+The deploy command builds a fresh OTA bundle, uploads it to `reclaim@10.147.17.10:/home/reclaim-ethiopia/agent-stations/apps/branch-continue/releases/<release-id>/`, and atomically moves the remote `current` symlink to that release.
+
+Useful overrides:
+
+```sh
+MOBILE_OTA_SSH_HOST=reclaim@10.147.17.10 pnpm mobile:ota:deploy
+MOBILE_OTA_REMOTE_BASE=/home/reclaim-ethiopia/agent-stations/apps/branch-continue pnpm mobile:ota:deploy
+```
+
 ## Build the native mobile shell
 
 Build the shell with the default Branch Continue OTA URL:
