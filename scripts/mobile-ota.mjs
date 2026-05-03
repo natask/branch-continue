@@ -146,15 +146,25 @@ async function shell(rawArgs) {
 
   const { options, passthrough } = parseShellArgs(rawArgs.slice(1))
   const url = options.url ?? process.env.MOBILE_OTA_URL ?? defaultMobileOtaUrl
+  const remoteOnly = options['remote-only'] === '1'
 
   const normalizedUrl = normalizeDirectoryUrl(url, {
     allowHttp: process.env.MOBILE_OTA_ALLOW_HTTP === '1' || options['allow-http'] === '1',
   })
   const remotePatterns = remoteCapabilityPatterns(normalizedUrl)
   const configPath = path.join(outputRoot, 'generated', `tauri.mobile-ota.${platform}.json`)
+
+  if (!remoteOnly) {
+    run('pnpm', ['build'], {
+      ...process.env,
+      BRANCH_CONTINUE_MOBILE_OTA: '1',
+      VITE_BRANCH_CONTINUE_MOBILE_OTA_URL: normalizedUrl,
+    })
+  }
+
   const config = {
     build: {
-      frontendDist: normalizedUrl,
+      frontendDist: remoteOnly ? normalizedUrl : path.join(repoRoot, 'dist'),
       beforeBuildCommand: null,
     },
     app: {
@@ -201,7 +211,9 @@ async function shell(rawArgs) {
 
   await writeJson(configPath, config)
 
-  console.log(`mobile-ota: shell URL ${normalizedUrl}`)
+  console.log(`mobile-ota: shell mode ${remoteOnly ? 'remote-only' : 'offline-first'}`)
+  console.log(`mobile-ota: shell URL ${remoteOnly ? normalizedUrl : path.join(repoRoot, 'dist')}`)
+  console.log(`mobile-ota: OTA URL ${normalizedUrl}`)
   console.log(`mobile-ota: remote capability ${remotePatterns.join(', ')}`)
   console.log(`mobile-ota: generated config ${path.relative(repoRoot, configPath)}`)
 
@@ -270,6 +282,11 @@ function parseShellArgs(rawArgs) {
 
     if (arg === '--allow-http') {
       options['allow-http'] = '1'
+      continue
+    }
+
+    if (arg === '--remote-only') {
+      options['remote-only'] = '1'
       continue
     }
 
@@ -418,8 +435,11 @@ Environment:
   MOBILE_OTA_RUNTIME       Native compatibility lane, default ${defaultRuntime}
   MOBILE_OTA_OUT_DIR       Bundle output directory, default .mobile-ota
   MOBILE_OTA_PUBLIC_URL    Optional public URL recorded in the manifest, default ${defaultMobileOtaUrl}
-  MOBILE_OTA_URL           HTTPS URL the native mobile shell loads, default ${defaultMobileOtaUrl}
+  MOBILE_OTA_URL           OTA URL used by the native shell, default ${defaultMobileOtaUrl}
   MOBILE_OTA_SSH_HOST      SSH upload target, default ${defaultRemoteHost}
   MOBILE_OTA_REMOTE_BASE   Remote release base, default ${defaultRemoteBase}
+
+Shell options:
+  --remote-only            Load the OTA URL directly instead of embedding the current app as an offline fallback.
 `)
 }
