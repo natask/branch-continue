@@ -72,6 +72,16 @@ export interface SourceSummary {
   mode: SourceMode
 }
 
+export class SourceFileUnavailableError extends Error {
+  readonly summary: SourceSummary
+
+  constructor(summary: SourceSummary) {
+    super(`Source file is no longer available: ${summary.path}`)
+    this.name = 'SourceFileUnavailableError'
+    this.summary = summary
+  }
+}
+
 export interface SelectedFileResult {
   summary: SourceSummary
   content: string
@@ -109,6 +119,32 @@ export function createSourceBridge(): SourceBridge {
     return `${text.length}:${text.charCodeAt(0) || 0}:${text.charCodeAt(text.length - 1) || 0}:${text.charCodeAt(Math.floor(text.length / 2)) || 0}`
   }
 
+  async function clearCurrentSource(source: ActiveSource): Promise<void> {
+    if (active !== source) return
+
+    active = null
+    stopWatchTimer()
+
+    if (source.kind === 'tauri') {
+      localStorage.removeItem(TAURI_SOURCE_KEY)
+      return
+    }
+
+    if (source.kind === 'filesystem-handle') {
+      await clearPersistedBrowserHandle()
+    }
+  }
+
+  async function handleSourceAccessError(source: ActiveSource, error: unknown): Promise<never> {
+    if (isMissingSourceError(error)) {
+      const summary = toSummary(source)
+      await clearCurrentSource(source)
+      throw new SourceFileUnavailableError(summary)
+    }
+
+    throw error
+  }
+
   return {
     async selectFile(): Promise<SelectedFileResult> {
       if (await isTauriRuntime()) {
@@ -117,7 +153,16 @@ export function createSourceBridge(): SourceBridge {
           throw new SourceSelectionCancelledError()
         }
 
-        const content = await readTauriFile(selected.path)
+        let content: string
+        try {
+          content = await readTauriFile(selected.path)
+        } catch (error) {
+          if (isMissingSourceError(error)) {
+            localStorage.removeItem(TAURI_SOURCE_KEY)
+            throw new SourceFileUnavailableError(toSummary(selected))
+          }
+          throw error
+        }
         active = selected
         localStorage.setItem(TAURI_SOURCE_KEY, selected.path)
         return { summary: toSummary(selected), content }
@@ -151,7 +196,22 @@ export function createSourceBridge(): SourceBridge {
           throw new SourceSelectionCancelledError()
         }
 
-        const file = await handle.getFile()
+        let file: File
+        try {
+          file = await handle.getFile()
+        } catch (error) {
+          if (isMissingSourceError(error)) {
+            await clearPersistedBrowserHandle()
+            const label = handle.name || 'Selected file'
+            throw new SourceFileUnavailableError({
+              path: label,
+              label,
+              writable: true,
+              mode: 'direct',
+            })
+          }
+          throw error
+        }
         const selected: SelectedHandleSource = {
           kind: 'filesystem-handle',
           path: file.name,
@@ -236,18 +296,29 @@ export function createSourceBridge(): SourceBridge {
       }
 
       if (active.kind === 'tauri') {
-        const content = await readTauriFile(active.path)
-        return { summary: toSummary(active), content }
+        const source = active
+        try {
+          const content = await readTauriFile(source.path)
+          return { summary: toSummary(source), content }
+        } catch (error) {
+          return handleSourceAccessError(source, error)
+        }
       }
 
       if (active.kind === 'filesystem-handle') {
-        const file = await active.handle.getFile()
-        active = {
-          ...active,
-          path: file.name,
-          label: file.name,
+        const source = active
+        try {
+          const file = await source.handle.getFile()
+          const nextSource: SelectedHandleSource = {
+            ...source,
+            path: file.name,
+            label: file.name,
+          }
+          active = nextSource
+          return { summary: toSummary(nextSource), content: await file.text() }
+        } catch (error) {
+          return handleSourceAccessError(source, error)
         }
-        return { summary: toSummary(active), content: await file.text() }
       }
 
       return { summary: toSummary(active), content: active.content }
@@ -259,15 +330,25 @@ export function createSourceBridge(): SourceBridge {
       }
 
       if (active.kind === 'tauri') {
-        await writeTauriFile(active.path, content)
-        return
+        const source = active
+        try {
+          await writeTauriFile(source.path, content)
+          return
+        } catch (error) {
+          return handleSourceAccessError(source, error)
+        }
       }
 
       if (active.kind === 'filesystem-handle') {
-        const writable = await active.handle.createWritable()
-        await writable.write(content)
-        await writable.close()
-        return
+        const source = active
+        try {
+          const writable = await source.handle.createWritable()
+          await writable.write(content)
+          await writable.close()
+          return
+        } catch (error) {
+          return handleSourceAccessError(source, error)
+        }
       }
 
       triggerDownload(active.label, content)
@@ -286,11 +367,12 @@ export function createSourceBridge(): SourceBridge {
       stopWatchTimer()
 
       watchTimer = setInterval(async () => {
-        if (!active) return
+        const source = active
+        if (!source) return
 
         try {
-          if (active.kind === 'tauri') {
-            const content = await readTauriFile(active.path)
+          if (source.kind === 'tauri') {
+            const content = await readTauriFile(source.path)
             const hash = await simpleHash(content)
             if (lastKnownContentHash === null) {
               lastKnownContentHash = hash
@@ -303,8 +385,8 @@ export function createSourceBridge(): SourceBridge {
             return
           }
 
-          if (active.kind === 'filesystem-handle') {
-            const file = await active.handle.getFile()
+          if (source.kind === 'filesystem-handle') {
+            const file = await source.handle.getFile()
             if (lastKnownModified === null) {
               lastKnownModified = file.lastModified
               return
@@ -317,8 +399,10 @@ export function createSourceBridge(): SourceBridge {
           }
 
           // Upload mode: no external file to watch.
-        } catch {
-          // File may be temporarily unavailable; skip this cycle.
+        } catch (error) {
+          if (isMissingSourceError(error)) {
+            onChanged()
+          }
         }
       }, FILE_WATCH_INTERVAL_MS)
     },
@@ -627,6 +711,29 @@ function openHandleDb(): Promise<IDBDatabase | null> {
 
 function isFileSystemFileHandle(value: unknown): value is FileSystemFileHandle {
   return typeof value === 'object' && value !== null && 'kind' in value && 'getFile' in value
+}
+
+function isMissingSourceError(error: unknown): boolean {
+  if (
+    typeof DOMException !== 'undefined' &&
+    error instanceof DOMException &&
+    error.name === 'NotFoundError'
+  ) {
+    return true
+  }
+
+  const message = error instanceof Error ? error.message : String(error)
+  const normalized = message.toLowerCase()
+  return (
+    normalized.includes('notfound') ||
+    normalized.includes('not found') ||
+    normalized.includes('no such file') ||
+    normalized.includes('enoent') ||
+    normalized.includes('os error 2') ||
+    normalized.includes('could not be found') ||
+    normalized.includes('does not exist') ||
+    normalized.includes('cannot find')
+  )
 }
 
 function detectMobilePlatform(): 'android' | 'ios' | 'other' {

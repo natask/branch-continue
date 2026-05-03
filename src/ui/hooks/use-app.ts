@@ -7,6 +7,7 @@ import {
   type ParsedQuickNoteFile,
 } from '../../core/quicknote/org-file'
 import {
+  SourceFileUnavailableError,
   SourceSelectionCancelledError,
   createSourceBridge,
 } from '../../core/quicknote/source-bridge'
@@ -95,6 +96,18 @@ export function useApp(): AppState & AppActions {
     [],
   )
 
+  const clearSourceState = useCallback(() => {
+    setParsed(null)
+    setNotes([])
+    setActiveSelection(null)
+    setSourcePath(EMPTY_PATH)
+    setSourceWritable(false)
+    setSourceMode('direct')
+    setError(null)
+    setLifecycle('no_source')
+    sourceBridge.stopWatching()
+  }, [setActiveSelection])
+
   const reloadSourceRef = useRef<(() => Promise<void>) | null>(null)
 
   useEffect(() => {
@@ -113,13 +126,14 @@ export function useApp(): AppState & AppActions {
             reloadSourceRef.current?.()
           })
         } else {
-          setSourcePath(EMPTY_PATH)
-          setSourceWritable(false)
-          setSourceMode('direct')
-          setLifecycle('no_source')
+          clearSourceState()
         }
       } catch (nextError) {
         if (cancelled) return
+        if (isSourceUnavailable(nextError)) {
+          clearSourceState()
+          return
+        }
         setError(errorMessage(nextError))
         setLifecycle('error')
       }
@@ -129,7 +143,7 @@ export function useApp(): AppState & AppActions {
       cancelled = true
       sourceBridge.stopWatching()
     }
-  }, [applyParsed, applySourceSummary])
+  }, [applyParsed, applySourceSummary, clearSourceState])
 
   const selectSourceFile = useCallback(async () => {
     setSelectingSource(true)
@@ -145,12 +159,16 @@ export function useApp(): AppState & AppActions {
       })
     } catch (nextError) {
       if (isSelectionCancelled(nextError)) return
+      if (isSourceUnavailable(nextError)) {
+        clearSourceState()
+        return
+      }
       setError(errorMessage(nextError))
       setLifecycle('error')
     } finally {
       setSelectingSource(false)
     }
-  }, [applyParsed, applySourceSummary])
+  }, [applyParsed, applySourceSummary, clearSourceState])
 
   const reloadSource = useCallback(async () => {
     setError(null)
@@ -161,10 +179,14 @@ export function useApp(): AppState & AppActions {
       applyParsed(parseQuickNoteFile(selected.content, selected.summary.path))
       setLifecycle('ready')
     } catch (nextError) {
+      if (isSourceUnavailable(nextError)) {
+        clearSourceState()
+        return
+      }
       setError(errorMessage(nextError))
       setLifecycle('error')
     }
-  }, [applyParsed, applySourceSummary])
+  }, [applyParsed, applySourceSummary, clearSourceState])
 
   // Keep ref in sync so the file watcher can call the latest reloadSource.
   useEffect(() => {
@@ -193,11 +215,18 @@ export function useApp(): AppState & AppActions {
       }
 
       const { parsed: nextParsed, entry } = appendQuickNoteEntry(parsed, request)
-      await sourceBridge.write(nextParsed.content)
+      try {
+        await sourceBridge.write(nextParsed.content)
+      } catch (nextError) {
+        if (isSourceUnavailable(nextError)) {
+          clearSourceState()
+        }
+        throw nextError
+      }
       applyParsed(nextParsed, entry.id)
       return entry
     },
-    [applyParsed, parsed],
+    [applyParsed, clearSourceState, parsed],
   )
 
   const updateNote = useCallback(
@@ -207,11 +236,18 @@ export function useApp(): AppState & AppActions {
       }
 
       const { parsed: nextParsed, entry } = updateQuickNoteEntry(parsed, noteId, request)
-      await sourceBridge.write(nextParsed.content)
+      try {
+        await sourceBridge.write(nextParsed.content)
+      } catch (nextError) {
+        if (isSourceUnavailable(nextError)) {
+          clearSourceState()
+        }
+        throw nextError
+      }
       applyParsed(nextParsed, entry.id)
       return entry
     },
-    [applyParsed, parsed],
+    [applyParsed, clearSourceState, parsed],
   )
 
   const activeNote = useMemo(
@@ -259,4 +295,8 @@ function isSelectionCancelled(error: unknown): boolean {
   if (error instanceof SourceSelectionCancelledError) return true
   const message = errorMessage(error).toLowerCase()
   return message.includes('cancel') || message.includes('aborted') || message.includes('abort')
+}
+
+function isSourceUnavailable(error: unknown): boolean {
+  return error instanceof SourceFileUnavailableError
 }
