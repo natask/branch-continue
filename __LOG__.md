@@ -173,11 +173,71 @@ I would have two files that I switched with between so one file does file is wha
 # bugs to fix
 the edditing environemnt must be a fully features with undon and redo with control z, all thethigns that I woudl expect in an editor existant.
 
+we should have proper text highlighting for the file type. (we shoudl search and find a library that enables this)
+
+we shoudl be able to create new file in the file selector specicall on mobile.
+
+on mobile we shoudl not have the keyboard pop up if we are moving left and right next and preivous. need to click in manually to bring up the keyboard
+
 undo redo doesn't work at the moment.
+
+contrl + k shoudl not delete the line. it shoudl depete the rest of the line from where it is.
+and contorl z shoudl undo. this is what is missing from the writing system.
+
 
 contorl n and contorl n and contorl p shoudl be movingt through lines  within the body but shoudl also be able to up up to the tags and the title and back down. the tags and title shoudl behavior as new lines.
 
 remove esc from changin the
 having cursor in card area shoudln' tscroll the card body, only on the scroll bar area and the scroll bar handle shoudl be involved.
 
-I am
+lets maintian two files two seperate ones at the smae time, be able to swtichin between source files. and be able to create sour file as well, being able to swtihc source files is importnat.
+
+
+# issues latest that need to be resolved,
+the user might write * blal blah in a page, that is beign identified as a split barrier, that make's sense I guess but still need to properly be doen then, becasue otehr wisze changes happens unexpectiedly,
+we can limit I guess headlines to ones that have timestamp within them * or # with some time stampe in the same lines we defintly know those are to be treated as headlines that woudl be a good cosntartin.
+
+right now the thign that I woudl like is differetn collor for different text, it is hard to undernestnd or quickly get a sense of somethign the way it is right now.
+
+# new issues
+in the cmdk pallet, cotlr +k shoud  hae emacs like take, it shoudl cut.
+escape withina page mabye shoudl escap eto the place of that card . but escape in the time machien shsoudl not go to the first card, it can alas long as we can go back and forhm in the history of time machine.
+
+saerch what is uses to mange history"?
+this is something a libriar for typescrip twe can built on top of loro or something.
+
+when file is removed or renamed but it has been added as a source what happens.
+one alow updating or moving files from within,
+
+if file is not found don't list.
+that solves the problem.
+but what is the true problem. it is a synchronization issue. the solution for now is tot always check to verify.
+
+
+# run [2026-04-30 3030 09:43:24 -0700]
+clicking card shoudl open card on desktop.
+I shoudl be able to grab and scroll a card body in time machien by clicking the scroll bar holding and draggging, the scorll bar only, and that shoud be the case on mobile as well.
+
+on mobile scrolling direciotn should be natural, and it shoudl hav epace as well, it shoudl be more continuablles.
+
+and the next or back on the bottom shodul be limied above the keybaord so and alsowas avlable to click,
+and swthichg paes shoudl not automatically  and holding on one nex tor back shoudl just continauble swtichg left right if that make snese. I can prese and hodl.
+
+on desktop contorl n and contorl p shodul be nex tline and preovis link to mvoe the curosr, but are also bable to go tlall the way up to the tag sesion the timet stap and tithe titlee.
+
+but in body as aI said shodulb e going up and down line, only the at the top of a or at the start of the body do coes control + p go back to the tag and from tags to the start of the body with cotnorl + n. and make sure IT does not wrap.
+
+we must not care about just *  if the user puts * that shoud not be ground to spliting to noew card or have * and some tetst,
+only split on * and inclies some timetamp even if ther eis text in that line .
+
+lastely I need thte follwoign as well.
+
+
+how can we provid ethe card ystem and the configuraiton stuf as a package. I like it so much I want to use it elese where.
+
+
+# [2026-05-01 011 08:29:48 -0700] changes.
+
+
+# [2026-05-02 022 05:38:53 -0700]
+okay I am going to cechk this and let.
