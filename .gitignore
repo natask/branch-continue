@@ -12,6 +12,7 @@ dist
 dist-ssr
 *.local
 .mobile-ota/
+.desktop-ota/
 
 # Editor directories and files
 .vscode/*
