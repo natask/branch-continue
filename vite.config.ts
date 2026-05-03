@@ -5,6 +5,7 @@ import topLevelAwait from 'vite-plugin-top-level-await'
 import path from 'path'
 
 export default defineConfig({
+  base: process.env.BRANCH_CONTINUE_MOBILE_OTA === '1' ? './' : undefined,
   plugins: [react(), wasm(), topLevelAwait()],
   server: {
     host: '0.0.0.0',
