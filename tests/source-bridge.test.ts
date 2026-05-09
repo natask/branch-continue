@@ -42,9 +42,37 @@ function textFile(name: string, text: string, lastModified = 1): File {
 }
 
 function installPicker(handle: FileSystemFileHandle) {
+  const showOpenFilePicker = vi.fn().mockResolvedValue([handle])
   vi.stubGlobal('window', {
-    showOpenFilePicker: vi.fn().mockResolvedValue([handle]),
+    showOpenFilePicker,
   })
+  return showOpenFilePicker
+}
+
+function installInputFile(file: File | null) {
+  const listeners = new Map<string, () => void>()
+  const input = {
+    type: '',
+    accept: '',
+    style: { display: '' },
+    files: file ? [file] : [],
+    addEventListener: vi.fn((event: string, listener: () => void) => {
+      listeners.set(event, listener)
+    }),
+    click: vi.fn(() => {
+      listeners.get(file ? 'change' : 'cancel')?.()
+    }),
+    remove: vi.fn(),
+  }
+  const document = {
+    createElement: vi.fn(() => input),
+    body: {
+      appendChild: vi.fn(),
+    },
+  }
+
+  vi.stubGlobal('document', document)
+  return { document, input }
 }
 
 function installLocalStorage(initial: Record<string, string> = {}) {
@@ -133,6 +161,59 @@ describe('source bridge stale source handling', () => {
 
     await expect(bridge.selectFile()).rejects.toBeInstanceOf(SourceFileUnavailableError)
     expect(bridge.summary()).toBeNull()
+  })
+
+  it('falls back to upload mode when browser file handles are blocked', async () => {
+    const handle = {
+      kind: 'file',
+      name: 'quicknote.org',
+      getFile: vi.fn().mockRejectedValue(
+        new DOMException(
+          'The request is not allowed by the user agent or the platform in the current context.',
+          'NotAllowedError',
+        ),
+      ),
+    } as unknown as FileSystemFileHandle
+    installPicker(handle)
+    installInputFile(textFile('fallback.org', '* Fallback\nbody'))
+
+    const bridge = createSourceBridge()
+
+    await expect(bridge.selectFile()).resolves.toMatchObject({
+      summary: {
+        path: 'fallback.org',
+        writable: false,
+        mode: 'download',
+      },
+      content: '* Fallback\nbody',
+    })
+  })
+
+  it('uses upload mode on mobile browsers even when file handles exist', async () => {
+    vi.stubGlobal('navigator', {
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile/15E148',
+      platform: 'iPhone',
+      maxTouchPoints: 5,
+    })
+    const handle = {
+      kind: 'file',
+      name: 'quicknote.org',
+      getFile: vi.fn(),
+    } as unknown as FileSystemFileHandle
+    const showOpenFilePicker = installPicker(handle)
+    installInputFile(textFile('mobile.org', '* Mobile\nbody'))
+
+    const bridge = createSourceBridge()
+
+    await expect(bridge.selectFile()).resolves.toMatchObject({
+      summary: {
+        path: 'mobile.org',
+        writable: false,
+        mode: 'download',
+      },
+      content: '* Mobile\nbody',
+    })
+    expect(showOpenFilePicker).not.toHaveBeenCalled()
   })
 
   it('treats Tauri os error 2 reads as a missing active source', async () => {

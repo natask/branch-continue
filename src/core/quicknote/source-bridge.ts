@@ -136,7 +136,7 @@ export function createSourceBridge(): SourceBridge {
   }
 
   async function handleSourceAccessError(source: ActiveSource, error: unknown): Promise<never> {
-    if (isMissingSourceError(error)) {
+    if (isSourceAccessLostError(error)) {
       const summary = toSummary(source)
       await clearCurrentSource(source)
       throw new SourceFileUnavailableError(summary)
@@ -210,6 +210,15 @@ export function createSourceBridge(): SourceBridge {
               mode: 'direct',
             })
           }
+          if (isBrowserHandleAccessBlocked(error)) {
+            await clearPersistedBrowserHandle()
+            const upload = await selectUploadSource()
+            if (!upload) {
+              throw new SourceSelectionCancelledError()
+            }
+            active = upload.source
+            return { summary: toSummary(upload.source), content: upload.content }
+          }
           throw error
         }
         const selected: SelectedHandleSource = {
@@ -225,23 +234,14 @@ export function createSourceBridge(): SourceBridge {
         return { summary: toSummary(selected), content: await file.text() }
       }
 
-      const file = await selectFileWithInput()
-      if (!file) {
+      const upload = await selectUploadSource()
+      if (!upload) {
         throw new SourceSelectionCancelledError()
       }
 
-      const content = await file.text()
-      const selected: SelectedUploadSource = {
-        kind: 'upload',
-        path: file.name,
-        label: file.name,
-        mode: 'download',
-        content,
-      }
-
-      active = selected
+      active = upload.source
       await clearPersistedBrowserHandle()
-      return { summary: toSummary(selected), content }
+      return { summary: toSummary(upload.source), content: upload.content }
     },
 
     async restoreLastSelection(): Promise<SelectedFileResult | null> {
@@ -400,7 +400,7 @@ export function createSourceBridge(): SourceBridge {
 
           // Upload mode: no external file to watch.
         } catch (error) {
-          if (isMissingSourceError(error)) {
+          if (isSourceAccessLostError(error)) {
             onChanged()
           }
         }
@@ -423,7 +423,11 @@ function toSummary(source: ActiveSource): SourceSummary {
 }
 
 function getBrowserFilePicker(): BrowserFilePicker | undefined {
-  return (window as WindowWithFilePicker).showOpenFilePicker
+  if (typeof window === 'undefined') return undefined
+  if (shouldUseUploadInputPicker()) return undefined
+
+  const picker = (window as WindowWithFilePicker).showOpenFilePicker
+  return picker ? picker.bind(window) : undefined
 }
 
 function fileName(path: string): string {
@@ -615,6 +619,23 @@ function triggerDownload(fileNameValue: string, content: string): void {
   URL.revokeObjectURL(url)
 }
 
+async function selectUploadSource(): Promise<{ source: SelectedUploadSource; content: string } | null> {
+  const file = await selectFileWithInput()
+  if (!file) return null
+
+  const content = await file.text()
+  return {
+    source: {
+      kind: 'upload',
+      path: file.name,
+      label: file.name,
+      mode: 'download',
+      content,
+    },
+    content,
+  }
+}
+
 function selectFileWithInput(): Promise<File | null> {
   return new Promise((resolve) => {
     const input = document.createElement('input')
@@ -734,6 +755,57 @@ function isMissingSourceError(error: unknown): boolean {
     normalized.includes('does not exist') ||
     normalized.includes('cannot find')
   )
+}
+
+function isSourceAccessLostError(error: unknown): boolean {
+  return isMissingSourceError(error) || isBrowserHandleAccessBlocked(error)
+}
+
+function isBrowserHandleAccessBlocked(error: unknown): boolean {
+  if (
+    typeof DOMException !== 'undefined' &&
+    error instanceof DOMException &&
+    (error.name === 'NotAllowedError' || error.name === 'SecurityError')
+  ) {
+    return true
+  }
+
+  const message = error instanceof Error ? error.message : String(error)
+  const normalized = message.toLowerCase()
+  return (
+    normalized.includes('not allowed by the user agent') ||
+    normalized.includes('not allowed by the platform') ||
+    (normalized.includes('current context') && normalized.includes('not allowed')) ||
+    normalized.includes('permission denied') ||
+    normalized.includes('not permitted') ||
+    normalized.includes('user activation')
+  )
+}
+
+function shouldUseUploadInputPicker(): boolean {
+  return isMobileBrowser() || !isTopLevelWindow()
+}
+
+function isMobileBrowser(): boolean {
+  if (typeof navigator === 'undefined') return false
+
+  const userAgent = navigator.userAgent?.toLowerCase() ?? ''
+  const platform = navigator.platform?.toLowerCase() ?? ''
+  const maxTouchPoints = navigator.maxTouchPoints ?? 0
+  return (
+    /android|iphone|ipad|ipod|mobile/.test(userAgent) ||
+    (platform === 'macintel' && maxTouchPoints > 1)
+  )
+}
+
+function isTopLevelWindow(): boolean {
+  if (typeof window === 'undefined') return true
+
+  try {
+    return window.self === window.top
+  } catch {
+    return false
+  }
 }
 
 function detectMobilePlatform(): 'android' | 'ios' | 'other' {
