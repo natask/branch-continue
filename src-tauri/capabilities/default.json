@@ -7,27 +7,55 @@
   ],
   "permissions": [
     "core:default",
+    "allow-android-select-source-file",
+    "allow-android-read-source-file",
+    "allow-android-write-source-file",
     "fs:default",
     "dialog:default",
     {
       "identifier": "fs:allow-read-text-file",
-      "allow": [{ "path": "$HOME/**" }]
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$APPCONFIG/**" },
+        { "path": "$APPDATA/**" },
+        { "path": "$APPLOCALDATA/**" }
+      ]
     },
     {
       "identifier": "fs:allow-read-file",
-      "allow": [{ "path": "$HOME/**" }]
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$APPCONFIG/**" },
+        { "path": "$APPDATA/**" },
+        { "path": "$APPLOCALDATA/**" }
+      ]
     },
     {
       "identifier": "fs:allow-write-text-file",
-      "allow": [{ "path": "$HOME/**" }]
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$APPCONFIG/**" },
+        { "path": "$APPDATA/**" },
+        { "path": "$APPLOCALDATA/**" }
+      ]
     },
     {
       "identifier": "fs:allow-write-file",
-      "allow": [{ "path": "$HOME/**" }]
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$APPCONFIG/**" },
+        { "path": "$APPDATA/**" },
+        { "path": "$APPLOCALDATA/**" }
+      ]
     },
     {
       "identifier": "fs:allow-exists",
-      "allow": [{ "path": "$HOME/**" }]
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$APPCONFIG/**" },
+        { "path": "$APPDATA/**" },
+        { "path": "$APPLOCALDATA/**" }
+      ]
     }
   ]
 }

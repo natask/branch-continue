@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-android-select-source-file"
+description = "Enables the android_select_source_file command without any pre-configured scope."
+commands.allow = ["android_select_source_file"]
+
+[[permission]]
+identifier = "deny-android-select-source-file"
+description = "Denies the android_select_source_file command without any pre-configured scope."
+commands.deny = ["android_select_source_file"]

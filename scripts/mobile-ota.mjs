@@ -10,7 +10,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const appName = 'branch-continue'
 const defaultRuntime = 'tauri-mobile-v1'
 const defaultChannel = 'production'
-const defaultMobileOtaUrl = 'https://branch-continue.elocute.main.lan/mobile/'
+const defaultMobileOtaUrl = 'http://10.147.17.10/mobile/'
 const defaultRemoteHost = 'reclaim@10.147.17.10'
 const defaultRemoteBase = '/home/reclaim-ethiopia/agent-stations/apps/branch-continue/mobile-ota'
 const outputRoot = path.join(repoRoot, '.mobile-ota')
@@ -149,7 +149,10 @@ async function shell(rawArgs) {
   const remoteOnly = options['remote-only'] === '1'
 
   const normalizedUrl = normalizeDirectoryUrl(url, {
-    allowHttp: process.env.MOBILE_OTA_ALLOW_HTTP === '1' || options['allow-http'] === '1',
+    allowHttp:
+      process.env.MOBILE_OTA_ALLOW_HTTP === '1' ||
+      options['allow-http'] === '1' ||
+      isPrivateNetworkHttpUrl(url),
   })
   const remotePatterns = remoteCapabilityPatterns(normalizedUrl)
   const configPath = path.join(outputRoot, 'generated', `tauri.mobile-ota.${platform}.json`)
@@ -180,27 +183,30 @@ async function shell(rawArgs) {
             },
             permissions: [
               'core:default',
+              'allow-android-select-source-file',
+              'allow-android-read-source-file',
+              'allow-android-write-source-file',
               'fs:default',
               'dialog:default',
               {
                 identifier: 'fs:allow-read-text-file',
-                allow: [{ path: '$HOME/**' }],
+                allow: appFileScopes(),
               },
               {
                 identifier: 'fs:allow-read-file',
-                allow: [{ path: '$HOME/**' }],
+                allow: appFileScopes(),
               },
               {
                 identifier: 'fs:allow-write-text-file',
-                allow: [{ path: '$HOME/**' }],
+                allow: appFileScopes(),
               },
               {
                 identifier: 'fs:allow-write-file',
-                allow: [{ path: '$HOME/**' }],
+                allow: appFileScopes(),
               },
               {
                 identifier: 'fs:allow-exists',
-                allow: [{ path: '$HOME/**' }],
+                allow: appFileScopes(),
               },
             ],
           },
@@ -218,6 +224,15 @@ async function shell(rawArgs) {
   console.log(`mobile-ota: generated config ${path.relative(repoRoot, configPath)}`)
 
   run('pnpm', ['tauri', platform, 'build', '--config', configPath, ...passthrough], process.env)
+}
+
+function appFileScopes() {
+  return [
+    { path: '$HOME/**' },
+    { path: '$APPCONFIG/**' },
+    { path: '$APPDATA/**' },
+    { path: '$APPLOCALDATA/**' },
+  ]
 }
 
 function parseArgs(rawArgs) {
@@ -394,6 +409,23 @@ function normalizeDirectoryUrl(value, { allowHttp }) {
 
   url.hash = ''
   return url.href
+}
+
+function isPrivateNetworkHttpUrl(value) {
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'http:') return false
+    const host = url.hostname.toLowerCase()
+    if (host === 'localhost' || host === '127.0.0.1') return true
+    if (/^10\./.test(host)) return true
+    if (/^192\.168\./.test(host)) return true
+    const match = /^172\.(\d+)\./.exec(host)
+    if (!match) return false
+    const secondOctet = Number(match[1])
+    return secondOctet >= 16 && secondOctet <= 31
+  } catch {
+    return false
+  }
 }
 
 function remoteCapabilityPatterns(value) {

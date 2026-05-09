@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-android-write-source-file"
+description = "Enables the android_write_source_file command without any pre-configured scope."
+commands.allow = ["android_write_source_file"]
+
+[[permission]]
+identifier = "deny-android-write-source-file"
+description = "Denies the android_write_source_file command without any pre-configured scope."
+commands.deny = ["android_write_source_file"]

@@ -1,4 +1,5 @@
 const TAURI_SOURCE_KEY = 'branch-continue:tauri-source-path'
+const TAURI_SOURCE_STATE_FILE = 'source-state.json'
 const HANDLE_DB_NAME = 'branch-continue-source-db'
 const HANDLE_STORE = 'source'
 const HANDLE_KEY = 'browser-handle'
@@ -126,7 +127,7 @@ export function createSourceBridge(): SourceBridge {
     stopWatchTimer()
 
     if (source.kind === 'tauri') {
-      localStorage.removeItem(TAURI_SOURCE_KEY)
+      await clearPersistedTauriSourcePath()
       return
     }
 
@@ -158,13 +159,13 @@ export function createSourceBridge(): SourceBridge {
           content = await readTauriFile(selected.path)
         } catch (error) {
           if (isMissingSourceError(error)) {
-            localStorage.removeItem(TAURI_SOURCE_KEY)
+            await clearPersistedTauriSourcePath()
             throw new SourceFileUnavailableError(toSummary(selected))
           }
           throw error
         }
         active = selected
-        localStorage.setItem(TAURI_SOURCE_KEY, selected.path)
+        await persistTauriSourcePath(selected.path)
         return { summary: toSummary(selected), content }
       }
 
@@ -259,14 +260,14 @@ export function createSourceBridge(): SourceBridge {
             }
             const content = await readTauriFile(path)
             active = selected
-            localStorage.setItem(TAURI_SOURCE_KEY, path)
+            await persistTauriSourcePath(path)
             return { summary: toSummary(selected), content }
           } catch {
             // Try next candidate.
           }
         }
 
-        localStorage.removeItem(TAURI_SOURCE_KEY)
+        await clearPersistedTauriSourcePath()
         return null
       }
 
@@ -466,6 +467,17 @@ async function selectTauriFile(): Promise<SelectedSource | null> {
   const mobilePlatform = detectMobilePlatform()
   let defaultPath: string | undefined
 
+  if (mobilePlatform === 'android') {
+    try {
+      return await selectAndroidSourceFile()
+    } catch (error) {
+      if (isPickerCancelled(error)) return null
+      if (!isAndroidSourceBridgeUnavailable(error)) {
+        throw error
+      }
+    }
+  }
+
   // Mobile pickers do not reliably use directory-style default paths.
   if (mobilePlatform === 'other') {
     try {
@@ -508,6 +520,23 @@ async function selectTauriFile(): Promise<SelectedSource | null> {
   }
 }
 
+async function selectAndroidSourceFile(): Promise<SelectedSource | null> {
+  const selection = await invokeAndroidSourceFile<{
+    uri?: string | null
+    name?: string | null
+  } | null>('android_select_source_file')
+
+  const uri = selection?.uri?.trim()
+  if (!uri) return null
+
+  return {
+    kind: 'tauri',
+    path: uri,
+    label: selection?.name?.trim() || fileName(uri),
+    mode: 'direct',
+  }
+}
+
 async function buildTauriCandidatePaths(pathApi: typeof import('@tauri-apps/api/path')): Promise<string[]> {
   const candidates: string[] = []
   const pushUnique = (value?: string | null) => {
@@ -525,6 +554,11 @@ async function buildTauriCandidatePaths(pathApi: typeof import('@tauri-apps/api/
     homePath = null
   }
 
+  // Prefer the last explicit user selection. It is stored in both localStorage
+  // and native app config so it survives switching between embedded and OTA origins.
+  pushUnique(localStorage.getItem(TAURI_SOURCE_KEY))
+  pushUnique(await loadPersistedTauriSourcePath())
+
   if (DEFAULT_TAURI_SOURCE_PATH) {
     pushUnique(await resolveTauriPath(DEFAULT_TAURI_SOURCE_PATH, homePath, pathApi))
     pushUnique(await resolveDefaultSourceWithinLegacyRoot(DEFAULT_TAURI_SOURCE_PATH, homePath, pathApi))
@@ -536,10 +570,78 @@ async function buildTauriCandidatePaths(pathApi: typeof import('@tauri-apps/api/
     }
   }
 
-  // Last-used file is fallback only; startup should prefer the default source.
-  pushUnique(localStorage.getItem(TAURI_SOURCE_KEY))
-
   return candidates
+}
+
+async function persistTauriSourcePath(pathValue: string): Promise<void> {
+  localStorage.setItem(TAURI_SOURCE_KEY, pathValue)
+
+  try {
+    const fs = await import('@tauri-apps/plugin-fs')
+    const pathApi = await import('@tauri-apps/api/path')
+    const state = {
+      path: pathValue,
+      updatedAt: new Date().toISOString(),
+    }
+
+    for (const baseDir of tauriSourceStateBaseDirs(pathApi)) {
+      try {
+        await fs.writeTextFile(TAURI_SOURCE_STATE_FILE, JSON.stringify(state), { baseDir })
+        return
+      } catch {
+        // Try the next app-private base directory.
+      }
+    }
+  } catch {
+    // localStorage remains the fallback for older shells and browser mode.
+  }
+}
+
+async function loadPersistedTauriSourcePath(): Promise<string | null> {
+  try {
+    const fs = await import('@tauri-apps/plugin-fs')
+    const pathApi = await import('@tauri-apps/api/path')
+    for (const baseDir of tauriSourceStateBaseDirs(pathApi)) {
+      try {
+        const raw = await fs.readTextFile(TAURI_SOURCE_STATE_FILE, { baseDir })
+        const parsed = JSON.parse(raw) as { path?: unknown }
+        const pathValue = typeof parsed.path === 'string' ? parsed.path.trim() : ''
+        if (pathValue) return pathValue
+      } catch {
+        // Try the next app-private base directory.
+      }
+    }
+  } catch {
+    // Ignore native persistence lookup failures.
+  }
+
+  return null
+}
+
+async function clearPersistedTauriSourcePath(): Promise<void> {
+  localStorage.removeItem(TAURI_SOURCE_KEY)
+
+  try {
+    const fs = await import('@tauri-apps/plugin-fs')
+    const pathApi = await import('@tauri-apps/api/path')
+    for (const baseDir of tauriSourceStateBaseDirs(pathApi)) {
+      try {
+        await fs.remove(TAURI_SOURCE_STATE_FILE, { baseDir })
+      } catch {
+        // Missing state files are fine.
+      }
+    }
+  } catch {
+    // Ignore native persistence cleanup failures.
+  }
+}
+
+function tauriSourceStateBaseDirs(pathApi: typeof import('@tauri-apps/api/path')) {
+  return [
+    pathApi.BaseDirectory.AppConfig,
+    pathApi.BaseDirectory.AppData,
+    pathApi.BaseDirectory.AppLocalData,
+  ]
 }
 
 async function resolveTauriPath(
@@ -569,6 +671,20 @@ async function resolveDefaultSourceWithinLegacyRoot(
 }
 
 async function readTauriFile(path: string): Promise<string> {
+  if (isAndroidContentUri(path)) {
+    try {
+      const response = await invokeAndroidSourceFile<{ content: string }>(
+        'android_read_source_file',
+        { payload: { uri: path } },
+      )
+      return response.content
+    } catch (error) {
+      if (!isAndroidSourceBridgeUnavailable(error)) {
+        throw error
+      }
+    }
+  }
+
   const fs = await import('@tauri-apps/plugin-fs')
   const fsPath = toTauriFsPath(path)
   try {
@@ -580,8 +696,26 @@ async function readTauriFile(path: string): Promise<string> {
 }
 
 async function writeTauriFile(path: string, content: string): Promise<void> {
+  if (isAndroidContentUri(path)) {
+    try {
+      await invokeAndroidSourceFile('android_write_source_file', {
+        payload: { uri: path, content },
+      })
+      return
+    } catch (error) {
+      if (!isAndroidSourceBridgeUnavailable(error)) {
+        throw error
+      }
+    }
+  }
+
   const fs = await import('@tauri-apps/plugin-fs')
   await fs.writeTextFile(toTauriFsPath(path), content)
+}
+
+async function invokeAndroidSourceFile<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  const core = await import('@tauri-apps/api/core')
+  return core.invoke<T>(command, args)
 }
 
 function decodeTextBytes(binary: Uint8Array): string {
@@ -817,6 +951,23 @@ function detectMobilePlatform(): 'android' | 'ios' | 'other' {
   if (userAgent.includes('android')) return 'android'
   if (/iphone|ipad|ipod/.test(userAgent)) return 'ios'
   return 'other'
+}
+
+function isAndroidContentUri(path: string): boolean {
+  return detectMobilePlatform() === 'android' && path.toLowerCase().startsWith('content://')
+}
+
+function isAndroidSourceBridgeUnavailable(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  const normalized = message.toLowerCase()
+  return (
+    normalized.includes('android source') && normalized.includes('only available on android') ||
+    normalized.includes('android_select_source_file') && normalized.includes('not found') ||
+    normalized.includes('android_read_source_file') && normalized.includes('not found') ||
+    normalized.includes('android_write_source_file') && normalized.includes('not found') ||
+    normalized.includes('command not found') ||
+    normalized.includes('plugin not found')
+  )
 }
 
 function looksLikeText(binary: Uint8Array): boolean {
