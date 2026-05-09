@@ -30,6 +30,15 @@ dist-ssr
 playwright-report/
 test-results/
 
+# Local planning/thinking artifacts
+PLAN.md
+__LOG__.md
+docs/product/
+scripts/product-scope.mjs
+
+# TypeScript incremental build cache
+*.tsbuildinfo
+
 # Tauri build artifacts
 src-tauri/target/
 src-tauri/gen/schemas/
