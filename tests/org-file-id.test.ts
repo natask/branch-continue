@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   appendQuickNoteEntry,
   parseQuickNoteFile,
+  searchQuickNoteFile,
   updateQuickNoteEntry,
 } from '../src/core/quicknote/org-file'
 
@@ -151,5 +152,25 @@ describe('parseQuickNoteFile note ids', () => {
     expect(updated.content).toContain(
       ':BRANCH_CONTINUE_PARENT_NOTE_ID: qn-ts-2026-04-11-sat-100001+0000',
     )
+  })
+
+  it('finds typo-tolerant text matches inside note bodies', () => {
+    const parsed = parseQuickNoteFile(
+      [
+        '* First [2026-04-11 Sat 10:00:00 +0000]',
+        'Quarterly planning notes include renewal strategy.',
+        '',
+        '* Second [2026-04-11 Sat 10:00:01 +0000]',
+        'A precise search phrase should rank above unrelated text.',
+        '',
+      ].join('\n'),
+      SOURCE_PATH,
+    )
+
+    const typoResults = searchQuickNoteFile(parsed, 'renwel strat')
+    expect(typoResults[0]?.preview).toContain('renewal strategy')
+
+    const literalResults = searchQuickNoteFile(parsed, 'precise search')
+    expect(literalResults[0]?.preview).toContain('precise search phrase')
   })
 })

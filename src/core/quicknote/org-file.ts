@@ -3,6 +3,7 @@ import type {
   QuickNoteSearchHit,
   SourceNote,
 } from './types'
+import { fuzzy } from '../search/fuzzy'
 
 const TIMESTAMP_RE = /\[\d{4}-\d{2}-\d{2} [^\]]+\]/
 const ORG_HEADLINE_RE = /^\*+\s/
@@ -136,15 +137,12 @@ export function searchQuickNoteFile(
   const needle = query.trim()
   if (!needle) return []
 
-  const caseSensitive = /[A-Z]/.test(needle)
-  const normalizedNeedle = caseSensitive ? needle : needle.toLowerCase()
-  const results: QuickNoteSearchHit[] = []
+  const scoredResults: Array<QuickNoteSearchHit & { score: number; index: number }> = []
 
   for (let index = 0; index < parsed.lines.length; index += 1) {
     const line = parsed.lines[index]
-    const haystack = caseSensitive ? line : line.toLowerCase()
-
-    if (!haystack.includes(normalizedNeedle)) continue
+    const lineScore = fuzzy(needle, line)
+    if (lineScore <= 0) continue
 
     const lineNumber = index + 1
     const noteIndex = findContainingNoteIndex(parsed.headlineIndexes, lineNumber)
@@ -153,19 +151,23 @@ export function searchQuickNoteFile(
     const note = parsed.byHeadlineIndex.get(noteIndex)
     if (!note) continue
 
-    results.push({
+    const noteScore = Math.max(lineScore, fuzzy(needle, `${note.title} ${note.tags.join(' ')}`))
+    scoredResults.push({
       id: `${note.id}:${lineNumber}`,
       noteId: note.id,
       lineNumber,
       preview: clip(line.trim(), 220),
       matchText: line,
       note,
+      score: noteScore,
+      index,
     })
-
-    if (results.length >= limit) break
   }
 
-  return results
+  return scoredResults
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, limit)
+    .map(({ score: _score, index: _index, ...result }) => result)
 }
 
 function parseNote(

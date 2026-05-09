@@ -254,23 +254,8 @@ export function useEditorFields({
         return
       }
 
-      if (event.key === 'k' && (event.metaKey || event.ctrlKey) && !event.shiftKey) {
-        event.preventDefault()
-        const textarea = event.currentTarget
-        const { value, selectionStart, selectionEnd } = textarea
-        const lineStart = value.lastIndexOf('\n', selectionStart - 1) + 1
-        let lineEnd = value.indexOf('\n', selectionEnd)
-        if (lineEnd === -1) lineEnd = value.length
-        else lineEnd += 1
-        const body = value.slice(0, lineStart) + value.slice(lineEnd)
-        updateBody(body)
-        requestAnimationFrame(() => {
-          textarea.selectionStart = lineStart
-          textarea.selectionEnd = lineStart
-        })
-      }
     },
-    [focusTagInput, handleBranchFromEditor, moveFromSection, updateBody],
+    [focusTagInput, handleBranchFromEditor, moveFromSection],
   )
 
   return {

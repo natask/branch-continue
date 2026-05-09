@@ -906,6 +906,22 @@ export function CardStack3D<T extends CardStackItem = CardStackItem>({
     event.stopPropagation()
   }
 
+  const handleSceneClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented) return
+
+    if (suppressCardClickRef.current) {
+      suppressCardClickRef.current = false
+      event.preventDefault()
+      return
+    }
+
+    const target = event.target
+    if (target instanceof HTMLElement && target.closest('.tm-card, .tm-gesture-tuner')) return
+
+    const current = sorted[focusIndex]
+    if (current) onOpen?.(current)
+  }
+
   useEffect(() => {
     if (!navigationEnabled) return undefined
 
@@ -1051,6 +1067,7 @@ export function CardStack3D<T extends CardStackItem = CardStackItem>({
 
         <div
           className={`tm-scene ${sceneTransitionsSuppressed ? 'tm-scene-tuning' : ''}`}
+          onClick={handleSceneClick}
           style={{
             perspective: `${focalLength}px`,
             perspectiveOrigin: `calc(50% + ${focusX}px) calc(53% + ${focusY}px)`,

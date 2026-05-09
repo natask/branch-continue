@@ -84,21 +84,6 @@ export function useEditorTags({
     [commitDraftTags, editorRef, markEditorDirty],
   )
 
-  const clearTagLine = useCallback(() => {
-    const current = editorRef.current
-    if (!current) return
-
-    if (!current.tags.length && !current.tagInput && current.editingTagIndex === null) return
-
-    markEditorDirty({
-      tags: [],
-      tagInput: '',
-      editingTagIndex: null,
-      editingTagValue: '',
-    })
-    commitDraftTags([])
-  }, [commitDraftTags, editorRef, markEditorDirty])
-
   const startEditingTag = useCallback(
     (index: number) => {
       const current = editorRef.current
@@ -157,11 +142,6 @@ export function useEditorTags({
       const current = editorRef.current
       if (!current || current.editingTagIndex === null) return
 
-      const input = event.currentTarget
-      const value = current.editingTagValue
-      const selectionStart = input.selectionStart ?? value.length
-      const selectionEnd = input.selectionEnd ?? value.length
-
       if (event.key === 'Enter') {
         event.preventDefault()
         commitTagEdit()
@@ -188,19 +168,8 @@ export function useEditorTags({
         return
       }
 
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault()
-        const sliced =
-          selectionStart !== selectionEnd
-            ? value.slice(0, selectionStart) + value.slice(selectionEnd)
-            : value.slice(0, selectionStart)
-        setEditorState({
-          ...current,
-          editingTagValue: value.startsWith('#') ? sliced || '#' : sliced,
-        })
-      }
     },
-    [cancelTagEdit, commitTagEdit, editorRef, moveFromTags, setEditorState],
+    [cancelTagEdit, commitTagEdit, moveFromTags],
   )
 
   const handleTagInputChange = useCallback(
@@ -222,9 +191,6 @@ export function useEditorTags({
       const current = editorRef.current
       if (!current) return
       const value = current.tagInput
-      const input = event.currentTarget
-      const selectionStart = input.selectionStart ?? value.length
-      const selectionEnd = input.selectionEnd ?? value.length
 
       if (event.key === 'Enter') {
         event.preventDefault()
@@ -286,22 +252,6 @@ export function useEditorTags({
         return
       }
 
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault()
-
-        if (value.startsWith('#')) {
-          const sliced =
-            selectionStart !== selectionEnd
-              ? value.slice(0, selectionStart) + value.slice(selectionEnd)
-              : value.slice(0, selectionStart)
-          setEditorState({ ...current, tagInput: sliced || '#' })
-          return
-        }
-
-        clearTagLine()
-        return
-      }
-
       if (value.startsWith('#')) {
         if (event.key === 'Backspace' && value.trim() === '#') {
           event.preventDefault()
@@ -316,7 +266,6 @@ export function useEditorTags({
       }
     },
     [
-      clearTagLine,
       commitDraftTags,
       editorRef,
       focusBody,
