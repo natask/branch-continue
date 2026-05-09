@@ -37,9 +37,10 @@
     "@tauri-apps/plugin-fs": "~2",
     "@tauri-apps/plugin-process": "~2",
     "@tauri-apps/plugin-updater": "~2",
-    "master-cmdk": "link:../better-cmdk/packages/master-cmdk",
+    "agentation": "^3.0.2",
     "leva": "^0.10.1",
     "loro-crdt": "^1.6.2",
+    "master-cmdk": "link:../better-cmdk/packages/master-cmdk",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "wa-sqlite": "^1.0.0"

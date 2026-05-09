@@ -4,7 +4,7 @@ import { useEditorSession } from './ui/hooks/use-editor-session'
 import { SearchModal, type SearchCommandAction } from './ui/components/SearchModal'
 import { TimeMachine } from './ui/components/TimeMachine'
 import { Editor } from './ui/components/Editor'
-import { useAgentStationCommands } from './ui/agent-station/use-agent-station'
+import { useAgentStation } from './ui/agent-station/use-agent-station'
 import {
   formatNotePosition,
   orderNotes,
@@ -102,7 +102,10 @@ export default function App() {
     content = <div className="loading">loading file session</div>
   } else if (!app.sourceSelected) {
     content = (
-      <SourceSelectionScreen selectingSource={app.selectingSource} selectSourceFile={app.selectSourceFile} />
+      <SourceSelectionScreen
+        selectingSource={app.selectingSource}
+        selectSourceFile={app.selectSourceFile}
+      />
     )
   } else {
     content = (
@@ -168,7 +171,7 @@ function LoadedSourceApp({
     createNote,
     updateNote,
   })
-  const stationCommandActions = useAgentStationCommands({ sourcePath })
+  const station = useAgentStation({ sourcePath })
 
   const orderedNotes = useMemo(() => orderNotes(notes), [notes])
   const notesById = useMemo(() => {
@@ -330,7 +333,6 @@ function LoadedSourceApp({
         (key === 'x' && event.shiftKey && !event.altKey)
 
       if (!shortcut || !openSearchShortcut) return
-      if (isInteractiveTarget(event.target)) return
       event.preventDefault()
       setSearchOpen(true)
     }
@@ -465,7 +467,7 @@ function LoadedSourceApp({
 
   const commandActions = useMemo<SearchCommandAction[]>(
     () => [
-      ...stationCommandActions,
+      ...station.actions,
       {
         id: 'select-source-file',
         label: selectingSource ? 'Select Source File (busy...)' : 'Select Source File',
@@ -660,7 +662,7 @@ function LoadedSourceApp({
       resetWheelNavDirections,
       selectingSource,
       selectSourceFile,
-      stationCommandActions,
+      station.actions,
       showCardStackTuner,
       isMobileDevice,
       mobilePreview,
@@ -788,6 +790,7 @@ function LoadedSourceApp({
         onSelect={handleSearchSelect}
         commandActions={commandActions}
       />
+      {station.element}
 
       {editorSession.editor && (
         <Editor
@@ -812,6 +815,44 @@ function SourceSelectionScreen({
   selectingSource: boolean
   selectSourceFile: () => Promise<void>
 }) {
+  const [searchOpen, setSearchOpen] = useState(false)
+  const station = useAgentStation({})
+  const commandActions = useMemo<SearchCommandAction[]>(
+    () => [
+      {
+        id: 'select-source-file',
+        label: selectingSource ? 'Select Source File (busy...)' : 'Select Source File',
+        hint: '⌘O',
+        keywords: ['open', 'file', 'source'],
+        group: 'Actions',
+        disabled: selectingSource,
+        run: () => void selectSourceFile(),
+      },
+      ...station.actions,
+    ],
+    [selectSourceFile, selectingSource, station.actions],
+  )
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const shortcut = event.metaKey || event.ctrlKey
+      const key = event.key.toLowerCase()
+      if (!shortcut) return
+      if (key === 'k' && !event.shiftKey && !event.altKey) {
+        event.preventDefault()
+        setSearchOpen(true)
+        return
+      }
+      if (key === 'o' && !event.shiftKey && !event.altKey) {
+        event.preventDefault()
+        void selectSourceFile()
+      }
+    }
+
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [selectSourceFile])
+
   return (
     <div className="app">
       <div className="empty-panel">
@@ -820,11 +861,24 @@ function SourceSelectionScreen({
           <p className="empty-copy">
             Made with Love
           </p>
-          <button className="btn-primary" onClick={() => void selectSourceFile()} type="button">
-            {selectingSource ? 'Selecting...' : 'Choose File'}
-          </button>
+          <div className="empty-actions">
+            <button className="btn-primary" onClick={() => void selectSourceFile()} type="button">
+              {selectingSource ? 'Selecting...' : 'Choose File'}
+            </button>
+            <button className="btn-secondary" onClick={() => setSearchOpen(true)} type="button">
+              Commands
+            </button>
+          </div>
         </div>
       </div>
+      <SearchModal
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onSearch={async () => []}
+        onSelect={() => undefined}
+        commandActions={commandActions}
+      />
+      {station.element}
     </div>
   )
 }

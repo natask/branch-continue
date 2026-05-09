@@ -9,7 +9,7 @@ export interface SearchCommandAction {
   keywords?: string[]
   group?: string
   disabled?: boolean
-  run: () => void
+  run: () => void | Promise<unknown>
 }
 
 interface SearchModalProps {
@@ -87,9 +87,14 @@ export function SearchModal({ open, onClose, onSearch, onSelect, commandActions 
   )
 
   const handleActionSelect = useCallback(
-    (action: SearchCommandAction) => {
-      action.run()
-      onClose()
+    async (action: SearchCommandAction) => {
+      setError(null)
+      try {
+        await action.run()
+        onClose()
+      } catch (nextError) {
+        setError(nextError instanceof Error ? nextError.message : String(nextError))
+      }
     },
     [onClose],
   )

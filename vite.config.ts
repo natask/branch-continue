@@ -21,6 +21,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      agentation: path.resolve(__dirname, './node_modules/agentation/dist/index.mjs'),
     },
   },
   optimizeDeps: {

@@ -11,6 +11,7 @@ interface ImportMetaEnv {
   readonly VITE_MASTER_ORCH_TARGET_BRANCH?: string
   readonly VITE_MASTER_ORCH_APPLY_TO?: string
   readonly VITE_MASTER_ORCH_DISABLED?: string
+  readonly VITE_MASTER_ORCH_AGENTATION?: string
 }
 
 interface ImportMeta {
