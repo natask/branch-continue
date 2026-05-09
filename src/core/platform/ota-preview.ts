@@ -14,7 +14,7 @@ interface OtaPreviewInput {
 }
 
 export function otaPreviewUrlFromDeployment(input?: OtaPreviewInput | null, fallbackUrl?: string | null): string | null {
-  const mobileBase = currentMobileBaseUrl()
+  const mobileBase = canonicalMobileBaseUrl()
   if (mobileBase) {
     for (const value of mobileUrlCandidates(input)) {
       const url = normalizeHttpUrl(value)
@@ -42,7 +42,14 @@ export function getStoredOtaPreviewUrl(): string | null {
   if (typeof window === 'undefined') return null
 
   try {
-    return normalizeHttpUrl(window.localStorage.getItem(OTA_PREVIEW_URL_KEY))
+    const url = normalizeHttpUrl(window.localStorage.getItem(OTA_PREVIEW_URL_KEY))
+    const mobileBase = canonicalMobileBaseUrl()
+    if (!url || !mobileBase || isUnderUrlBase(url, mobileBase)) return url
+
+    const deploymentId = getStoredOtaPreviewDeploymentId()
+    if (!deploymentId) return null
+
+    return new URL(`previews/${encodeURIComponent(deploymentId)}/`, mobileBase).href
   } catch {
     return null
   }
@@ -66,8 +73,9 @@ export function storeOtaPreviewTarget(input: OtaPreviewInput, fallbackUrl?: stri
   if (!url) return null
 
   window.localStorage.setItem(OTA_PREVIEW_URL_KEY, url)
-  if (input.deploymentId) {
-    window.localStorage.setItem(OTA_PREVIEW_DEPLOYMENT_KEY, input.deploymentId)
+  const deploymentId = input.deploymentId ?? input.id
+  if (deploymentId) {
+    window.localStorage.setItem(OTA_PREVIEW_DEPLOYMENT_KEY, deploymentId)
   }
 
   return url
@@ -126,6 +134,25 @@ function currentMobileBaseUrl(): URL | null {
     url.search = ''
     url.hash = ''
     return url
+  } catch {
+    return null
+  }
+}
+
+function canonicalMobileBaseUrl(): URL | null {
+  return currentMobileBaseUrl() ?? normalizeDirectoryUrl(import.meta.env.VITE_BRANCH_CONTINUE_MOBILE_OTA_URL)
+}
+
+function normalizeDirectoryUrl(value?: string | null): URL | null {
+  const url = normalizeHttpUrl(value)
+  if (!url) return null
+
+  try {
+    const parsed = new URL(url)
+    if (!parsed.pathname.endsWith('/')) parsed.pathname = `${parsed.pathname}/`
+    parsed.search = ''
+    parsed.hash = ''
+    return parsed
   } catch {
     return null
   }

@@ -6,7 +6,12 @@ const CHECK_TIMEOUT_MS = 1800
 
 export function startMobileOtaRedirect(): void {
   if (typeof window === 'undefined') return
-  if (getStoredOtaPreviewUrl()) return
+
+  const previewUrl = normalizeDirectoryUrl(getStoredOtaPreviewUrl())
+  if (previewUrl) {
+    if (!isCurrentLocation(previewUrl)) window.location.replace(previewUrl.href)
+    return
+  }
 
   const targetUrl = normalizeDirectoryUrl(MOBILE_OTA_URL)
   if (!targetUrl || isCurrentLocation(targetUrl)) return

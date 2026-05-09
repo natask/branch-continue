@@ -52,6 +52,7 @@ async function bundle(rawArgs) {
   const outDir = path.resolve(repoRoot, options['out-dir'] ?? process.env.MOBILE_OTA_OUT_DIR ?? outputRoot)
   const publicUrl =
     options['public-url'] ?? process.env.MOBILE_OTA_PUBLIC_URL ?? process.env.MOBILE_OTA_URL ?? defaultMobileOtaUrl
+  const normalizedPublicUrl = publicUrl ? normalizeDirectoryUrl(publicUrl, { allowHttp: true }) : null
   const skipBuild = options['skip-build'] === '1' || options['skip-build'] === 'true'
   const distDir = path.join(repoRoot, 'dist')
 
@@ -59,6 +60,7 @@ async function bundle(rawArgs) {
     run('pnpm', ['build'], {
       ...process.env,
       BRANCH_CONTINUE_MOBILE_OTA: '1',
+      ...(normalizedPublicUrl ? { VITE_BRANCH_CONTINUE_MOBILE_OTA_URL: normalizedPublicUrl } : {}),
     })
   }
 
@@ -86,7 +88,7 @@ async function bundle(rawArgs) {
     packageVersion: await readPackageVersion(),
     createdAt: new Date().toISOString(),
     entrypoint: 'index.html',
-    publicUrl: publicUrl ? normalizeDirectoryUrl(publicUrl, { allowHttp: true }) : null,
+    publicUrl: normalizedPublicUrl,
     bundleSha256: hashManifestFiles(fileEntries),
     files: fileEntries,
   }
