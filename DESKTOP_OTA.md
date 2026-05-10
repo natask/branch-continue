@@ -30,15 +30,15 @@ Output:
 Upload the contents of `.desktop-ota/production/current/` to the desktop update endpoint. The default endpoint is:
 
 ```text
-https://branch-continue.elocute.main.lan/desktop/latest.json
+https://branch-continue.main.lan/desktop/latest.json
 ```
 
 Useful overrides:
 
 ```sh
 DESKTOP_UPDATE_CHANNEL=staging pnpm app:package
-DESKTOP_UPDATE_ENDPOINT=https://branch-continue.elocute.main.lan/desktop/latest.json pnpm app:package
-DESKTOP_UPDATE_ASSET_BASE_URL=https://branch-continue.elocute.main.lan/desktop/ pnpm app:package
+DESKTOP_UPDATE_ENDPOINT=https://branch-continue.main.lan/desktop/latest.json pnpm app:package
+DESKTOP_UPDATE_ASSET_BASE_URL=https://branch-continue.main.lan/desktop/ pnpm app:package
 ```
 
 ## Deploy a Desktop Update
@@ -50,7 +50,7 @@ pnpm desktop:ota:deploy
 The deploy command builds and signs a fresh desktop update, uploads it to `reclaim@10.147.17.10:/home/reclaim-ethiopia/agent-stations/apps/branch-continue/desktop-ota/releases/<release-id>/`, and atomically moves the remote `current` symlink to that release. The public desktop updater endpoint serves that symlink at:
 
 ```text
-https://branch-continue.elocute.main.lan/desktop/latest.json
+https://branch-continue.main.lan/desktop/latest.json
 ```
 
 Useful overrides:

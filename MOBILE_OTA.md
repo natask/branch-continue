@@ -28,17 +28,17 @@ The command builds Vite with relative asset URLs and writes:
 Upload the `current/` directory to the URL used by the mobile shell. The default Branch Continue mobile shell OTA URL is:
 
 ```text
-http://10.147.17.10/mobile/
+https://branch-continue.main.lan/mobile/
 ```
 
-Android does not trust the private `*.elocute.main.lan` certificate by default, so the installed mobile shell uses the ZeroTier HTTP address. Caddy serves `/mobile/` from the release symlink at `/home/reclaim-ethiopia/agent-stations/apps/branch-continue/mobile-ota/current`.
+Branch Continue uses the project-specific `branch-continue.main.lan` host. Caddy serves `/mobile/` from the release symlink at `/home/reclaim-ethiopia/agent-stations/apps/branch-continue/mobile-ota/current`.
 
 Useful overrides:
 
 ```sh
 MOBILE_OTA_CHANNEL=staging pnpm mobile:ota:bundle
 MOBILE_OTA_RUNTIME=tauri-mobile-v2 pnpm mobile:ota:bundle
-MOBILE_OTA_PUBLIC_URL=http://10.147.17.10/mobile/ pnpm mobile:ota:bundle
+MOBILE_OTA_PUBLIC_URL=https://branch-continue.main.lan/mobile/ pnpm mobile:ota:bundle
 ```
 
 ## Deploy an OTA update

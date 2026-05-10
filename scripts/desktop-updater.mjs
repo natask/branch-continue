@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const appName = 'branch-continue'
 const defaultChannel = 'production'
-const defaultEndpoint = 'https://branch-continue.elocute.main.lan/desktop/latest.json'
+const defaultEndpoint = 'https://branch-continue.main.lan/desktop/latest.json'
 const defaultRemoteHost = 'reclaim@10.147.17.10'
 const defaultRemoteBase = '/home/reclaim-ethiopia/agent-stations/apps/branch-continue/desktop-ota'
 const defaultOutputRoot = path.join(repoRoot, '.desktop-ota')
