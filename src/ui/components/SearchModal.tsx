@@ -31,7 +31,6 @@ export function SearchModal({ open, onClose, onSearch, onSelect, commandActions 
   const groupedActions = useMemo(() => {
     const groups = new Map<string, SearchCommandAction[]>()
     for (const action of commandActions) {
-      if (action.disabled) continue
       const groupName = action.group ?? 'Commands'
       const existing = groups.get(groupName) ?? []
       existing.push(action)
@@ -141,6 +140,7 @@ export function SearchModal({ open, onClose, onSearch, onSelect, commandActions 
                   className="search-result search-result-command"
                   value={`${action.label} ${action.id}`}
                   keywords={action.keywords}
+                  disabled={action.disabled}
                   onSelect={() => handleActionSelect(action)}
                 >
                   <div className="search-result-copy">

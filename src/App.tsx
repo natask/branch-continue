@@ -87,17 +87,7 @@ export default function App() {
 
   let content: ReactNode
   if (app.error) {
-    content = (
-      <div className="error-screen">
-        <div className="error-panel">
-          <p className="error-title">File operation failed.</p>
-          <pre className="error-text">{app.error}</pre>
-          <p className="error-hint">
-            Current source: <code>{app.sourcePath}</code>
-          </p>
-        </div>
-      </div>
-    )
+    content = <ErrorRecoveryScreen app={app} />
   } else if (!app.ready) {
     content = <div className="loading">loading file session</div>
   } else if (!app.sourceSelected) {
@@ -790,6 +780,7 @@ function LoadedSourceApp({
         onSelect={handleSearchSelect}
         commandActions={commandActions}
       />
+      {!editorSession.editor && <CommandAccessBar onOpen={() => setSearchOpen(true)} />}
       {station.element}
 
       {editorSession.editor && (
@@ -878,7 +869,104 @@ function SourceSelectionScreen({
         onSelect={() => undefined}
         commandActions={commandActions}
       />
+      <CommandAccessBar onOpen={() => setSearchOpen(true)} />
       {station.element}
+    </div>
+  )
+}
+
+function ErrorRecoveryScreen({
+  app,
+}: {
+  app: ReturnType<typeof useApp>
+}) {
+  const [searchOpen, setSearchOpen] = useState(false)
+  const station = useAgentStation({ sourcePath: app.sourcePath })
+  const commandActions = useMemo<SearchCommandAction[]>(
+    () => [
+      ...station.actions,
+      {
+        id: 'select-source-file',
+        label: app.selectingSource ? 'Select Source File (busy...)' : 'Select Source File',
+        hint: '⌘O',
+        keywords: ['open', 'file', 'source', 'recover'],
+        group: 'Recovery',
+        disabled: app.selectingSource,
+        run: () => void app.selectSourceFile(),
+      },
+      {
+        id: 'reload-source-file',
+        label: 'Retry Reload Source File',
+        keywords: ['reload', 'retry', 'refresh', 'source', 'recover'],
+        group: 'Recovery',
+        run: () => void app.reloadSource(),
+      },
+    ],
+    [app, station.actions],
+  )
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const shortcut = event.metaKey || event.ctrlKey
+      const key = event.key.toLowerCase()
+      if (!shortcut) return
+      if (key === 'k' && !event.shiftKey && !event.altKey) {
+        event.preventDefault()
+        setSearchOpen(true)
+        return
+      }
+      if (key === 'o' && !event.shiftKey && !event.altKey) {
+        event.preventDefault()
+        void app.selectSourceFile()
+      }
+    }
+
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [app])
+
+  return (
+    <div className="app">
+      <div className="error-screen">
+        <div className="error-panel">
+          <p className="error-title">File operation failed.</p>
+          <pre className="error-text">{app.error}</pre>
+          <p className="error-hint">
+            Current source: <code>{app.sourcePath}</code>
+          </p>
+          <div className="error-actions">
+            <button className="btn-primary" onClick={() => setSearchOpen(true)} type="button">
+              Commands
+            </button>
+            <button className="btn-secondary" onClick={() => void app.reloadSource()} type="button">
+              Retry Reload
+            </button>
+            <button className="btn-secondary" onClick={() => void app.selectSourceFile()} type="button">
+              Choose File
+            </button>
+          </div>
+        </div>
+      </div>
+      <SearchModal
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onSearch={async () => []}
+        onSelect={() => undefined}
+        commandActions={commandActions}
+      />
+      <CommandAccessBar onOpen={() => setSearchOpen(true)} />
+      {station.element}
+    </div>
+  )
+}
+
+function CommandAccessBar({ onOpen }: { onOpen: () => void }) {
+  return (
+    <div className="command-access-bar" role="navigation" aria-label="Command access">
+      <button className="command-access-button" onClick={onOpen} type="button">
+        <span>Commands</span>
+        <kbd>⌘K</kbd>
+      </button>
     </div>
   )
 }
@@ -979,7 +1067,8 @@ function isLikelyMobileDevice(): boolean {
   const ua = window.navigator.userAgent.toLowerCase()
   const uaMobile = /android|iphone|ipad|ipod|mobile/.test(ua)
   const coarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false
-  return uaMobile || coarsePointer
+  const narrowViewport = window.matchMedia?.('(max-width: 760px)').matches ?? false
+  return uaMobile || coarsePointer || narrowViewport
 }
 
 function resolveInitialMobilePreview(): boolean {
