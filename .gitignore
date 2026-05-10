@@ -27,6 +27,7 @@ dist-ssr
 
 # Local QA/session artifacts
 .context/
+scratch/
 playwright-report/
 test-results/
 
