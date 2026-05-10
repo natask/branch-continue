@@ -9,9 +9,11 @@ export function startMobileOtaRedirect(): void {
 
   const previewUrl = normalizeDirectoryUrl(getStoredOtaPreviewUrl())
   if (previewUrl) {
-    if (!isCurrentLocation(previewUrl)) window.location.replace(previewUrl.href)
+    if (isMobileOtaRuntime() && !isCurrentLocation(previewUrl)) window.location.replace(previewUrl.href)
     return
   }
+
+  if (!isMobileOtaRuntime()) return
 
   const targetUrl = normalizeDirectoryUrl(MOBILE_OTA_URL)
   if (!targetUrl || isCurrentLocation(targetUrl)) return
@@ -51,6 +53,14 @@ function normalizeDirectoryUrl(value?: string | null): URL | null {
 
 function isCurrentLocation(targetUrl: URL): boolean {
   return window.location.origin === targetUrl.origin && window.location.pathname.startsWith(targetUrl.pathname)
+}
+
+function isMobileOtaRuntime(): boolean {
+  try {
+    return window.location.pathname === '/mobile' || window.location.pathname.startsWith('/mobile/')
+  } catch {
+    return false
+  }
 }
 
 function isMobileOtaManifest(value: unknown): value is { app: string; entrypoint: string } {
