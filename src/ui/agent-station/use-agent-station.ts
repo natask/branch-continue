@@ -28,6 +28,7 @@ const masterOrchAvailabilityListeners = new Set<(availability: MasterOrchAvailab
 
 interface AgentStationContext {
   sourcePath?: string
+  surface?: 'web' | 'desktop' | 'mobile'
 }
 
 interface AgentStationOptions {
@@ -61,6 +62,7 @@ export function useAgentStation(
   const [stationAvailability, setStationAvailability] = useState(masterOrchAvailability)
 
   const stationConfigured = isAgentStationEnabled()
+  const stationSurface = context.surface ?? currentSurface()
   const masterOrchUrl = resolveMasterOrchUrl()
   const masterOrchDashboardUrl = resolveMasterOrchDashboardUrl(masterOrchUrl)
   const agentationEnabled = stationConfigured && options.useAgentation !== false && isAgentationEnabled()
@@ -72,7 +74,7 @@ export function useAgentStation(
     deploymentId: optionalEnvValue(import.meta.env.VITE_MASTER_ORCH_DEPLOYMENT_ID),
     token: optionalEnvValue(import.meta.env.VITE_MASTER_ORCH_TOKEN),
     intervalMs: envNumber(import.meta.env.VITE_MASTER_ORCH_POLL_MS, DEFAULT_POLL_MS),
-    context: () => buildStationContext(contextRef.current),
+    context: () => buildStationContext({ ...contextRef.current, surface: stationSurface }),
     agentation: agentationEnabled,
     initialAgentationVisible: agentationEnabled,
     agentationProps: {
@@ -88,7 +90,7 @@ export function useAgentStation(
 
   const showDashboardFrame = useCallback(() => {
     setDashboardFrameOpen(true)
-  }, [])
+  }, [stationSurface])
 
   const closeDashboardFrame = useCallback(() => {
     setDashboardFrameOpen(false)
@@ -109,7 +111,7 @@ export function useAgentStation(
   }, [masterOrchUrl, stationConfigured])
 
   const selectDeployment = useCallback((deployment: StationDeployment, fallbackUrl?: string | null): void => {
-    const url = storeOtaPreviewTarget(deployment, fallbackUrl)
+    const url = storeOtaPreviewTarget(deployment, fallbackUrl, stationSurface)
     if (!url) return
     setPreviewOverrideUrl(url)
     setPreviewOverrideDeploymentId(deployment.id)
@@ -156,6 +158,7 @@ export function useAgentStation(
       const localActions = deploymentSwitchActions(
         station.snapshot.state,
         previewOverrideUrl,
+        stationSurface,
         selectDeployment,
         returnToCurrent,
       )
@@ -170,17 +173,18 @@ export function useAgentStation(
 
       return [...statusActions, ...localActions, ...stationActions]
     },
-    [masterOrchDashboardUrl, masterOrchUrl, previewOverrideUrl, returnToCurrent, selectDeployment, showDashboardFrame, station.commands, station.snapshot.error, station.snapshot.state, stationAvailability, stationConfigured],
+    [masterOrchDashboardUrl, masterOrchUrl, previewOverrideUrl, returnToCurrent, selectDeployment, showDashboardFrame, station.commands, station.snapshot.error, station.snapshot.state, stationAvailability, stationConfigured, stationSurface],
   )
   const previewNotice = useMemo(
-    () => latestPreviewReadyNotice(station.snapshot.state, dismissedNoticeIds),
-    [dismissedNoticeIds, station.snapshot.state],
+    () => latestPreviewReadyNotice(station.snapshot.state, dismissedNoticeIds, stationSurface),
+    [dismissedNoticeIds, station.snapshot.state, stationSurface],
   )
   const notification = useMemo(
     () =>
-      previewNotice && !previewOverrideUrl
+      previewNotice && !previewOverrideUrl && !dashboardFrameOpen
         ? createPreviewReadyToast({
             notice: previewNotice,
+            surface: stationSurface,
             error: noticeError,
             onDismiss: () =>
               setDismissedNoticeIds((current) => {
@@ -190,13 +194,14 @@ export function useAgentStation(
                 return next
               }),
             onOpen: () => {
-              const url = deploymentOpenUrl(previewNotice.deployment, previewNotice.body)
+              const url = deploymentOpenUrl(previewNotice.deployment, previewNotice.body, stationSurface)
               if (url) window.open(url, '_blank', 'noopener,noreferrer')
             },
             onSwitch: () => {
               const url = storeOtaPreviewTarget(
                 previewNotice.deployment ?? { deploymentId: previewNotice.deploymentId },
                 previewNotice.body,
+                stationSurface,
               )
               if (!url) {
                 setNoticeError('No switchable preview URL was recorded for this deployment.')
@@ -210,7 +215,7 @@ export function useAgentStation(
             onApply: () => applyDeployment(previewNotice.deploymentId),
           })
         : null,
-    [acceptDeployment, applyDeployment, noticeError, previewNotice, previewOverrideUrl, returnToCurrent, selectDeployment, station],
+    [acceptDeployment, applyDeployment, dashboardFrameOpen, noticeError, previewNotice, previewOverrideUrl, returnToCurrent, selectDeployment, station, stationSurface],
   )
   const previewFrame = useMemo(
     () =>
@@ -334,16 +339,18 @@ function masterOrchStatusActions({
 function latestPreviewReadyNotice(
   state: Record<string, unknown>,
   dismissedIds: Set<string>,
+  surface: 'web' | 'desktop' | 'mobile',
 ): PreviewReadyNotice | null {
+  const deployments = (state.deployments ?? {}) as Record<string, StationDeployment>
   const inbox = Object.values((state.inbox ?? {}) as Record<string, RawInboxNotice>)
     .filter((item) => item?.id && !dismissedIds.has(item.id))
     .filter((item) => item.kind === 'preview_ready' || /preview ready/i.test(`${item.title ?? ''} ${item.body ?? ''}`))
+    .filter((item) => deploymentOpenUrl(item.deploymentId ? deployments[item.deploymentId] : null, item.body, surface))
     .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')))
 
   const notice = inbox[0]
   if (!notice) return null
 
-  const deployments = (state.deployments ?? {}) as Record<string, StationDeployment>
   const deploymentId = notice.deploymentId ?? null
   return {
     id: notice.id,
@@ -354,24 +361,29 @@ function latestPreviewReadyNotice(
   }
 }
 
-function deploymentOpenUrl(deployment?: StationDeployment | null, fallbackUrl?: string | null): string {
-  return otaPreviewUrlFromDeployment(deployment, fallbackUrl) ?? ''
+function deploymentOpenUrl(
+  deployment?: StationDeployment | null,
+  fallbackUrl?: string | null,
+  surface: 'web' | 'desktop' | 'mobile' = 'web',
+): string {
+  return otaPreviewUrlFromDeployment(deployment, fallbackUrl, surface) ?? ''
 }
 
 function deploymentSwitchActions(
   state: Record<string, unknown>,
   previewOverrideUrl: string | null,
+  surface: 'web' | 'desktop' | 'mobile',
   onSwitch: (deployment: StationDeployment, fallbackUrl?: string | null) => void,
   onCurrent: () => void,
 ): SearchCommandAction[] {
   const deployments = Object.values((state.deployments ?? {}) as Record<string, StationDeployment>)
     .filter((deployment) => deployment.appId === envValue(import.meta.env.VITE_MASTER_ORCH_APP_ID, DEFAULT_APP_ID))
-    .filter((deployment) => deploymentOpenUrl(deployment))
+    .filter((deployment) => deploymentOpenUrl(deployment, null, surface))
     .sort((a, b) => String(b.updatedAt ?? b.createdAt ?? '').localeCompare(String(a.updatedAt ?? a.createdAt ?? '')))
     .slice(0, 8)
 
   const actions = deployments.map((deployment) => {
-    const url = deploymentOpenUrl(deployment)
+    const url = deploymentOpenUrl(deployment, null, surface)
     return {
       id: `deployments.switch-local.${deployment.id}`,
       label: `Deployments: Switch To ${deployment.id}`,
@@ -400,6 +412,7 @@ function deploymentSwitchActions(
 
 function createPreviewReadyToast({
   notice,
+  surface,
   error,
   onDismiss,
   onOpen,
@@ -409,6 +422,7 @@ function createPreviewReadyToast({
   onApply,
 }: {
   notice: PreviewReadyNotice
+  surface: 'web' | 'desktop' | 'mobile'
   error?: string | null
   onDismiss: () => void
   onOpen: () => void
@@ -417,7 +431,7 @@ function createPreviewReadyToast({
   onAccept: () => void | Promise<unknown>
   onApply: () => void | Promise<unknown>
 }): ReactNode {
-  const previewUrl = deploymentOpenUrl(notice.deployment, notice.body)
+  const previewUrl = deploymentOpenUrl(notice.deployment, notice.body, surface)
   const canOpen = Boolean(previewUrl)
   const canManage = Boolean(notice.deploymentId)
   const previewOverrideActive = Boolean(getStoredOtaPreviewUrl())
@@ -649,6 +663,12 @@ function isMobileOtaRuntime(): boolean {
   } catch {
     return false
   }
+}
+
+function currentSurface(): 'web' | 'desktop' | 'mobile' {
+  if (isMobileOtaRuntime()) return 'mobile'
+  if (typeof window !== 'undefined' && ('__TAURI__' in window || '__TAURI_INTERNALS__' in window)) return 'desktop'
+  return 'web'
 }
 
 function stationUrlForHost(value?: string): string | null {

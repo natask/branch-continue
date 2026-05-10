@@ -3,19 +3,26 @@ export const OTA_PREVIEW_DEPLOYMENT_KEY = 'branch-continue:ota-preview-deploymen
 
 interface OtaPreviewInput {
   id?: string | null
+  runId?: string | null
+  releaseId?: string | null
+  mobileReleaseId?: string | null
   url?: string | null
+  webUrl?: string | null
   bundleUrl?: string | null
   manifestUrl?: string | null
   mobileUrl?: string | null
+  desktopUrl?: string | null
+  surface?: string | null
   entryUrls?: Record<string, string | null | undefined> | null
   urls?: Record<string, string | null | undefined> | null
   deploymentId?: string | null
   metadata?: Record<string, unknown> | null
 }
 
-export function otaPreviewUrlFromDeployment(input?: OtaPreviewInput | null, fallbackUrl?: string | null): string | null {
+export function otaPreviewUrlFromDeployment(input?: OtaPreviewInput | null, fallbackUrl?: string | null, surface = 'web'): string | null {
+  if (!deploymentMatchesSurface(input, surface)) return null
   const mobileBase = canonicalMobileBaseUrl()
-  if (mobileBase) {
+  if (surface === 'mobile' && mobileBase) {
     for (const value of mobileUrlCandidates(input)) {
       const url = normalizeHttpUrl(value)
       if (url && isUnderUrlBase(url, mobileBase)) return url
@@ -26,11 +33,11 @@ export function otaPreviewUrlFromDeployment(input?: OtaPreviewInput | null, fall
       if (url && isUnderUrlBase(url, mobileBase)) return url
     }
 
-    const deploymentId = input?.deploymentId ?? input?.id
+    const deploymentId = deploymentReleaseId(input)
     return deploymentId ? new URL(`previews/${encodeURIComponent(deploymentId)}/`, mobileBase).href : null
   }
 
-  for (const value of [...mobileUrlCandidates(input), ...deploymentUrlCandidates(input, fallbackUrl)]) {
+  for (const value of surfaceUrlCandidates(input, fallbackUrl, surface)) {
     const url = normalizeHttpUrl(value)
     if (url) return url
   }
@@ -66,10 +73,10 @@ export function getStoredOtaPreviewDeploymentId(): string | null {
   }
 }
 
-export function storeOtaPreviewTarget(input: OtaPreviewInput, fallbackUrl?: string | null): string | null {
+export function storeOtaPreviewTarget(input: OtaPreviewInput, fallbackUrl?: string | null, surface = 'web'): string | null {
   if (typeof window === 'undefined') return null
 
-  const url = otaPreviewUrlFromDeployment(input, fallbackUrl)
+  const url = otaPreviewUrlFromDeployment(input, fallbackUrl, surface)
   if (!url) return null
 
   window.localStorage.setItem(OTA_PREVIEW_URL_KEY, url)
@@ -103,7 +110,67 @@ function directoryUrlFromManifest(value?: string | null): string | null {
 }
 
 function deploymentUrlCandidates(input?: OtaPreviewInput | null, fallbackUrl?: string | null): Array<string | null | undefined> {
-  return [input?.bundleUrl, input?.url, directoryUrlFromManifest(input?.manifestUrl), fallbackUrl]
+  return [...webUrlCandidates(input, fallbackUrl), ...mobileUrlCandidates(input)]
+}
+
+function deploymentSurface(input?: OtaPreviewInput | null): string | null {
+  return input?.surface?.trim().toLowerCase() || stringValue(input?.metadata?.surface)?.trim().toLowerCase() || null
+}
+
+function deploymentMatchesSurface(input?: OtaPreviewInput | null, surface = 'web'): boolean {
+  const explicit = deploymentSurface(input)
+  if (explicit) return explicit === surface
+  if (surface === 'mobile') return mobileUrlCandidates(input).some((value) => Boolean(normalizeHttpUrl(value)))
+  if (surface === 'desktop') return desktopUrlCandidates(input).some((value) => Boolean(normalizeHttpUrl(value)))
+  return webUrlCandidates(input).some((value) => Boolean(normalizeHttpUrl(value)))
+}
+
+function surfaceUrlCandidates(
+  input?: OtaPreviewInput | null,
+  fallbackUrl?: string | null,
+  surface = 'web',
+): Array<string | null | undefined> {
+  if (surface === 'mobile') return mobileUrlCandidates(input)
+  if (surface === 'desktop') return desktopUrlCandidates(input)
+  return webUrlCandidates(input, fallbackUrl)
+}
+
+function webUrlCandidates(input?: OtaPreviewInput | null, fallbackUrl?: string | null): Array<string | null | undefined> {
+  const metadata = input?.metadata && typeof input.metadata === 'object' ? input.metadata : {}
+  const metadataEntryUrls = objectRecord(metadata.entryUrls)
+  const metadataUrls = objectRecord(metadata.urls)
+  const metadataDeviceUrls = objectRecord(metadata.deviceUrls)
+
+  return [
+    input?.webUrl,
+    input?.entryUrls?.web,
+    input?.urls?.web,
+    stringValue(metadata.webUrl),
+    metadataEntryUrls.web,
+    metadataUrls.web,
+    metadataDeviceUrls.web,
+    input?.url,
+    input?.bundleUrl,
+    fallbackUrl,
+  ]
+}
+
+function desktopUrlCandidates(input?: OtaPreviewInput | null): Array<string | null | undefined> {
+  const metadata = input?.metadata && typeof input.metadata === 'object' ? input.metadata : {}
+  const metadataEntryUrls = objectRecord(metadata.entryUrls)
+  const metadataUrls = objectRecord(metadata.urls)
+  const metadataDeviceUrls = objectRecord(metadata.deviceUrls)
+
+  return [
+    input?.desktopUrl,
+    input?.entryUrls?.desktop,
+    input?.urls?.desktop,
+    stringValue(metadata.desktopUrl),
+    metadataEntryUrls.desktop,
+    metadataUrls.desktop,
+    metadataDeviceUrls.desktop,
+    directoryUrlFromManifest(input?.manifestUrl),
+  ]
 }
 
 function mobileUrlCandidates(input?: OtaPreviewInput | null): Array<string | null | undefined> {
@@ -121,6 +188,20 @@ function mobileUrlCandidates(input?: OtaPreviewInput | null): Array<string | nul
     metadataUrls.mobile,
     metadataDeviceUrls.mobile,
   ]
+}
+
+function deploymentReleaseId(input?: OtaPreviewInput | null): string | null {
+  const metadata = input?.metadata && typeof input.metadata === 'object' ? input.metadata : {}
+  return (
+    input?.mobileReleaseId ??
+    input?.releaseId ??
+    stringValue(metadata.mobileReleaseId) ??
+    stringValue(metadata.releaseId) ??
+    input?.runId ??
+    input?.deploymentId ??
+    input?.id ??
+    null
+  )
 }
 
 function currentMobileBaseUrl(): URL | null {
