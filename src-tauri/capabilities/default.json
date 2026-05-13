@@ -7,9 +7,11 @@
   ],
   "permissions": [
     "core:default",
+    "allow-android-request-microphone-permission",
     "allow-android-select-source-file",
     "allow-android-read-source-file",
     "allow-android-write-source-file",
+    "allow-transcribe-with-chirp",
     "fs:default",
     "dialog:default",
     {
@@ -41,6 +43,15 @@
     },
     {
       "identifier": "fs:allow-write-file",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$APPCONFIG/**" },
+        { "path": "$APPDATA/**" },
+        { "path": "$APPLOCALDATA/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-mkdir",
       "allow": [
         { "path": "$HOME/**" },
         { "path": "$APPCONFIG/**" },

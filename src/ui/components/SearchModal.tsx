@@ -120,6 +120,12 @@ export function SearchModal({ open, onClose, onSearch, onSelect, commandActions 
       label="Command palette"
       description="Run commands and search notes."
       pointerBehavior="split"
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape') return
+        event.preventDefault()
+        event.stopPropagation()
+        onClose()
+      }}
     >
       <Command.Input
         className="search-input"

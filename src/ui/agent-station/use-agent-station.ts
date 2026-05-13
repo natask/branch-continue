@@ -21,6 +21,7 @@ const DEFAULT_POLL_MS = 1500
 const MASTER_ORCH_AVAILABILITY_RETRY_MS = 2500
 
 type MasterOrchAvailability = 'unknown' | 'checking' | 'available' | 'unavailable'
+type StationSurface = 'web' | 'desktop' | 'mobile'
 
 let masterOrchAvailability: MasterOrchAvailability = 'unknown'
 let masterOrchAvailabilityPromise: Promise<MasterOrchAvailability> | null = null
@@ -28,7 +29,7 @@ const masterOrchAvailabilityListeners = new Set<(availability: MasterOrchAvailab
 
 interface AgentStationContext {
   sourcePath?: string
-  surface?: 'web' | 'desktop' | 'mobile'
+  surface?: StationSurface
 }
 
 interface AgentStationOptions {
@@ -38,6 +39,11 @@ interface AgentStationOptions {
 interface AgentStationIntegration {
   actions: SearchCommandAction[]
   element: ReactNode | null
+  client: ReturnType<typeof useMasterOrchStation>['client']
+  refresh: ReturnType<typeof useMasterOrchStation>['refresh']
+  configured: boolean
+  availability: MasterOrchAvailability
+  dashboardUrl: string
 }
 
 interface PreviewReadyNotice {
@@ -66,6 +72,24 @@ export function useAgentStation(
   const masterOrchUrl = resolveMasterOrchUrl()
   const masterOrchDashboardUrl = resolveMasterOrchDashboardUrl(masterOrchUrl)
   const agentationEnabled = stationConfigured && options.useAgentation !== false && isAgentationEnabled()
+  const [dashboardFrameOpen, setDashboardFrameOpen] = useState(false)
+
+  const showDashboardFrame = useCallback(() => {
+    setDashboardFrameOpen(true)
+  }, [])
+
+  const adaptStationCommands = useCallback(
+    (commands: StationCommand[]) => commands.map((command) => {
+      if (command.id !== 'station.open-dashboard') return command
+      return {
+        ...command,
+        run: showDashboardFrame,
+        onSelect: showDashboardFrame,
+        perform: showDashboardFrame,
+      }
+    }),
+    [showDashboardFrame],
+  )
   const station = useMasterOrchStation({
     enabled: stationConfigured,
     appId: envValue(import.meta.env.VITE_MASTER_ORCH_APP_ID, DEFAULT_APP_ID),
@@ -75,6 +99,7 @@ export function useAgentStation(
     token: optionalEnvValue(import.meta.env.VITE_MASTER_ORCH_TOKEN),
     intervalMs: envNumber(import.meta.env.VITE_MASTER_ORCH_POLL_MS, DEFAULT_POLL_MS),
     context: () => buildStationContext({ ...contextRef.current, surface: stationSurface }),
+    commandAdapter: adaptStationCommands,
     agentation: agentationEnabled,
     initialAgentationVisible: agentationEnabled,
     agentationProps: {
@@ -86,11 +111,10 @@ export function useAgentStation(
   const [noticeError, setNoticeError] = useState<string | null>(null)
   const [previewOverrideUrl, setPreviewOverrideUrl] = useState(() => getStoredOtaPreviewUrl())
   const [previewOverrideDeploymentId, setPreviewOverrideDeploymentId] = useState(() => getStoredOtaPreviewDeploymentId())
-  const [dashboardFrameOpen, setDashboardFrameOpen] = useState(false)
 
-  const showDashboardFrame = useCallback(() => {
-    setDashboardFrameOpen(true)
-  }, [stationSurface])
+  const openDashboardInBrowser = useCallback(() => {
+    window.open(masterOrchDashboardUrl, '_blank', 'noopener,noreferrer')
+  }, [masterOrchDashboardUrl])
 
   const closeDashboardFrame = useCallback(() => {
     setDashboardFrameOpen(false)
@@ -109,13 +133,6 @@ export function useAgentStation(
       unsubscribe()
     }
   }, [masterOrchUrl, stationConfigured])
-
-  const selectDeployment = useCallback((deployment: StationDeployment, fallbackUrl?: string | null): void => {
-    const url = storeOtaPreviewTarget(deployment, fallbackUrl, stationSurface)
-    if (!url) return
-    setPreviewOverrideUrl(url)
-    setPreviewOverrideDeploymentId(deployment.id)
-  }, [])
 
   const returnToCurrent = useCallback((): void => {
     clearOtaPreviewTarget()
@@ -152,28 +169,76 @@ export function useAgentStation(
     [station],
   )
 
+  const promoteDeployment = useCallback(
+    async (deployment?: StationDeployment | null) => {
+      if (!deployment) return
+      setNoticeError(null)
+      try {
+        if (deployment.status !== 'accepted' && deployment.status !== 'applied') {
+          await station.client.acceptDeployment(deployment.id)
+        }
+        if (deployment.status !== 'applied') {
+          await station.client.applyDeployment(deployment.id)
+        }
+        await station.refresh({ reason: 'deployment-promote', deploymentId: deployment.id })
+      } catch (error) {
+        setNoticeError(errorMessage(error))
+      }
+    },
+    [station],
+  )
+
+  const switchToDeployment = useCallback(
+    (deployment?: StationDeployment | null, surface: StationSurface = stationSurface, fallbackUrl?: string | null) => {
+      if (!deployment) return
+      const url = storeOtaPreviewTarget(deployment, fallbackUrl ?? deploymentOpenUrl(deployment, null, surface), surface)
+      if (!url) {
+        setNoticeError(`No switchable ${surface} URL was recorded for this deployment.`)
+        return
+      }
+      setNoticeError(null)
+      setPreviewOverrideUrl(url)
+      setPreviewOverrideDeploymentId(deployment.id)
+      if (stationSurface === 'mobile' && surface === 'mobile') window.location.replace(url)
+    },
+    [stationSurface],
+  )
+
+  const deploymentActions = useMemo(
+    () => managedDeploymentActions({
+      deployments: Object.values((station.snapshot.state.deployments ?? {}) as Record<string, StationDeployment>),
+      surfaces: stationSurface === 'mobile' ? ['mobile'] : [stationSurface, 'mobile'],
+      onSwitch: switchToDeployment,
+      onPromote: promoteDeployment,
+    }),
+    [promoteDeployment, station.snapshot.state.deployments, stationSurface, switchToDeployment],
+  )
+
   const actions = useMemo(
     () => {
       const stationActions = station.commands.map(toSearchCommandAction)
-      const localActions = deploymentSwitchActions(
-        station.snapshot.state,
-        previewOverrideUrl,
-        stationSurface,
-        selectDeployment,
-        returnToCurrent,
-      )
+      const currentPreviewActions = previewOverrideUrl
+        ? [
+            {
+              id: 'station.return-current-preview',
+              label: 'Preview: Revert To Current',
+              hint: previewOverrideUrl,
+              group: 'Run Actions',
+              keywords: ['current', 'preview', 'deployment', 'revert', 'return'],
+              run: returnToCurrent,
+            } satisfies SearchCommandAction,
+          ]
+        : []
       const statusActions = masterOrchStatusActions({
         configured: stationConfigured,
         availability: stationAvailability,
         url: masterOrchUrl,
-        dashboardUrl: masterOrchDashboardUrl,
         error: station.snapshot.error,
-        onShowDashboard: showDashboardFrame,
       })
 
-      return [...statusActions, ...localActions, ...stationActions]
+      return [...statusActions, ...currentPreviewActions, ...deploymentActions, ...stationActions]
     },
-    [masterOrchDashboardUrl, masterOrchUrl, previewOverrideUrl, returnToCurrent, selectDeployment, showDashboardFrame, station.commands, station.snapshot.error, station.snapshot.state, stationAvailability, stationConfigured, stationSurface],
+    [deploymentActions, masterOrchUrl, previewOverrideUrl, returnToCurrent, station.commands, station.snapshot.error, stationAvailability, stationConfigured],
   )
   const previewNotice = useMemo(
     () => latestPreviewReadyNotice(station.snapshot.state, dismissedNoticeIds, stationSurface),
@@ -198,24 +263,18 @@ export function useAgentStation(
               if (url) window.open(url, '_blank', 'noopener,noreferrer')
             },
             onSwitch: () => {
-              const url = storeOtaPreviewTarget(
-                previewNotice.deployment ?? { deploymentId: previewNotice.deploymentId },
-                previewNotice.body,
-                stationSurface,
-              )
-              if (!url) {
-                setNoticeError('No switchable preview URL was recorded for this deployment.')
-                return
-              }
-              setPreviewOverrideUrl(url)
-              setPreviewOverrideDeploymentId(previewNotice.deploymentId ?? null)
+              const deployment = previewNotice.deployment ?? ({
+                id: previewNotice.deploymentId ?? '',
+                deploymentId: previewNotice.deploymentId,
+              } as unknown as StationDeployment)
+              switchToDeployment(deployment, stationSurface, previewNotice.body)
             },
             onCurrent: returnToCurrent,
             onAccept: () => acceptDeployment(previewNotice.deploymentId),
             onApply: () => applyDeployment(previewNotice.deploymentId),
           })
         : null,
-    [acceptDeployment, applyDeployment, dashboardFrameOpen, noticeError, previewNotice, previewOverrideUrl, returnToCurrent, selectDeployment, station, stationSurface],
+    [acceptDeployment, applyDeployment, dashboardFrameOpen, noticeError, previewNotice, previewOverrideUrl, returnToCurrent, stationSurface, switchToDeployment],
   )
   const previewFrame = useMemo(
     () =>
@@ -237,15 +296,21 @@ export function useAgentStation(
       dashboardFrameOpen
         ? createDashboardFrame({
             url: masterOrchDashboardUrl,
+            onOpen: openDashboardInBrowser,
             onClose: closeDashboardFrame,
           })
         : null,
-    [closeDashboardFrame, dashboardFrameOpen, masterOrchDashboardUrl],
+    [closeDashboardFrame, dashboardFrameOpen, masterOrchDashboardUrl, openDashboardInBrowser],
   )
 
   return {
     actions,
     element: createElement(Fragment, null, station.element, previewFrame, dashboardFrame, notification),
+    client: station.client,
+    refresh: station.refresh,
+    configured: stationConfigured,
+    availability: stationAvailability,
+    dashboardUrl: masterOrchDashboardUrl,
   }
 }
 
@@ -268,20 +333,87 @@ function toSearchCommandAction(command: StationCommand): SearchCommandAction {
   }
 }
 
+function managedDeploymentActions({
+  deployments,
+  surfaces,
+  onSwitch,
+  onPromote,
+}: {
+  deployments: StationDeployment[]
+  surfaces: StationSurface[]
+  onSwitch: (deployment: StationDeployment, surface: StationSurface) => void
+  onPromote: (deployment: StationDeployment) => void | Promise<unknown>
+}): SearchCommandAction[] {
+  const actions: SearchCommandAction[] = []
+  const uniqueSurfaces = Array.from(new Set(surfaces))
+
+  for (const surface of uniqueSurfaces) {
+    const latest = latestOpenableDeployments(deployments, surface, 4)
+    for (let index = 0; index < latest.length; index += 1) {
+      const deployment = latest[index]!
+      const url = deploymentOpenUrl(deployment, null, surface)
+      const surfaceName = surfaceTitle(surface)
+      const targetName = deploymentLabel(deployment)
+      const latestPrefix = index === 0 ? 'Latest ' : ''
+
+      actions.push({
+        id: `station.deployment.${surface}.switch.${deployment.id}`,
+        label: `Deployment: Test ${latestPrefix}${surfaceName} ${targetName}`,
+        hint: deploymentHint(deployment, url),
+        group: 'Deployment',
+        keywords: ['deployment', 'test', 'preview', 'switch', 'ota', surface, deployment.id, deployment.runId ?? ''],
+        disabled: !url,
+        run: () => onSwitch(deployment, surface),
+      })
+
+      actions.push({
+        id: `station.deployment.${surface}.promote.${deployment.id}`,
+        label: `Deployment: Promote ${latestPrefix}${surfaceName} ${targetName}`,
+        hint: deploymentHint(deployment, url),
+        group: 'Deployment',
+        keywords: ['deployment', 'promote', 'apply', 'advance', 'ota', surface, deployment.id, deployment.runId ?? ''],
+        disabled: deployment.status === 'applied',
+        run: () => onPromote(deployment),
+      })
+    }
+  }
+
+  return actions
+}
+
+function latestOpenableDeployments(deployments: StationDeployment[], surface: StationSurface, limit: number): StationDeployment[] {
+  return deployments
+    .filter((deployment) => Boolean(deploymentOpenUrl(deployment, null, surface)))
+    .sort((a, b) => deploymentTime(b) - deploymentTime(a))
+    .slice(0, limit)
+}
+
+function deploymentTime(deployment: StationDeployment): number {
+  return Date.parse(String(deployment.updatedAt ?? deployment.createdAt ?? '')) || 0
+}
+
+function deploymentLabel(deployment: StationDeployment): string {
+  return deployment.runId ? `${deployment.runId} / ${deployment.id}` : deployment.id
+}
+
+function deploymentHint(deployment: StationDeployment, url: string): string {
+  return [deployment.status, deployment.channel, url].filter(Boolean).join(' / ')
+}
+
+function surfaceTitle(surface: StationSurface): string {
+  return surface.charAt(0).toUpperCase() + surface.slice(1)
+}
+
 function masterOrchStatusActions({
   configured,
   availability,
   url,
-  dashboardUrl,
   error,
-  onShowDashboard,
 }: {
   configured: boolean
   availability: MasterOrchAvailability
   url: string
-  dashboardUrl: string
   error?: unknown
-  onShowDashboard: () => void
 }): SearchCommandAction[] {
   if (!configured) {
     return [
@@ -296,44 +428,28 @@ function masterOrchStatusActions({
     ]
   }
 
-  const dashboardActions: SearchCommandAction[] = [
-    {
-      id: 'master-orch-show-dashboard-in-app',
-      label: 'Station: Show Branch Continue Orch In App',
-      hint: dashboardUrl,
-      group: 'Station',
-      keywords: ['master orch', 'station', 'dashboard', 'orch', 'in app', dashboardUrl, url],
-      run: onShowDashboard,
-    },
-    {
-      id: 'master-orch-open-dashboard-browser',
-      label: 'Station: Open Branch Continue Orch In Browser',
-      hint: dashboardUrl,
-      group: 'Station',
-      keywords: ['master orch', 'station', 'dashboard', 'orch', 'browser', 'external', dashboardUrl, url],
-      run: () => {
-        window.open(dashboardUrl, '_blank', 'noopener,noreferrer')
-      },
-    },
-  ]
-
   if (availability === 'available' && !error) {
-    return dashboardActions
+    return []
   }
 
   const checking = availability === 'checking' || availability === 'unknown'
   return [
-    ...dashboardActions,
     {
       id: 'master-orch-station-offline',
-      label: checking ? 'Station: Connecting To Server' : 'Station: Server Offline',
-      hint: error ? errorMessage(error) : `${url}/health did not respond. Start Master Orch with npm run server in ../master-orch.`,
+      label: checking ? 'Orch: Connecting' : 'Orch: Server Offline',
+      hint: stationStatusHint(url, error, checking),
       group: 'Station',
       disabled: true,
       keywords: ['master orch', 'station', 'server', checking ? 'connecting' : 'offline', url],
       run: () => undefined,
     },
   ]
+}
+
+function stationStatusHint(url: string, error: unknown, checking: boolean): string {
+  if (checking) return `Checking ${url}/health`
+  if (error) return `Could not load Master Orch commands from ${url}`
+  return `${url}/health did not respond. Start Master Orch with npm run server in ../master-orch.`
 }
 
 function latestPreviewReadyNotice(
@@ -367,47 +483,6 @@ function deploymentOpenUrl(
   surface: 'web' | 'desktop' | 'mobile' = 'web',
 ): string {
   return otaPreviewUrlFromDeployment(deployment, fallbackUrl, surface) ?? ''
-}
-
-function deploymentSwitchActions(
-  state: Record<string, unknown>,
-  previewOverrideUrl: string | null,
-  surface: 'web' | 'desktop' | 'mobile',
-  onSwitch: (deployment: StationDeployment, fallbackUrl?: string | null) => void,
-  onCurrent: () => void,
-): SearchCommandAction[] {
-  const deployments = Object.values((state.deployments ?? {}) as Record<string, StationDeployment>)
-    .filter((deployment) => deployment.appId === envValue(import.meta.env.VITE_MASTER_ORCH_APP_ID, DEFAULT_APP_ID))
-    .filter((deployment) => deploymentOpenUrl(deployment, null, surface))
-    .sort((a, b) => String(b.updatedAt ?? b.createdAt ?? '').localeCompare(String(a.updatedAt ?? a.createdAt ?? '')))
-    .slice(0, 8)
-
-  const actions = deployments.map((deployment) => {
-    const url = deploymentOpenUrl(deployment, null, surface)
-    return {
-      id: `deployments.switch-local.${deployment.id}`,
-      label: `Deployments: Switch To ${deployment.id}`,
-      hint: [deployment.status, deployment.kind, url].filter(Boolean).join(' / '),
-      group: 'Deployments',
-      keywords: ['deployment', 'switch', 'preview', 'ota', deployment.id, deployment.status, deployment.kind].filter(
-        Boolean,
-      ) as string[],
-      run: () => onSwitch(deployment),
-    }
-  })
-
-  if (previewOverrideUrl) {
-    actions.unshift({
-      id: 'station.return-current-ota-channel',
-      label: 'Deployments: Return To Current',
-      hint: previewOverrideUrl,
-      group: 'Deployments',
-      keywords: ['current', 'ota', 'channel', 'return', 'preview'],
-      run: onCurrent,
-    })
-  }
-
-  return actions
 }
 
 function createPreviewReadyToast({
@@ -507,9 +582,11 @@ function createDeploymentPreviewFrame({
 
 function createDashboardFrame({
   url,
+  onOpen,
   onClose,
 }: {
   url: string
+  onOpen: () => void
   onClose: () => void
 }): ReactNode {
   return createElement(
@@ -528,6 +605,7 @@ function createDashboardFrame({
       createElement(
         'div',
         { className: 'deployment-preview-actions' },
+        createElement('button', { type: 'button', onClick: onOpen }, 'Open'),
         createElement('button', { type: 'button', onClick: onClose }, 'Close Dashboard'),
       ),
     ),
@@ -552,6 +630,7 @@ function buildStationContext(context: AgentStationContext): StationCommandContex
   return {
     route: routeNow(),
     sourcePath: context.sourcePath,
+    surface: context.surface,
     baseBranch,
     targetBranch,
     ...(applyTo ? { applyTo } : {}),
@@ -666,9 +745,24 @@ function isMobileOtaRuntime(): boolean {
 }
 
 function currentSurface(): 'web' | 'desktop' | 'mobile' {
-  if (isMobileOtaRuntime()) return 'mobile'
-  if (typeof window !== 'undefined' && ('__TAURI__' in window || '__TAURI_INTERNALS__' in window)) return 'desktop'
+  if (isMobileClientRuntime()) return 'mobile'
+  if (isTauriRuntime()) return 'desktop'
   return 'web'
+}
+
+function isMobileClientRuntime(): boolean {
+  if (typeof window === 'undefined') return false
+  if (isMobileOtaRuntime()) return true
+  if (!isTauriRuntime()) return false
+  if (/Android|iPhone|iPad|iPod|Mobile/i.test(window.navigator.userAgent)) return true
+  return window.matchMedia('(pointer: coarse)').matches && window.matchMedia('(max-width: 900px)').matches
+}
+
+function isTauriRuntime(): boolean {
+  if (typeof window === 'undefined') return false
+  const global = globalThis as typeof globalThis & { isTauri?: unknown }
+  const win = window as Window & { __TAURI__?: unknown; __TAURI_INTERNALS__?: unknown }
+  return Boolean(global.isTauri || win.__TAURI__ || win.__TAURI_INTERNALS__)
 }
 
 function stationUrlForHost(value?: string): string | null {

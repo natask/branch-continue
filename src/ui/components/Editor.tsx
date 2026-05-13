@@ -1,6 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import type React from 'react'
+import type { UseAudioNoteRecorderResult } from '../hooks/use-audio-note-recorder'
 import type { UseEditorSessionResult } from '../hooks/use-editor-session'
+import {
+  PRIMARY_VOICE_LANGUAGE_OPTIONS,
+  VOICE_LANGUAGE_OPTIONS,
+  VOICE_TRANSCRIPTION_MODEL_OPTIONS,
+  voiceLanguageLabel,
+  voiceModelLabel,
+  type VoiceRecordingConfig,
+} from '../lib/voice-recording-config'
+import { parseVoiceTranscriptTime } from '../lib/voice-transcript'
+import { extractAudioCaptureReferences } from '../../core/audio/audio-store'
+import { AudioCaptureList } from './AudioCaptureList'
+import { AudioPlayer } from './AudioPlayer'
 
 type MobileNavTarget = 'older' | 'newer'
 
@@ -13,6 +26,15 @@ interface EditorProps {
   isMobile: boolean
   canOpenOlderNote: boolean
   canOpenNewerNote: boolean
+  audioRecorder: UseAudioNoteRecorderResult
+  audioNoteMessage: string | null
+  voiceRecordingConfig: VoiceRecordingConfig
+  voiceConfigOpen: boolean
+  sourcePath: string
+  onVoiceConfigOpenChange: (open: boolean) => void
+  onVoiceRecordingConfigChange: (patch: Partial<VoiceRecordingConfig>) => void
+  onVoiceLanguageCapture: (languageCode: string) => void
+  onSelectVoiceCredentialFile: () => Promise<void>
   onOpenSearch: () => void
   onOpenOlderNote: () => void
   onOpenNewerNote: () => void
@@ -24,6 +46,15 @@ export function Editor({
   isMobile,
   canOpenOlderNote,
   canOpenNewerNote,
+  audioRecorder,
+  audioNoteMessage,
+  voiceRecordingConfig,
+  voiceConfigOpen,
+  sourcePath,
+  onVoiceConfigOpenChange,
+  onVoiceRecordingConfigChange,
+  onVoiceLanguageCapture,
+  onSelectVoiceCredentialFile,
   onOpenSearch,
   onOpenOlderNote,
   onOpenNewerNote,
@@ -50,6 +81,14 @@ export function Editor({
         : 'Auto-save off - double-click to toggle',
     [session.autoSaveEnabled],
   )
+  const audioButtonBusy = audioRecorder.status === 'requesting' || audioRecorder.status === 'stopping'
+  const audioButtonDisabled = audioButtonBusy || !audioRecorder.mediaRecorderAvailable
+  const hasLinkedAudio = editor ? extractAudioCaptureReferences(editor.body).length > 0 : false
+  const voiceLanguageActionLabel = audioRecorder.recording
+    ? 'Switch recording to'
+    : audioRecorder.status === 'stopped' || hasLinkedAudio
+      ? 'Continue voice in'
+      : 'Start voice in'
 
   const handleBodyRef = useCallback(
     (element: HTMLTextAreaElement | null) => {
@@ -224,6 +263,131 @@ export function Editor({
               </svg>
             </button>
             <div className="note-editor-branch-close">
+              <div className="voice-recorder-menu">
+                <div className="voice-language-controls" role="group" aria-label="Voice recording language">
+                  {PRIMARY_VOICE_LANGUAGE_OPTIONS.map((option) => {
+                    const active = voiceRecordingConfig.languageCode === option.code
+                    return (
+                      <button
+                        key={option.code}
+                        className={`voice-language-btn${active ? ' voice-language-btn--active' : ''}${active && audioRecorder.recording ? ' voice-language-btn--recording' : ''}`}
+                        onClick={() => onVoiceLanguageCapture(option.code)}
+                        disabled={audioButtonDisabled}
+                        type="button"
+                        title={audioRecorder.mediaRecorderAvailable ? `${voiceLanguageActionLabel} ${option.label}` : 'Audio recording is unavailable'}
+                        aria-pressed={active}
+                      >
+                        <span className="voice-language-flag" aria-hidden="true">{option.flag}</span>
+                        <span className="voice-language-label">{option.shortLabel}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+                {audioRecorder.recording && (
+                  <button
+                    className="btn-secondary voice-recorder-stop"
+                    onClick={audioRecorder.stop}
+                    disabled={audioRecorder.status === 'stopping'}
+                    type="button"
+                  >
+                    Stop
+                  </button>
+                )}
+                {voiceConfigOpen && (
+                  <div className="voice-recorder-config-menu" role="menu" aria-label="Voice recording config">
+                    <div className="voice-recorder-config-kicker">Voice recording settings</div>
+                    <label className="voice-recorder-field">
+                      <span>Language</span>
+                      <select
+                        value={voiceRecordingConfig.languageCode}
+                        onChange={(event) => {
+                          const nextLanguageCode = event.target.value
+                          onVoiceRecordingConfigChange({ languageCode: nextLanguageCode })
+                          audioRecorder.switchLanguage(nextLanguageCode)
+                        }}
+                      >
+                        {VOICE_LANGUAGE_OPTIONS.map((option) => (
+                          <option key={option.code} value={option.code}>{option.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="voice-recorder-field">
+                      <span>Transcriber</span>
+                      <select
+                        value={voiceRecordingConfig.transcriptionMode}
+                        onChange={(event) => onVoiceRecordingConfigChange({ transcriptionMode: event.target.value as VoiceRecordingConfig['transcriptionMode'] })}
+                      >
+                        <option value="chirp3">Google Chirp</option>
+                        <option value="off">Save audio only</option>
+                      </select>
+                    </label>
+                    {voiceRecordingConfig.transcriptionMode === 'chirp3' && (
+                      <div className="voice-recorder-native-grid">
+                        <label className="voice-recorder-field">
+                          <span>Project</span>
+                          <input
+                            value={voiceRecordingConfig.projectId}
+                            onChange={(event) => onVoiceRecordingConfigChange({ projectId: event.target.value })}
+                            placeholder="gcp-project-id"
+                          />
+                        </label>
+                        <label className="voice-recorder-field">
+                          <span>Location</span>
+                          <input
+                            value={voiceRecordingConfig.location}
+                            onChange={(event) => onVoiceRecordingConfigChange({ location: event.target.value })}
+                            placeholder="us"
+                          />
+                        </label>
+                        <label className="voice-recorder-field">
+                          <span>Speech model</span>
+                          <select
+                            value={voiceRecordingConfig.model}
+                            onChange={(event) => onVoiceRecordingConfigChange({ model: event.target.value })}
+                          >
+                            {VOICE_TRANSCRIPTION_MODEL_OPTIONS.map((option) => (
+                              <option key={option.model} value={option.model}>{option.label}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="voice-recorder-field voice-recorder-field--wide">
+                          <span>Fallback key path</span>
+                          <div className="voice-recorder-file-row">
+                            <input
+                              value={voiceRecordingConfig.serviceAccountKeyPath}
+                              onChange={(event) => onVoiceRecordingConfigChange({ serviceAccountKeyPath: event.target.value })}
+                              placeholder="optional if app was built with a key"
+                            />
+                            <button className="btn-secondary" onClick={() => void onSelectVoiceCredentialFile()} type="button">
+                              Choose
+                            </button>
+                          </div>
+                        </label>
+                      </div>
+                    )}
+                    <label className="voice-recorder-field voice-recorder-field--wide">
+                      <span>Transcript target</span>
+                      <select
+                        value={voiceRecordingConfig.insertMode}
+                        onChange={(event) => onVoiceRecordingConfigChange({ insertMode: event.target.value as VoiceRecordingConfig['insertMode'] })}
+                      >
+                        <option value="append">Put transcript under audio link</option>
+                        <option value="replace-selection">Overwrite selected note text</option>
+                      </select>
+                    </label>
+                    <p className="voice-recorder-config-note">
+                      {voiceRecordingConfig.transcriptionMode === 'off'
+                        ? 'Audio will be saved beside this org file in recordings/ and linked without transcription.'
+                        : `Audio will be saved beside this org file in recordings/, then ${voiceModelLabel(voiceRecordingConfig.model)} will transcribe ${voiceLanguageLabel(voiceRecordingConfig.languageCode)} and place editable text under the audio link. Use the English/Amharic flags to start or switch recordings.`}
+                    </p>
+                    <div className="voice-recorder-menu-actions">
+                      <button className="btn-secondary" onClick={() => onVoiceConfigOpenChange(false)} type="button">
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
               <button className="btn-secondary" onClick={onOpenSearch} type="button">
                 {isMobile ? 'Search' : 'Commands'}
               </button>
@@ -310,6 +474,45 @@ export function Editor({
         </div>
 
         {session.saveError && <p className="status-error">{session.saveError}</p>}
+        {(audioRecorder.status !== 'idle' || audioNoteMessage) && (
+          <div className="voice-recorder-panel" aria-live="polite">
+            <div className="voice-recorder-panel-row">
+              <span className={`voice-recorder-dot${audioRecorder.recording ? ' voice-recorder-dot--active' : ''}`} />
+              <span>{voiceRecorderStatusLabel(audioRecorder)}</span>
+              <span>{voiceLanguageLabel(voiceRecordingConfig.languageCode)}</span>
+              <span>{formatElapsed(audioRecorder.elapsedMs)}</span>
+              {voiceRecordingConfig.transcriptionMode === 'off' && !audioRecorder.speechRecognitionAvailable && (
+                <span className="voice-recorder-muted">live preview unavailable</span>
+              )}
+            </div>
+            {audioRecorder.interimTranscript && (
+              <p className="voice-recorder-interim">{audioRecorder.interimTranscript}</p>
+            )}
+            {audioRecorder.finalTranscript && (
+              <p className="voice-recorder-muted">Local preview: {audioRecorder.finalTranscript}</p>
+            )}
+            {audioRecorder.error && <p className="voice-recorder-error">{audioRecorder.error}</p>}
+            {audioNoteMessage && <p className="voice-recorder-muted">{audioNoteMessage}</p>}
+            {audioRecorder.audioUrl && !hasLinkedAudio && (
+              <div className="voice-recorder-playback">
+                <AudioPlayer
+                  id="latest-captured-segment"
+                  src={audioRecorder.audioUrl}
+                  blob={audioRecorder.audioBlob}
+                  mimeType={audioRecorder.mimeType ?? undefined}
+                  label="Latest captured segment"
+                  downloadName={audioDownloadName(audioRecorder.mimeType)}
+                  showDownload
+                  fallbackDurationMs={audioRecorder.elapsedMs}
+                />
+                <button className="btn-secondary" onClick={audioRecorder.clear} type="button">
+                  Clear
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        {hasLinkedAudio && <AudioCaptureList body={editor.body} sourcePath={sourcePath} />}
 
         {editor.editing ? (
           <textarea
@@ -320,9 +523,7 @@ export function Editor({
             onKeyDown={session.handleBodyKeyDown}
           />
         ) : (
-          <pre className="note-editor-body">
-            {editor.body}
-          </pre>
+          <ReadableNoteBody body={editor.body} sessionId={voiceSessionIdForBody(editor.body)} />
         )}
 
         {isMobile && (
@@ -363,4 +564,69 @@ export function Editor({
       </div>
     </article>
   )
+}
+
+function ReadableNoteBody({ body, sessionId }: { body: string; sessionId: string | null }) {
+  const timestampPattern = /\[(\d+:\d{2}(?::\d{2})?)\]/g
+  const parts: React.ReactNode[] = []
+  let lastIndex = 0
+
+  for (const match of body.matchAll(timestampPattern)) {
+    const label = match[1] ?? ''
+    const timeMs = parseVoiceTranscriptTime(label)
+    const startIndex = match.index ?? 0
+
+    parts.push(body.slice(lastIndex, startIndex))
+    if (sessionId && timeMs !== null) {
+      parts.push(
+        <button
+          key={`${startIndex}-${label}`}
+          className="voice-transcript-time-link"
+          onClick={() => {
+            window.dispatchEvent(new CustomEvent('branch-continue:voice-seek', {
+              detail: { id: sessionId, timeMs },
+            }))
+          }}
+          type="button"
+        >
+          [{label}]
+        </button>,
+      )
+    } else {
+      parts.push(match[0])
+    }
+    lastIndex = startIndex + match[0].length
+  }
+
+  parts.push(body.slice(lastIndex))
+  return <pre className="note-editor-body">{parts}</pre>
+}
+
+function voiceSessionIdForBody(body: string): string | null {
+  const all = extractAudioCaptureReferences(body)
+  const references = all.filter((reference) => reference.kind === 'file')
+  const displayReferences = references.length > 0 ? references : all
+  if (displayReferences.length === 0) return null
+  return displayReferences.map((reference) => reference.key).join('|')
+}
+
+function voiceRecorderStatusLabel(recorder: UseAudioNoteRecorderResult): string {
+  if (recorder.status === 'requesting') return 'requesting microphone'
+  if (recorder.status === 'recording') return 'recording voice'
+  if (recorder.status === 'stopping') return 'stopping recording'
+  if (recorder.status === 'stopped') return 'recording saved locally'
+  if (recorder.status === 'error') return 'recording error'
+  return 'ready to record'
+}
+
+function formatElapsed(elapsedMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = String(totalSeconds % 60).padStart(2, '0')
+  return `${minutes}:${seconds}`
+}
+
+function audioDownloadName(mimeType: string | null): string {
+  if (mimeType?.includes('mp4') || mimeType?.includes('aac')) return 'branch-continue-voice.m4a'
+  return 'branch-continue-voice.webm'
 }

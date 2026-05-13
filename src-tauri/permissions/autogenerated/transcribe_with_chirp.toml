@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-transcribe-with-chirp"
+description = "Enables the transcribe_with_chirp command without any pre-configured scope."
+commands.allow = ["transcribe_with_chirp"]
+
+[[permission]]
+identifier = "deny-transcribe-with-chirp"
+description = "Denies the transcribe_with_chirp command without any pre-configured scope."
+commands.deny = ["transcribe_with_chirp"]

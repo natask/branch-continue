@@ -11,6 +11,9 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
+.env.*
+!.env.example
 .mobile-ota/
 .desktop-ota/
 
@@ -48,3 +51,7 @@ src-tauri/gen/android/build/
 src-tauri/gen/android/app/build/
 src-tauri/gen/android/buildSrc/.gradle/
 src-tauri/gen/android/buildSrc/build/
+
+# Dev-only bundled secrets. Do not commit real credentials.
+src-tauri/secrets/*.json
+!src-tauri/secrets/*.example.json

@@ -1,39 +1,111 @@
 import { getStoredOtaPreviewUrl } from './ota-preview'
 
 const MOBILE_OTA_URL = import.meta.env.VITE_BRANCH_CONTINUE_MOBILE_OTA_URL?.trim()
+const MOBILE_OTA_RELEASE_ID = import.meta.env.VITE_BRANCH_CONTINUE_MOBILE_OTA_RELEASE_ID?.trim()
 const MOBILE_OTA_MANIFEST = 'branch-continue-mobile-ota.json'
+const MOBILE_OTA_RELEASE_KEY = 'branch-continue:mobile-ota-release-id'
 const CHECK_TIMEOUT_MS = 1800
+const CHECK_INTERVAL_MS = 60_000
+
+interface MobileOtaManifest {
+  app: string
+  entrypoint: string
+  releaseId?: string
+}
+
+export type MobileOtaAction =
+  | { type: 'none'; releaseId?: string }
+  | { type: 'redirect'; url: string; releaseId?: string }
+  | { type: 'reload'; url: string; releaseId: string }
 
 export function startMobileOtaRedirect(): void {
   if (typeof window === 'undefined') return
 
   const previewUrl = normalizeDirectoryUrl(getStoredOtaPreviewUrl())
   if (previewUrl) {
-    if (isMobileOtaRuntime() && !isCurrentLocation(previewUrl)) window.location.replace(previewUrl.href)
+    if (isMobileClientRuntime(previewUrl) && !isCurrentLocation(previewUrl)) {
+      window.location.replace(previewUrl.href)
+    }
     return
   }
 
-  if (!isMobileOtaRuntime()) return
-
   const targetUrl = normalizeDirectoryUrl(MOBILE_OTA_URL)
-  if (!targetUrl || isCurrentLocation(targetUrl)) return
+  if (!targetUrl || !isMobileClientRuntime(targetUrl)) return
 
-  const controller = new AbortController()
-  const timeout = window.setTimeout(() => controller.abort(), CHECK_TIMEOUT_MS)
+  let checking = false
 
-  fetch(new URL(MOBILE_OTA_MANIFEST, targetUrl), {
-    cache: 'no-store',
-    signal: controller.signal,
+  const checkForUpdate = () => {
+    if (checking || shouldDeferUpdateApply()) return
+    checking = true
+
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), CHECK_TIMEOUT_MS)
+
+    fetch(new URL(MOBILE_OTA_MANIFEST, targetUrl), {
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((manifest) => {
+        const action = resolveMobileOtaAction({
+          targetUrl: targetUrl.href,
+          currentUrl: window.location.href,
+          manifest,
+          loadedReleaseId: MOBILE_OTA_RELEASE_ID,
+          storedReleaseId: readStoredReleaseId(),
+        })
+
+        if (action.releaseId) storeReleaseId(action.releaseId)
+        if (action.type === 'redirect' || action.type === 'reload') {
+          window.location.replace(action.url)
+        }
+      })
+      .catch(() => {
+        // The embedded bundle remains the offline fallback when ZeroTier or the OTA host is unavailable.
+      })
+      .finally(() => {
+        checking = false
+        window.clearTimeout(timeout)
+      })
+  }
+
+  checkForUpdate()
+  const interval = window.setInterval(checkForUpdate, CHECK_INTERVAL_MS)
+  window.addEventListener('online', checkForUpdate)
+  window.addEventListener('focus', checkForUpdate)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') checkForUpdate()
   })
-    .then((response) => (response.ok ? response.json() : null))
-    .then((manifest) => {
-      if (!isMobileOtaManifest(manifest)) return
-      window.location.replace(targetUrl.href)
-    })
-    .catch(() => {
-      // The embedded bundle remains the offline fallback when ZeroTier or the OTA host is unavailable.
-    })
-    .finally(() => window.clearTimeout(timeout))
+  window.addEventListener('beforeunload', () => window.clearInterval(interval), { once: true })
+}
+
+export function resolveMobileOtaAction({
+  targetUrl,
+  currentUrl,
+  manifest,
+  loadedReleaseId,
+  storedReleaseId,
+}: {
+  targetUrl: string | null | undefined
+  currentUrl: string
+  manifest: unknown
+  loadedReleaseId?: string | null
+  storedReleaseId?: string | null
+}): MobileOtaAction {
+  const target = normalizeDirectoryUrl(targetUrl)
+  if (!target || !isMobileOtaManifest(manifest)) return { type: 'none' }
+
+  const releaseId = normalizeReleaseId(manifest.releaseId)
+  if (!isLocationUnderTarget(currentUrl, target)) {
+    return { type: 'redirect', url: urlWithOtaRelease(target.href, releaseId), releaseId }
+  }
+
+  const currentReleaseId = normalizeReleaseId(loadedReleaseId) ?? normalizeReleaseId(storedReleaseId)
+  if (releaseId && currentReleaseId && releaseId !== currentReleaseId) {
+    return { type: 'reload', url: urlWithOtaRelease(currentUrl, releaseId), releaseId }
+  }
+
+  return { type: 'none', releaseId }
 }
 
 function normalizeDirectoryUrl(value?: string | null): URL | null {
@@ -52,19 +124,78 @@ function normalizeDirectoryUrl(value?: string | null): URL | null {
 }
 
 function isCurrentLocation(targetUrl: URL): boolean {
-  return window.location.origin === targetUrl.origin && window.location.pathname.startsWith(targetUrl.pathname)
+  return isLocationUnderTarget(window.location.href, targetUrl)
 }
 
-function isMobileOtaRuntime(): boolean {
+function isLocationUnderTarget(currentUrl: string, targetUrl: URL): boolean {
   try {
-    return window.location.pathname === '/mobile' || window.location.pathname.startsWith('/mobile/')
+    const current = new URL(currentUrl)
+    return current.origin === targetUrl.origin && current.pathname.startsWith(targetUrl.pathname)
   } catch {
     return false
   }
 }
 
-function isMobileOtaManifest(value: unknown): value is { app: string; entrypoint: string } {
+function isMobileClientRuntime(targetUrl: URL): boolean {
+  try {
+    if (isCurrentLocation(targetUrl)) return true
+    if (!isTauriRuntime()) return false
+    if (isMobileUserAgent()) return true
+    return window.matchMedia('(pointer: coarse)').matches && window.matchMedia('(max-width: 900px)').matches
+  } catch {
+    return false
+  }
+}
+
+function isTauriRuntime(): boolean {
+  const global = globalThis as typeof globalThis & { isTauri?: unknown }
+  const win = window as Window & { __TAURI__?: unknown; __TAURI_INTERNALS__?: unknown }
+  return Boolean(global.isTauri || win.__TAURI__ || win.__TAURI_INTERNALS__)
+}
+
+function isMobileUserAgent(): boolean {
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(window.navigator.userAgent)
+}
+
+function shouldDeferUpdateApply(): boolean {
+  if (document.visibilityState === 'hidden') return true
+
+  const active = document.activeElement
+  if (!(active instanceof HTMLElement)) return false
+  return Boolean(active.closest('input, textarea, select, [contenteditable="true"]'))
+}
+
+function isMobileOtaManifest(value: unknown): value is MobileOtaManifest {
   if (!value || typeof value !== 'object') return false
   const manifest = value as { app?: unknown; entrypoint?: unknown }
   return manifest.app === 'branch-continue' && manifest.entrypoint === 'index.html'
+}
+
+function normalizeReleaseId(value?: string | null): string | undefined {
+  const releaseId = value?.trim()
+  return releaseId || undefined
+}
+
+function urlWithOtaRelease(value: string, releaseId?: string): string {
+  if (!releaseId) return value
+  const url = new URL(value)
+  url.searchParams.set('ota', releaseId)
+  url.hash = ''
+  return url.href
+}
+
+function readStoredReleaseId(): string | null {
+  try {
+    return window.localStorage.getItem(MOBILE_OTA_RELEASE_KEY)
+  } catch {
+    return null
+  }
+}
+
+function storeReleaseId(releaseId: string): void {
+  try {
+    window.localStorage.setItem(MOBILE_OTA_RELEASE_KEY, releaseId)
+  } catch {
+    // Ignore persistence failures.
+  }
 }

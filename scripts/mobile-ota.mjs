@@ -13,6 +13,7 @@ const defaultChannel = 'production'
 const defaultMobileOtaUrl = 'https://branch-continue.main.lan/mobile/'
 const defaultRemoteHost = 'reclaim@10.147.17.10'
 const defaultRemoteBase = '/home/reclaim-ethiopia/agent-stations/apps/branch-continue/mobile-ota'
+const defaultMasterOrchUrl = 'http://10.147.17.10:43110'
 const outputRoot = path.join(repoRoot, '.mobile-ota')
 
 const command = process.argv[2]
@@ -60,6 +61,7 @@ async function bundle(rawArgs) {
     run('pnpm', ['build'], {
       ...process.env,
       BRANCH_CONTINUE_MOBILE_OTA: '1',
+      VITE_BRANCH_CONTINUE_MOBILE_OTA_RELEASE_ID: releaseId,
       ...(normalizedPublicUrl ? { VITE_BRANCH_CONTINUE_MOBILE_OTA_URL: normalizedPublicUrl } : {}),
     })
   }
@@ -137,6 +139,12 @@ async function deploy(rawArgs) {
     process.env,
   )
 
+  if (options['skip-master-orch'] !== '1' && options['skip-master-orch'] !== 'true') {
+    await registerMasterOrchDeployment(manifest).catch((error) => {
+      console.warn(`mobile-ota: Master Orch registration skipped: ${error instanceof Error ? error.message : String(error)}`)
+    })
+  }
+
   console.log(`mobile-ota: deployed ${manifest.releaseId} to ${remoteHost}:${remoteRelease}`)
 }
 
@@ -185,9 +193,11 @@ async function shell(rawArgs) {
             },
             permissions: [
               'core:default',
+              'allow-android-request-microphone-permission',
               'allow-android-select-source-file',
               'allow-android-read-source-file',
               'allow-android-write-source-file',
+              'allow-transcribe-with-chirp',
               'fs:default',
               'dialog:default',
               {
@@ -356,6 +366,66 @@ async function replaceDir(target, source) {
   await fs.cp(source, target, { recursive: true })
 }
 
+async function registerMasterOrchDeployment(manifest) {
+  const baseUrl = process.env.MOBILE_OTA_MASTER_ORCH_URL ?? process.env.MASTER_ORCH_URL ?? defaultMasterOrchUrl
+  const token = process.env.MOBILE_OTA_MASTER_ORCH_TOKEN ?? process.env.MASTER_ORCH_TOKEN ?? ''
+  const mobileUrl = manifest.publicUrl
+  if (!mobileUrl) return
+
+  const deploymentId = `deployment-mobile-${manifest.releaseId}`
+  const manifestUrl = new URL('branch-continue-mobile-ota.json', mobileUrl).href
+  const body = {
+    id: deploymentId,
+    appId: manifest.app,
+    kind: 'mobile-ota-release',
+    surface: 'mobile',
+    status: 'ready',
+    url: mobileUrl,
+    mobileUrl,
+    manifestUrl,
+    urls: { mobile: mobileUrl },
+    entryUrls: { mobile: mobileUrl },
+    channel: manifest.channel,
+    checksum: manifest.bundleSha256,
+    metadata: {
+      releaseId: manifest.releaseId,
+      runtime: manifest.runtime,
+      appVersion: manifest.appVersion,
+      packageVersion: manifest.packageVersion,
+      source: 'mobile-ota-deploy',
+      promoted: true,
+    },
+  }
+
+  await masterOrchRequest(baseUrl, token, 'POST', '/deployments', body)
+  await masterOrchRequest(baseUrl, token, 'POST', `/deployments/${encodeURIComponent(deploymentId)}/ready`, {
+    mobileUrl,
+    manifestUrl,
+    urls: { mobile: mobileUrl },
+    entryUrls: { mobile: mobileUrl },
+    checksum: manifest.bundleSha256,
+    preserveRunStatus: true,
+  })
+  await masterOrchRequest(baseUrl, token, 'POST', `/deployments/${encodeURIComponent(deploymentId)}/apply`, {})
+  console.log(`mobile-ota: registered applied deployment ${deploymentId} in Master Orch`)
+}
+
+async function masterOrchRequest(baseUrl, token, method, pathName, body) {
+  const response = await fetch(new URL(pathName, baseUrl), {
+    method,
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  const text = await response.text()
+  if (!response.ok) {
+    throw new Error(`${method} ${pathName} failed: ${text || response.status}`)
+  }
+  return text ? JSON.parse(text) : null
+}
+
 async function writeJson(file, value) {
   await fs.mkdir(path.dirname(file), { recursive: true })
   await fs.writeFile(`${file}.tmp`, `${JSON.stringify(value, null, 2)}\n`)
@@ -472,6 +542,8 @@ Environment:
   MOBILE_OTA_URL           OTA URL used by the native shell, default ${defaultMobileOtaUrl}
   MOBILE_OTA_SSH_HOST      SSH upload target, default ${defaultRemoteHost}
   MOBILE_OTA_REMOTE_BASE   Remote release base, default ${defaultRemoteBase}
+  MOBILE_OTA_MASTER_ORCH_URL  Master Orch API for deployment registration, default ${defaultMasterOrchUrl}
+  --skip-master-orch       Deploy without recording the promoted mobile deployment in Master Orch
 
 Shell options:
   --remote-only            Load the OTA URL directly instead of embedding the current app as an offline fallback.

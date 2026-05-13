@@ -13,6 +13,7 @@ interface OtaPreviewInput {
   mobileUrl?: string | null
   desktopUrl?: string | null
   surface?: string | null
+  kind?: string | null
   entryUrls?: Record<string, string | null | undefined> | null
   urls?: Record<string, string | null | undefined> | null
   deploymentId?: string | null
@@ -114,7 +115,20 @@ function deploymentUrlCandidates(input?: OtaPreviewInput | null, fallbackUrl?: s
 }
 
 function deploymentSurface(input?: OtaPreviewInput | null): string | null {
-  return input?.surface?.trim().toLowerCase() || stringValue(input?.metadata?.surface)?.trim().toLowerCase() || null
+  const metadata = input?.metadata && typeof input.metadata === 'object' ? input.metadata : {}
+  const explicit = input?.surface?.trim().toLowerCase() || stringValue(metadata.surface)?.trim().toLowerCase()
+  if (explicit) return explicit
+
+  const kind = `${input?.kind ?? ''} ${stringValue(metadata.kind) ?? ''}`.toLowerCase()
+  if (/mobile|android|ios/.test(kind)) return 'mobile'
+  if (/desktop|tauri|app/.test(kind)) return 'desktop'
+  if (/web|pages|site/.test(kind)) return 'web'
+
+  if (hasSurfaceSpecificCandidate(input, 'mobile')) return 'mobile'
+  if (hasSurfaceSpecificCandidate(input, 'desktop')) return 'desktop'
+  if (hasSurfaceSpecificCandidate(input, 'web')) return 'web'
+
+  return null
 }
 
 function deploymentMatchesSurface(input?: OtaPreviewInput | null, surface = 'web'): boolean {
@@ -153,6 +167,70 @@ function webUrlCandidates(input?: OtaPreviewInput | null, fallbackUrl?: string |
     input?.bundleUrl,
     fallbackUrl,
   ]
+}
+
+function hasSurfaceSpecificCandidate(input: OtaPreviewInput | null | undefined, surface: string): boolean {
+  if (!input) return false
+  const metadata = input.metadata && typeof input.metadata === 'object' ? input.metadata : {}
+  const entryUrls = input.entryUrls ?? {}
+  const urls = input.urls ?? {}
+  const metadataEntryUrls = objectRecord(metadata.entryUrls)
+  const metadataUrls = objectRecord(metadata.urls)
+  const metadataDeviceUrls = objectRecord(metadata.deviceUrls)
+
+  if (surface === 'mobile') {
+    if (input.mobileReleaseId || stringValue(metadata.mobileReleaseId)) return true
+    return [
+      input.mobileUrl,
+      entryUrls.mobile,
+      urls.mobile,
+      stringValue(metadata.mobileUrl),
+      metadataEntryUrls.mobile,
+      metadataUrls.mobile,
+      metadataDeviceUrls.mobile,
+      input.url,
+      input.bundleUrl,
+      input.manifestUrl,
+    ].some((value) => urlLooksLikeSurface(value, 'mobile'))
+  }
+
+  if (surface === 'desktop') {
+    return [
+      input.desktopUrl,
+      entryUrls.desktop,
+      urls.desktop,
+      stringValue(metadata.desktopUrl),
+      metadataEntryUrls.desktop,
+      metadataUrls.desktop,
+      metadataDeviceUrls.desktop,
+      input.manifestUrl,
+      input.url,
+      input.bundleUrl,
+    ].some((value) => urlLooksLikeSurface(value, 'desktop'))
+  }
+
+  return [
+    input.webUrl,
+    entryUrls.web,
+    urls.web,
+    stringValue(metadata.webUrl),
+    metadataEntryUrls.web,
+    metadataUrls.web,
+    metadataDeviceUrls.web,
+  ].some((value) => Boolean(normalizeHttpUrl(value)))
+}
+
+function urlLooksLikeSurface(value: string | null | undefined, surface: string): boolean {
+  const url = normalizeHttpUrl(value)
+  if (!url) return false
+  try {
+    const path = new URL(url).pathname.toLowerCase()
+    if (surface === 'mobile') return path.includes('/mobile/') || path.includes('/android/') || path.includes('/ios/')
+    if (surface === 'desktop') return path.includes('/desktop/') || path.includes('/app/')
+    return false
+  } catch {
+    return false
+  }
 }
 
 function desktopUrlCandidates(input?: OtaPreviewInput | null): Array<string | null | undefined> {
