@@ -33,6 +33,9 @@ dist-ssr
 .context/
 scratch/
 playwright-report/
+
+# Local native signing/secrets
+src-tauri/secrets/
 test-results/
 
 # Local planning/thinking artifacts

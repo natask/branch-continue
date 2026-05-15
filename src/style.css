@@ -1351,7 +1351,12 @@ pre {
   box-shadow: none;
   display: flex;
   flex-direction: column;
-  padding: 28px 28px calc(28px + env(safe-area-inset-bottom, 0px));
+  padding: 28px 28px calc(28px + env(safe-area-inset-bottom, 0px) + var(--editor-keyboard-inset, 0px));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scroll-padding-bottom: calc(96px + var(--editor-keyboard-inset, 0px));
+  -webkit-overflow-scrolling: touch;
 }
 
 .note-editor-position {
@@ -1571,9 +1576,9 @@ pre {
 }
 
 .note-editor-body {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
+  flex: 0 0 auto;
+  min-height: min(45vh, 34rem);
+  overflow: visible;
   white-space: pre-wrap;
   color: var(--text);
   font-size: 0.95rem;
@@ -1584,12 +1589,15 @@ pre {
 }
 
 .note-editor-body--edit {
+  display: block;
   width: 100%;
+  min-height: min(52vh, 38rem);
   border: none;
   border-radius: 0;
   background: transparent;
   padding: 0;
   outline: none;
+  overflow: hidden;
   resize: none;
   font-size: 0.95rem;
   line-height: 1.9;
@@ -1896,7 +1904,7 @@ pre {
 
 .audio-player-toolbar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 0.5em;
   min-width: 0;
@@ -1924,48 +1932,6 @@ pre {
   color: #000;
 }
 
-.audio-player-zoom {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.2em;
-  margin-left: auto;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
-  padding: 0.18em;
-}
-
-.audio-player-zoom-btn,
-.audio-player-zoom-fit {
-  border: none;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-dim);
-  height: 2.2em;
-  min-width: 2.2em;
-  padding: 0 0.55em;
-  font-size: 0.88em;
-  line-height: 1;
-}
-
-.audio-player-zoom-fit {
-  min-width: 4.4em;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.audio-player-zoom-btn:hover:not(:disabled),
-.audio-player-zoom-fit:hover:not(:disabled) {
-  background: rgba(232, 168, 76, 0.12);
-  color: var(--accent);
-}
-
-.audio-player-zoom-btn:disabled,
-.audio-player-zoom-fit:disabled {
-  cursor: default;
-  opacity: 0.48;
-}
-
 .audio-player-main {
   display: grid;
   gap: 0.5em;
@@ -1981,7 +1947,7 @@ pre {
   border-radius: 0.83em;
   background: rgba(255, 255, 255, 0.035);
   overscroll-behavior: contain;
-  touch-action: none;
+  touch-action: pan-y;
 }
 
 .audio-player-fallback-waveform {
@@ -2064,12 +2030,6 @@ pre {
   .audio-player-toggle {
     flex: 1 1 6em;
     min-width: 0;
-  }
-
-  .audio-player-zoom {
-    flex: 1 1 9em;
-    justify-content: center;
-    margin-left: 0;
   }
 
   .audio-player-download {
@@ -2685,7 +2645,7 @@ pre {
   }
 
   .note-editor-shell {
-    padding: 18px 18px calc(18px + env(safe-area-inset-bottom, 0px));
+    padding: 18px 18px calc(18px + env(safe-area-inset-bottom, 0px) + var(--editor-keyboard-inset, 0px));
   }
 
   .note-editor-header {

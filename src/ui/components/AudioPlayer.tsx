@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
 import WavesurferPlayer from '@wavesurfer/react'
 import type WaveSurfer from 'wavesurfer.js'
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js'
-import { pauseGlobalAudio, playGlobalAudio, useGlobalAudioPlayer } from '../lib/global-audio-player'
+import { getGlobalAudioSnapshot, pauseGlobalAudio, playGlobalAudio, useGlobalAudioPlayer } from '../lib/global-audio-player'
 
 interface AudioPlayerProps {
   id: string
@@ -34,6 +34,8 @@ interface WaveformRegion {
 const WAVEFORM_ZOOM_STEP = 24
 const WAVEFORM_ZOOM_MAX = 192
 const PINCH_ZOOM_SENSITIVITY = 0.8
+const TAP_MAX_MOVE_PX = 10
+const TAP_MAX_DURATION_MS = 650
 
 export function AudioPlayer({
   id,
@@ -53,7 +55,10 @@ export function AudioPlayer({
   const globalAudio = useGlobalAudioPlayer()
   const playerRef = useRef<HTMLDivElement | null>(null)
   const pointerPointsRef = useRef(new Map<number, { x: number; y: number }>())
+  const pointerStartRef = useRef(new Map<number, { x: number; y: number; startedAt: number; moved: boolean }>())
   const pinchDistanceRef = useRef<number | null>(null)
+  const pinchActiveRef = useRef(false)
+  const suppressNextClickRef = useRef(false)
   const [wavesurfer, setWavesurfer] = useState<WaveSurfer | null>(null)
   const [duration, setDuration] = useState(0)
   const [currentTime, setCurrentTime] = useState(0)
@@ -71,8 +76,6 @@ export function AudioPlayer({
     })),
     [markers],
   )
-  const waveformZoomLabel = waveformZoom === 0 ? 'Fit' : `${Math.round(waveformZoom)} px/s`
-
   const playAt = useCallback((nextTimeMs?: number) => {
     void playGlobalAudio({ id, blob, src, startMs: nextTimeMs }).catch((nextError) => {
       setError(nextError instanceof Error ? nextError.message : String(nextError))
@@ -80,13 +83,14 @@ export function AudioPlayer({
   }, [blob, id, src])
 
   const togglePlayback = useCallback(() => {
-    if (playing) {
+    const latestAudio = getGlobalAudioSnapshot()
+    if (latestAudio.activeId === id && latestAudio.playing) {
       pauseGlobalAudio()
       return
     }
 
     playAt()
-  }, [playAt, playing])
+  }, [id, playAt])
 
   useEffect(() => {
     setDuration(0)
@@ -196,14 +200,6 @@ export function AudioPlayer({
     })
   }, [waveformUnavailable])
 
-  const updateWaveformZoom = useCallback((direction: -1 | 1) => {
-    changeWaveformZoom(direction * WAVEFORM_ZOOM_STEP)
-  }, [changeWaveformZoom])
-
-  const fitWaveform = useCallback(() => {
-    setWaveformZoom(0)
-  }, [])
-
   const handleKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (isInteractiveTarget(event.target)) return
 
@@ -216,21 +212,21 @@ export function AudioPlayer({
     if (waveformUnavailable) return
     if (event.key === '+' || event.key === '=') {
       event.preventDefault()
-      updateWaveformZoom(1)
+      changeWaveformZoom(WAVEFORM_ZOOM_STEP)
       return
     }
 
     if (event.key === '-' || event.key === '_') {
       event.preventDefault()
-      updateWaveformZoom(-1)
+      changeWaveformZoom(-WAVEFORM_ZOOM_STEP)
       return
     }
 
     if (event.key === '0') {
       event.preventDefault()
-      fitWaveform()
+      setWaveformZoom(0)
     }
-  }, [fitWaveform, togglePlayback, updateWaveformZoom, waveformUnavailable])
+  }, [changeWaveformZoom, togglePlayback, waveformUnavailable])
 
   const handleWheelZoom = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
     if (waveformUnavailable || isInteractiveTarget(event.target)) return
@@ -245,7 +241,18 @@ export function AudioPlayer({
     if (waveformUnavailable || event.pointerType !== 'touch') return
 
     pointerPointsRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
-    event.currentTarget.setPointerCapture(event.pointerId)
+    pointerStartRef.current.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+      startedAt: Date.now(),
+      moved: false,
+    })
+
+    if (pointerPointsRef.current.size >= 2) {
+      captureActivePointers(event.currentTarget, pointerPointsRef.current)
+      pinchActiveRef.current = true
+      suppressNextClickRef.current = true
+    }
     pinchDistanceRef.current = distanceBetweenFirstTwoPointers(pointerPointsRef.current)
   }, [waveformUnavailable])
 
@@ -253,6 +260,14 @@ export function AudioPlayer({
     if (waveformUnavailable || event.pointerType !== 'touch' || !pointerPointsRef.current.has(event.pointerId)) return
 
     pointerPointsRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    const start = pointerStartRef.current.get(event.pointerId)
+    if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > TAP_MAX_MOVE_PX) {
+      start.moved = true
+      suppressNextClickRef.current = true
+    }
+
+    if (pointerPointsRef.current.size < 2) return
+
     const nextDistance = distanceBetweenFirstTwoPointers(pointerPointsRef.current)
     const previousDistance = pinchDistanceRef.current
     if (nextDistance === null || previousDistance === null) {
@@ -262,6 +277,8 @@ export function AudioPlayer({
 
     const delta = nextDistance - previousDistance
     if (Math.abs(delta) < 4) return
+    pinchActiveRef.current = true
+    suppressNextClickRef.current = true
     event.preventDefault()
     event.stopPropagation()
     changeWaveformZoom(delta * PINCH_ZOOM_SENSITIVITY)
@@ -269,12 +286,41 @@ export function AudioPlayer({
   }, [changeWaveformZoom, waveformUnavailable])
 
   const handleWaveformPointerEnd = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = pointerStartRef.current.get(event.pointerId)
+    const wasPinching = pinchActiveRef.current || pointerPointsRef.current.size >= 2
     pointerPointsRef.current.delete(event.pointerId)
+    pointerStartRef.current.delete(event.pointerId)
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
     pinchDistanceRef.current = distanceBetweenFirstTwoPointers(pointerPointsRef.current)
-  }, [])
+    if (pointerPointsRef.current.size === 0) {
+      window.setTimeout(() => {
+        pinchActiveRef.current = false
+      }, 0)
+    }
+
+    if (
+      event.pointerType === 'touch'
+      && !wasPinching
+      && start
+      && !start.moved
+      && Date.now() - start.startedAt <= TAP_MAX_DURATION_MS
+    ) {
+      suppressNextClickRef.current = true
+      seekFromClientX(event.currentTarget, event.clientX, displayDuration, seekTo)
+    }
+  }, [displayDuration, seekTo])
+
+  const handleWaveformClick = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    if (suppressNextClickRef.current) {
+      suppressNextClickRef.current = false
+      return
+    }
+
+    if (waveformUnavailable || pinchActiveRef.current || isInteractiveTarget(event.target)) return
+    seekFromClientX(event.currentTarget, event.clientX, displayDuration, seekTo)
+  }, [displayDuration, seekTo, waveformUnavailable])
 
   return (
     <div
@@ -282,7 +328,7 @@ export function AudioPlayer({
       className="audio-player"
       tabIndex={0}
       role="group"
-      aria-label={`${label} audio player. Space toggles playback. Plus and minus zoom the waveform.`}
+      aria-label={`${label} audio player. Space toggles playback. Wheel or pinch zooms the waveform.`}
       onKeyDown={handleKeyDown}
     >
       <div className="audio-player-toolbar">
@@ -294,38 +340,6 @@ export function AudioPlayer({
         >
           {playing ? 'Pause' : 'Play'}
         </button>
-        {!waveformUnavailable && (
-          <div className="audio-player-zoom" aria-label="Waveform zoom controls" role="group">
-            <button
-              className="audio-player-zoom-btn"
-              onClick={() => updateWaveformZoom(-1)}
-              disabled={waveformZoom === 0}
-              type="button"
-              aria-label="Zoom waveform out"
-            >
-              -
-            </button>
-            <button
-              className="audio-player-zoom-fit"
-              onClick={fitWaveform}
-              disabled={waveformZoom === 0}
-              type="button"
-              aria-label="Fit waveform to player width"
-              title={`Waveform zoom: ${waveformZoomLabel}`}
-            >
-              {waveformZoomLabel}
-            </button>
-            <button
-              className="audio-player-zoom-btn"
-              onClick={() => updateWaveformZoom(1)}
-              disabled={waveformZoom >= WAVEFORM_ZOOM_MAX}
-              type="button"
-              aria-label="Zoom waveform in"
-            >
-              +
-            </button>
-          </div>
-        )}
         {showDownload && (
           <a className="audio-player-download" href={src} download={downloadName} title="Download">
             Download
@@ -341,6 +355,7 @@ export function AudioPlayer({
           onPointerMove={handleWaveformPointerMove}
           onPointerUp={handleWaveformPointerEnd}
           onPointerCancel={handleWaveformPointerEnd}
+          onClick={handleWaveformClick}
         >
           {waveformUnavailable ? (
             <div className="audio-player-fallback-waveform">
@@ -373,7 +388,7 @@ export function AudioPlayer({
               barGap={2}
               barRadius={2}
               normalize
-              dragToSeek
+              dragToSeek={false}
               plugins={plugins}
               onReady={handleReady}
               onDecode={handleDecode}
@@ -401,6 +416,29 @@ function distanceBetweenFirstTwoPointers(points: Map<number, { x: number; y: num
   const [first, second] = Array.from(points.values())
   if (!first || !second) return null
   return Math.hypot(second.x - first.x, second.y - first.y)
+}
+
+function captureActivePointers(element: HTMLDivElement, points: Map<number, { x: number; y: number }>): void {
+  for (const pointerId of points.keys()) {
+    try {
+      if (!element.hasPointerCapture(pointerId)) element.setPointerCapture(pointerId)
+    } catch {
+      // Some WebViews only allow capture for the pointer currently dispatching.
+    }
+  }
+}
+
+function seekFromClientX(
+  element: HTMLDivElement,
+  clientX: number,
+  durationSeconds: number,
+  seekTo: (nextTimeMs: number) => void,
+): void {
+  if (!durationSeconds) return
+  const rect = element.getBoundingClientRect()
+  const width = rect.width || 1
+  const fraction = Math.max(0, Math.min(1, (clientX - rect.left) / width))
+  seekTo(fraction * durationSeconds * 1000)
 }
 
 function isInteractiveTarget(target: EventTarget): boolean {

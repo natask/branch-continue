@@ -236,6 +236,10 @@ export function useAudioNoteRecorder({
       const stream = await getAudioStream()
       const preferredMimeType = pickAudioMimeType()
 
+      if (isAndroidTauriRuntime() && !preferredMimeType) {
+        setDiagnostic('Android WebView did not report a preferred MediaRecorder MIME type; using the platform default recorder.')
+      }
+
       streamRef.current = stream
       recordingRef.current = true
       stopRequestedRef.current = false
@@ -357,7 +361,7 @@ export function useAudioNoteRecorder({
       cleanupRecording()
       setStatus('error')
       setError(errorMessage(nextError))
-      setDiagnostic(null)
+      setDiagnostic(recordingDiagnostic(nextError))
     }
   }, [cleanupRecording, startSpeechRecognition, status])
 
@@ -526,6 +530,21 @@ function isMissingNativePermissionBridgeError(error: unknown): boolean {
     message.includes('android_request_microphone_permission') &&
     (message.includes('not found') || message.includes('unknown command'))
   ) || message.includes('android microphone permission is only available on android')
+}
+
+function recordingDiagnostic(error: unknown): string | null {
+  if (!isAndroidTauriRuntime()) return null
+  const message = errorMessage(error)
+  const normalized = message.toLowerCase()
+  if (normalized.includes('permission') || normalized.includes('notallowed') || normalized.includes('denied')) {
+    return 'Android note: the WebView must grant both RECORD_AUDIO and MODIFY_AUDIO_SETTINGS. If this app shell was installed before this fix, reinstall the Android shell APK; OTA updates cannot add Android manifest permissions.'
+  }
+
+  if (normalized.includes('mediarecorder') || normalized.includes('not supported')) {
+    return 'Android note: this device WebView may need an updated Android System WebView/Chrome to support MediaRecorder.'
+  }
+
+  return 'Android note: if OS microphone permission is already allowed, reinstall the latest Android shell so the WebView microphone permission bridge and manifest are current.'
 }
 
 function errorMessage(error: unknown): string {

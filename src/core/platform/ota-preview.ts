@@ -1,5 +1,7 @@
 export const OTA_PREVIEW_URL_KEY = 'branch-continue:ota-preview-url'
 export const OTA_PREVIEW_DEPLOYMENT_KEY = 'branch-continue:ota-preview-deployment'
+const OTA_PREVIEW_CREATED_AT_KEY = 'branch-continue:ota-preview-created-at'
+const OTA_PREVIEW_TTL_MS = 30 * 60 * 1000
 
 interface OtaPreviewInput {
   id?: string | null
@@ -43,6 +45,11 @@ export function getStoredOtaPreviewUrl(): string | null {
   if (typeof window === 'undefined') return null
 
   try {
+    if (storedOtaPreviewExpired()) {
+      clearOtaPreviewTarget()
+      return null
+    }
+
     const url = normalizeHttpUrl(window.localStorage.getItem(OTA_PREVIEW_URL_KEY))
     const mobileBase = canonicalMobileBaseUrl()
     if (!url || !mobileBase || isUnderUrlBase(url, mobileBase)) return url
@@ -74,6 +81,7 @@ export function storeOtaPreviewTarget(input: OtaPreviewInput, fallbackUrl?: stri
   if (!url) return null
 
   window.localStorage.setItem(OTA_PREVIEW_URL_KEY, url)
+  window.localStorage.setItem(OTA_PREVIEW_CREATED_AT_KEY, String(Date.now()))
   const deploymentId = input.deploymentId ?? input.id
   if (deploymentId) {
     window.localStorage.setItem(OTA_PREVIEW_DEPLOYMENT_KEY, deploymentId)
@@ -87,6 +95,17 @@ export function clearOtaPreviewTarget(): void {
 
   window.localStorage.removeItem(OTA_PREVIEW_URL_KEY)
   window.localStorage.removeItem(OTA_PREVIEW_DEPLOYMENT_KEY)
+  window.localStorage.removeItem(OTA_PREVIEW_CREATED_AT_KEY)
+}
+
+function storedOtaPreviewExpired(): boolean {
+  try {
+    const createdAt = Number(window.localStorage.getItem(OTA_PREVIEW_CREATED_AT_KEY))
+    if (!Number.isFinite(createdAt) || createdAt <= 0) return true
+    return Date.now() - createdAt > OTA_PREVIEW_TTL_MS
+  } catch {
+    return true
+  }
 }
 
 function directoryUrlFromManifest(value?: string | null): string | null {

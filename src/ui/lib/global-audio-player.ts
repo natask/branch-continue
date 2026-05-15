@@ -28,17 +28,31 @@ let snapshot: GlobalAudioSnapshot = {
 }
 
 export function useGlobalAudioPlayer(): GlobalAudioSnapshot {
-  const [state, setState] = useState(snapshot)
+  const [state, setState] = useState(getGlobalAudioSnapshot)
 
   useEffect(() => {
-    const listener = () => setState(snapshot)
+    const listener = () => setState(getGlobalAudioSnapshot())
     listeners.add(listener)
+    listener()
     return () => {
       listeners.delete(listener)
     }
   }, [])
 
   return state
+}
+
+export function getGlobalAudioSnapshot(): GlobalAudioSnapshot {
+  if (!audio) return snapshot
+
+  snapshot = {
+    ...snapshot,
+    activeId,
+    currentTime: Number.isFinite(audio.currentTime) ? audio.currentTime : snapshot.currentTime,
+    duration: resolveAudioDuration(audio) || snapshot.duration,
+    playing: !audio.paused && !audio.ended,
+  }
+  return snapshot
 }
 
 export async function playGlobalAudio({ id, blob, src, startMs }: PlayAudioInput): Promise<void> {

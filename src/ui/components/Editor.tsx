@@ -60,6 +60,7 @@ export function Editor({
   onOpenNewerNote,
 }: EditorProps) {
   const editor = session.editor
+  const shellRef = useRef<HTMLDivElement | null>(null)
   const navRepeatTimerRef = useRef<number | null>(null)
   const ignorePointerClickRef = useRef(false)
   const navStateRef = useRef({
@@ -93,9 +94,15 @@ export function Editor({
   const handleBodyRef = useCallback(
     (element: HTMLTextAreaElement | null) => {
       session.bodyRef.current = element
+      if (element) resizeTextareaToContent(element)
     },
     [session.bodyRef],
   )
+
+  useEffect(() => {
+    if (!editor?.editing || !session.bodyRef.current) return
+    resizeTextareaToContent(session.bodyRef.current)
+  }, [editor?.body, editor?.editing, session.bodyRef])
 
   function stopMobileNavRepeat() {
     if (navRepeatTimerRef.current === null) return
@@ -156,16 +163,26 @@ export function Editor({
     const updateInset = () => {
       const rawInset = viewport ? window.innerHeight - viewport.height - viewport.offsetTop : 0
       root.style.setProperty('--editor-keyboard-inset', `${rawInset > 80 ? Math.round(rawInset) : 0}px`)
+      window.setTimeout(() => scrollFocusedEditorControlIntoView(shellRef.current), 40)
+    }
+    const handleFocusIn = () => {
+      window.setTimeout(() => scrollFocusedEditorControlIntoView(shellRef.current), 80)
     }
 
     updateInset()
     viewport?.addEventListener('resize', updateInset)
     viewport?.addEventListener('scroll', updateInset)
     window.addEventListener('resize', updateInset)
+    document.addEventListener('focusin', handleFocusIn)
+    document.addEventListener('selectionchange', handleFocusIn)
+    document.addEventListener('input', handleFocusIn, true)
     return () => {
       viewport?.removeEventListener('resize', updateInset)
       viewport?.removeEventListener('scroll', updateInset)
       window.removeEventListener('resize', updateInset)
+      document.removeEventListener('focusin', handleFocusIn)
+      document.removeEventListener('selectionchange', handleFocusIn)
+      document.removeEventListener('input', handleFocusIn, true)
       root.style.removeProperty('--editor-keyboard-inset')
     }
   }, [isMobile])
@@ -174,7 +191,7 @@ export function Editor({
 
   return (
     <article className="note-editor">
-      <div className="note-editor-shell">
+      <div ref={shellRef} className="note-editor-shell">
         <div className="note-editor-header">
           <div className="note-editor-title-area">
             {editor.editing && editor.editingTitle ? (
@@ -630,4 +647,53 @@ function formatElapsed(elapsedMs: number): string {
 function audioDownloadName(mimeType: string | null): string {
   if (mimeType?.includes('mp4') || mimeType?.includes('aac')) return 'branch-continue-voice.m4a'
   return 'branch-continue-voice.webm'
+}
+
+function resizeTextareaToContent(textarea: HTMLTextAreaElement): void {
+  textarea.style.height = 'auto'
+  textarea.style.height = `${Math.max(textarea.scrollHeight, 220)}px`
+}
+
+function scrollFocusedEditorControlIntoView(shell: HTMLDivElement | null): void {
+  if (!shell) return
+  const target = document.activeElement
+  if (!(target instanceof HTMLElement) || !target.closest('.note-editor')) return
+
+  const shellRect = shell.getBoundingClientRect()
+  const targetRect = focusedControlRect(target)
+  const viewport = window.visualViewport
+  const viewportTop = viewport?.offsetTop ?? 0
+  const viewportBottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight
+  const visibleTop = Math.max(shellRect.top, viewportTop) + 18
+  const visibleBottom = Math.min(shellRect.bottom, viewportBottom) - 28
+
+  if (targetRect.bottom > visibleBottom) {
+    shell.scrollBy({ top: targetRect.bottom - visibleBottom, behavior: 'smooth' })
+    return
+  }
+
+  if (targetRect.top < visibleTop) {
+    shell.scrollBy({ top: targetRect.top - visibleTop, behavior: 'smooth' })
+  }
+}
+
+function focusedControlRect(target: HTMLElement): Pick<DOMRect, 'top' | 'bottom'> {
+  const targetRect = target.getBoundingClientRect()
+  if (!(target instanceof HTMLTextAreaElement)) return targetRect
+
+  const style = window.getComputedStyle(target)
+  const fontSize = Number.parseFloat(style.fontSize) || 16
+  const lineHeight = Number.parseFloat(style.lineHeight) || fontSize * 1.9
+  const paddingTop = Number.parseFloat(style.paddingTop) || 0
+  const paddingLeft = Number.parseFloat(style.paddingLeft) || 0
+  const paddingRight = Number.parseFloat(style.paddingRight) || 0
+  const availableWidth = Math.max(fontSize, target.clientWidth - paddingLeft - paddingRight)
+  const charsPerLine = Math.max(1, Math.floor(availableWidth / Math.max(fontSize * 0.58, 1)))
+  const textBeforeCaret = target.value.slice(0, target.selectionStart ?? 0)
+  const visualLineIndex = textBeforeCaret.split('\n').reduce((count, line) => {
+    return count + Math.max(1, Math.ceil(line.length / charsPerLine))
+  }, 0) - 1
+  const top = targetRect.top + paddingTop + Math.max(0, visualLineIndex) * lineHeight
+
+  return { top, bottom: top + lineHeight }
 }
