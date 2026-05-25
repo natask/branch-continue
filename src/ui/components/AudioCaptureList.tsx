@@ -2,9 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   extractAudioCaptureReferences,
   loadAudioCaptureReference,
+  loadAudioTranscriptSegments,
   type AudioCaptureRecord,
+  type AudioTranscriptSegment,
 } from '../../core/audio/audio-store'
 import { buildAudioSessionBlob, type AudioSessionSegment } from '../../core/audio/audio-session'
+import { extractVoiceTranscriptCues, type VoiceTranscriptCue } from '../lib/voice-transcript'
 import { AudioPlayer } from './AudioPlayer'
 
 interface LoadedAudioSession {
@@ -19,18 +22,34 @@ interface LoadedAudioSession {
   waveformUnavailable?: boolean
 }
 
+interface LoadedTranscriptCue {
+  key: string
+  timeMs: number
+  label: string
+  text: string
+  sourceLabel: string
+}
+
 interface AudioCaptureListProps {
   body: string
   sourcePath: string
+  refreshKey?: number
 }
 
-export function AudioCaptureList({ body, sourcePath }: AudioCaptureListProps) {
+export function AudioCaptureList({ body, sourcePath, refreshKey = 0 }: AudioCaptureListProps) {
   const references = useMemo(() => {
     const all = extractAudioCaptureReferences(body)
     const fileReferences = all.filter((reference) => reference.kind === 'file')
     return fileReferences.length > 0 ? fileReferences : all
   }, [body])
+  const referencesKey = useMemo(() => references.map((reference) => reference.key).join('|'), [references])
+  const playerId = referencesKey
+  const inlineTranscriptCues = useMemo(
+    () => transcriptCuesFromInlineBody(body, references.map((reference) => reference.uri)),
+    [body, references],
+  )
   const [session, setSession] = useState<LoadedAudioSession | null>(null)
+  const [transcriptCues, setTranscriptCues] = useState<LoadedTranscriptCue[]>(inlineTranscriptCues)
   const [warning, setWarning] = useState<string | null>(null)
 
   useEffect(() => {
@@ -39,6 +58,7 @@ export function AudioCaptureList({ body, sourcePath }: AudioCaptureListProps) {
 
     setWarning(null)
     setSession(null)
+    setTranscriptCues(inlineTranscriptCues)
 
     if (references.length === 0) return undefined
 
@@ -50,6 +70,11 @@ export function AudioCaptureList({ body, sourcePath }: AudioCaptureListProps) {
           if (!record) continue
           records.push(record)
         }
+
+        const loadedTranscriptCues = mergeTranscriptCues(
+          (await loadAudioTranscriptSegments(records, sourcePath)).map(transcriptCueFromSegment),
+          inlineTranscriptCues,
+        )
 
         let sessionBlob = await buildAudioSessionBlob(records).catch((nextError) => {
           const fallbackLabel = records.length > 1 ? 'first saved segment' : 'original recording'
@@ -73,6 +98,7 @@ export function AudioCaptureList({ body, sourcePath }: AudioCaptureListProps) {
         urls.push(url)
 
         if (!cancelled) {
+          setTranscriptCues(loadedTranscriptCues)
           setSession({
             durationMs: sessionBlob.durationMs,
             mimeType: sessionBlob.mimeType,
@@ -94,7 +120,7 @@ export function AudioCaptureList({ body, sourcePath }: AudioCaptureListProps) {
       cancelled = true
       for (const url of urls) URL.revokeObjectURL(url)
     }
-  }, [references.map((reference) => reference.key).join('|'), sourcePath])
+  }, [inlineTranscriptCues, references, referencesKey, refreshKey, sourcePath])
 
   if (references.length === 0) return null
 
@@ -106,7 +132,7 @@ export function AudioCaptureList({ body, sourcePath }: AudioCaptureListProps) {
       {session && (
         <AudioPlayer
           src={session.url}
-          id={references.map((reference) => reference.key).join('|')}
+          id={playerId}
           blob={session.blob}
           mimeType={session.mimeType}
           label={sessionLabel(session.segmentCount, session.switchCount)}
@@ -114,6 +140,7 @@ export function AudioCaptureList({ body, sourcePath }: AudioCaptureListProps) {
           fallbackDurationMs={session.durationMs}
           peaks={session.peaks}
           waveformUnavailable={session.waveformUnavailable}
+          waveformHeight={92}
           markers={session.segments
             .filter((segment) => segment.segmentStartReason === 'language-switch' || segment.segmentStartReason === 'manual')
             .map((segment) => ({
@@ -126,6 +153,50 @@ export function AudioCaptureList({ body, sourcePath }: AudioCaptureListProps) {
           showDownload
         />
       )}
+      <TranscriptDetail cues={transcriptCues} playerId={playerId} />
+    </div>
+  )
+}
+
+function TranscriptDetail({ cues, playerId }: { cues: LoadedTranscriptCue[]; playerId: string }) {
+  if (cues.length === 0) {
+    return (
+      <div className="audio-transcript-detail audio-transcript-detail--empty">
+        <div className="audio-transcript-detail-head">
+          <span>Transcript</span>
+          <span>sidecar</span>
+        </div>
+        <p className="audio-capture-muted">No transcript sidecar yet. Audio can still be replayed and downloaded.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="audio-transcript-detail">
+      <div className="audio-transcript-detail-head">
+        <span>Transcript</span>
+        <span>{cues.length} cue{cues.length === 1 ? '' : 's'}</span>
+      </div>
+      <ol className="audio-transcript-cues">
+        {cues.map((cue) => (
+          <li key={cue.key} className="audio-transcript-cue">
+            <button
+              className="audio-transcript-cue-time"
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent('branch-continue:voice-seek', {
+                  detail: { id: playerId, timeMs: cue.timeMs },
+                }))
+              }}
+              type="button"
+              title={`Seek to ${cue.label}`}
+            >
+              {cue.label}
+            </button>
+            <p>{cue.text}</p>
+            <span>{cue.sourceLabel}</span>
+          </li>
+        ))}
+      </ol>
     </div>
   )
 }
@@ -139,6 +210,52 @@ function fallbackSegments(records: AudioCaptureRecord[]): AudioSessionSegment[] 
     languageCode: record.metadata?.languageCode,
     segmentStartReason: record.metadata?.segmentStartReason,
   }))
+}
+
+function transcriptCueFromSegment(segment: AudioTranscriptSegment): LoadedTranscriptCue {
+  return {
+    key: segment.id,
+    timeMs: segment.offsetMs,
+    label: segment.label,
+    text: segment.text,
+    sourceLabel: segment.transcriptUri ? `sidecar · ${fileLabel(segment.transcriptUri)}` : 'app storage',
+  }
+}
+
+function transcriptCuesFromInlineBody(body: string, audioUris: string[]): LoadedTranscriptCue[] {
+  const uriSet = new Set(audioUris)
+  return extractVoiceTranscriptCues(body)
+    .filter((cue) => uriSet.has(cue.uri))
+    .map(inlineCueToLoadedCue)
+}
+
+function inlineCueToLoadedCue(cue: VoiceTranscriptCue): LoadedTranscriptCue {
+  return {
+    key: `inline:${cue.uri}:${cue.timeMs}:${cue.text}`,
+    timeMs: cue.timeMs,
+    label: cue.label,
+    text: cue.text,
+    sourceLabel: 'note body',
+  }
+}
+
+function mergeTranscriptCues(
+  sidecarCues: LoadedTranscriptCue[],
+  inlineCues: LoadedTranscriptCue[],
+): LoadedTranscriptCue[] {
+  const merged = new Map<string, LoadedTranscriptCue>()
+  for (const cue of inlineCues) merged.set(transcriptCueKey(cue), cue)
+  for (const cue of sidecarCues) merged.set(transcriptCueKey(cue), cue)
+  return Array.from(merged.values()).sort((a, b) => a.timeMs - b.timeMs || a.text.localeCompare(b.text))
+}
+
+function transcriptCueKey(cue: LoadedTranscriptCue): string {
+  return `${cue.timeMs}:${cue.text.toLowerCase()}`
+}
+
+function fileLabel(path: string): string {
+  const normalized = path.split('\\').join('/')
+  return normalized.split('/').pop() || path
 }
 
 function errorMessage(error: unknown): string {

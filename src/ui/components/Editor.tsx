@@ -1,13 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type React from 'react'
 import type { UseAudioNoteRecorderResult } from '../hooks/use-audio-note-recorder'
 import type { UseEditorSessionResult } from '../hooks/use-editor-session'
 import {
-  PRIMARY_VOICE_LANGUAGE_OPTIONS,
   VOICE_LANGUAGE_OPTIONS,
   VOICE_TRANSCRIPTION_MODEL_OPTIONS,
-  voiceLanguageLabel,
-  voiceModelLabel,
   type VoiceRecordingConfig,
 } from '../lib/voice-recording-config'
 import { parseVoiceTranscriptTime } from '../lib/voice-transcript'
@@ -28,6 +25,7 @@ interface EditorProps {
   canOpenNewerNote: boolean
   audioRecorder: UseAudioNoteRecorderResult
   audioNoteMessage: string | null
+  audioTranscriptRefreshKey: number
   voiceRecordingConfig: VoiceRecordingConfig
   voiceConfigOpen: boolean
   sourcePath: string
@@ -48,6 +46,7 @@ export function Editor({
   canOpenNewerNote,
   audioRecorder,
   audioNoteMessage,
+  audioTranscriptRefreshKey,
   voiceRecordingConfig,
   voiceConfigOpen,
   sourcePath,
@@ -63,6 +62,7 @@ export function Editor({
   const shellRef = useRef<HTMLDivElement | null>(null)
   const navRepeatTimerRef = useRef<number | null>(null)
   const ignorePointerClickRef = useRef(false)
+  const [recordingsPanelOpen, setRecordingsPanelOpen] = useState(false)
   const navStateRef = useRef({
     older: onOpenOlderNote,
     newer: onOpenNewerNote,
@@ -82,14 +82,11 @@ export function Editor({
         : 'Auto-save off - double-click to toggle',
     [session.autoSaveEnabled],
   )
-  const audioButtonBusy = audioRecorder.status === 'requesting' || audioRecorder.status === 'stopping'
-  const audioButtonDisabled = audioButtonBusy || !audioRecorder.mediaRecorderAvailable
   const hasLinkedAudio = editor ? extractAudioCaptureReferences(editor.body).length > 0 : false
-  const voiceLanguageActionLabel = audioRecorder.recording
-    ? 'Switch recording to'
-    : audioRecorder.status === 'stopped' || hasLinkedAudio
-      ? 'Continue voice in'
-      : 'Start voice in'
+  const hasRecorderAudio = Boolean(audioRecorder.audioUrl || audioRecorder.audioBlob) || audioRecorder.status === 'stopped'
+  const hasAudioActivity = hasLinkedAudio || audioRecorder.recording || hasRecorderAudio
+  const recordingsAffordanceVisible = hasAudioActivity || voiceConfigOpen
+  const showRecordingsPanel = voiceConfigOpen || (recordingsPanelOpen && recordingsAffordanceVisible)
 
   const handleBodyRef = useCallback(
     (element: HTMLTextAreaElement | null) => {
@@ -154,6 +151,16 @@ export function Editor({
   }
 
   useEffect(() => () => stopMobileNavRepeat(), [])
+
+  useEffect(() => {
+    if (voiceConfigOpen) {
+      setRecordingsPanelOpen(true)
+    }
+  }, [voiceConfigOpen])
+
+  useEffect(() => {
+    if (!recordingsAffordanceVisible) setRecordingsPanelOpen(false)
+  }, [recordingsAffordanceVisible])
 
   useEffect(() => {
     if (!isMobile || typeof window === 'undefined') return
@@ -280,131 +287,18 @@ export function Editor({
               </svg>
             </button>
             <div className="note-editor-branch-close">
-              <div className="voice-recorder-menu">
-                <div className="voice-language-controls" role="group" aria-label="Voice recording language">
-                  {PRIMARY_VOICE_LANGUAGE_OPTIONS.map((option) => {
-                    const active = voiceRecordingConfig.languageCode === option.code
-                    return (
-                      <button
-                        key={option.code}
-                        className={`voice-language-btn${active ? ' voice-language-btn--active' : ''}${active && audioRecorder.recording ? ' voice-language-btn--recording' : ''}`}
-                        onClick={() => onVoiceLanguageCapture(option.code)}
-                        disabled={audioButtonDisabled}
-                        type="button"
-                        title={audioRecorder.mediaRecorderAvailable ? `${voiceLanguageActionLabel} ${option.label}` : 'Audio recording is unavailable'}
-                        aria-pressed={active}
-                      >
-                        <span className="voice-language-flag" aria-hidden="true">{option.flag}</span>
-                        <span className="voice-language-label">{option.shortLabel}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-                {audioRecorder.recording && (
-                  <button
-                    className="btn-secondary voice-recorder-stop"
-                    onClick={audioRecorder.stop}
-                    disabled={audioRecorder.status === 'stopping'}
-                    type="button"
-                  >
-                    Stop
-                  </button>
-                )}
-                {voiceConfigOpen && (
-                  <div className="voice-recorder-config-menu" role="menu" aria-label="Voice recording config">
-                    <div className="voice-recorder-config-kicker">Voice recording settings</div>
-                    <label className="voice-recorder-field">
-                      <span>Language</span>
-                      <select
-                        value={voiceRecordingConfig.languageCode}
-                        onChange={(event) => {
-                          const nextLanguageCode = event.target.value
-                          onVoiceRecordingConfigChange({ languageCode: nextLanguageCode })
-                          audioRecorder.switchLanguage(nextLanguageCode)
-                        }}
-                      >
-                        {VOICE_LANGUAGE_OPTIONS.map((option) => (
-                          <option key={option.code} value={option.code}>{option.label}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="voice-recorder-field">
-                      <span>Transcriber</span>
-                      <select
-                        value={voiceRecordingConfig.transcriptionMode}
-                        onChange={(event) => onVoiceRecordingConfigChange({ transcriptionMode: event.target.value as VoiceRecordingConfig['transcriptionMode'] })}
-                      >
-                        <option value="chirp3">Google Chirp</option>
-                        <option value="off">Save audio only</option>
-                      </select>
-                    </label>
-                    {voiceRecordingConfig.transcriptionMode === 'chirp3' && (
-                      <div className="voice-recorder-native-grid">
-                        <label className="voice-recorder-field">
-                          <span>Project</span>
-                          <input
-                            value={voiceRecordingConfig.projectId}
-                            onChange={(event) => onVoiceRecordingConfigChange({ projectId: event.target.value })}
-                            placeholder="gcp-project-id"
-                          />
-                        </label>
-                        <label className="voice-recorder-field">
-                          <span>Location</span>
-                          <input
-                            value={voiceRecordingConfig.location}
-                            onChange={(event) => onVoiceRecordingConfigChange({ location: event.target.value })}
-                            placeholder="us"
-                          />
-                        </label>
-                        <label className="voice-recorder-field">
-                          <span>Speech model</span>
-                          <select
-                            value={voiceRecordingConfig.model}
-                            onChange={(event) => onVoiceRecordingConfigChange({ model: event.target.value })}
-                          >
-                            {VOICE_TRANSCRIPTION_MODEL_OPTIONS.map((option) => (
-                              <option key={option.model} value={option.model}>{option.label}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="voice-recorder-field voice-recorder-field--wide">
-                          <span>Fallback key path</span>
-                          <div className="voice-recorder-file-row">
-                            <input
-                              value={voiceRecordingConfig.serviceAccountKeyPath}
-                              onChange={(event) => onVoiceRecordingConfigChange({ serviceAccountKeyPath: event.target.value })}
-                              placeholder="optional if app was built with a key"
-                            />
-                            <button className="btn-secondary" onClick={() => void onSelectVoiceCredentialFile()} type="button">
-                              Choose
-                            </button>
-                          </div>
-                        </label>
-                      </div>
-                    )}
-                    <label className="voice-recorder-field voice-recorder-field--wide">
-                      <span>Transcript target</span>
-                      <select
-                        value={voiceRecordingConfig.insertMode}
-                        onChange={(event) => onVoiceRecordingConfigChange({ insertMode: event.target.value as VoiceRecordingConfig['insertMode'] })}
-                      >
-                        <option value="append">Put transcript under audio link</option>
-                        <option value="replace-selection">Overwrite selected note text</option>
-                      </select>
-                    </label>
-                    <p className="voice-recorder-config-note">
-                      {voiceRecordingConfig.transcriptionMode === 'off'
-                        ? 'Audio will be saved beside this org file in recordings/ and linked without transcription.'
-                        : `Audio will be saved beside this org file in recordings/, then ${voiceModelLabel(voiceRecordingConfig.model)} will transcribe ${voiceLanguageLabel(voiceRecordingConfig.languageCode)} and place editable text under the audio link. Use the English/Amharic flags to start or switch recordings.`}
-                    </p>
-                    <div className="voice-recorder-menu-actions">
-                      <button className="btn-secondary" onClick={() => onVoiceConfigOpenChange(false)} type="button">
-                        Close
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
+              {recordingsAffordanceVisible && (
+                <button
+                  className={`recordings-stealth-toggle${showRecordingsPanel ? ' recordings-stealth-toggle--active' : ''}`}
+                  onClick={() => setRecordingsPanelOpen((open) => !open)}
+                  type="button"
+                  aria-expanded={showRecordingsPanel}
+                  title="Show audio waveform and transcript"
+                >
+                  <span className={`recordings-stealth-dot${audioRecorder.recording ? ' recordings-stealth-dot--active' : ''}`} />
+                  <span>{audioRecorder.recording ? formatElapsed(audioRecorder.elapsedMs) : 'Audio'}</span>
+                </button>
+              )}
               <button className="btn-secondary" onClick={onOpenSearch} type="button">
                 {isMobile ? 'Search' : 'Commands'}
               </button>
@@ -491,96 +385,280 @@ export function Editor({
         </div>
 
         {session.saveError && <p className="status-error">{session.saveError}</p>}
-        {(audioRecorder.status !== 'idle' || audioNoteMessage) && (
-          <div className="voice-recorder-panel" aria-live="polite">
-            <div className="voice-recorder-panel-row">
-              <span className={`voice-recorder-dot${audioRecorder.recording ? ' voice-recorder-dot--active' : ''}`} />
-              <span>{voiceRecorderStatusLabel(audioRecorder)}</span>
-              <span>{voiceLanguageLabel(voiceRecordingConfig.languageCode)}</span>
-              <span>{formatElapsed(audioRecorder.elapsedMs)}</span>
-              {voiceRecordingConfig.transcriptionMode === 'off' && !audioRecorder.speechRecognitionAvailable && (
-                <span className="voice-recorder-muted">live preview unavailable</span>
-              )}
-            </div>
-            {audioRecorder.interimTranscript && (
-              <p className="voice-recorder-interim">{audioRecorder.interimTranscript}</p>
+        <div className={`note-editor-content${showRecordingsPanel ? ' note-editor-content--with-recordings' : ''}`}>
+          <div className="note-editor-main">
+            {editor.editing ? (
+              <textarea
+                ref={handleBodyRef}
+                className="note-editor-body note-editor-body--edit"
+                value={editor.body}
+                onChange={(event) => session.updateBody(event.target.value)}
+                onKeyDown={session.handleBodyKeyDown}
+              />
+            ) : (
+              <ReadableNoteBody body={editor.body} sessionId={voiceSessionIdForBody(editor.body)} />
             )}
-            {audioRecorder.finalTranscript && (
-              <p className="voice-recorder-muted">Local preview: {audioRecorder.finalTranscript}</p>
-            )}
-            {audioRecorder.error && <p className="voice-recorder-error">{audioRecorder.error}</p>}
-            {audioRecorder.diagnostic && <p className="voice-recorder-muted">{audioRecorder.diagnostic}</p>}
-            {audioNoteMessage && <p className="voice-recorder-muted">{audioNoteMessage}</p>}
-            {audioRecorder.audioUrl && !hasLinkedAudio && (
-              <div className="voice-recorder-playback">
-                <AudioPlayer
-                  id="latest-captured-segment"
-                  src={audioRecorder.audioUrl}
-                  blob={audioRecorder.audioBlob}
-                  mimeType={audioRecorder.mimeType ?? undefined}
-                  label="Latest captured segment"
-                  downloadName={audioDownloadName(audioRecorder.mimeType)}
-                  showDownload
-                  fallbackDurationMs={audioRecorder.elapsedMs}
-                />
-                <button className="btn-secondary" onClick={audioRecorder.clear} type="button">
-                  Clear
+
+            {isMobile && (
+              <div className="note-editor-mobile-nav" aria-label="Note navigation">
+                <button
+                  className="btn-secondary note-editor-mobile-nav-btn"
+                  onPointerDown={(event) => startMobileNavRepeat('older', event)}
+                  onPointerUp={stopMobileNavRepeat}
+                  onPointerCancel={cancelMobileNavRepeat}
+                  onLostPointerCapture={stopMobileNavRepeat}
+                  onClick={() => handleMobileNavClick('older')}
+                  disabled={!canOpenOlderNote}
+                  type="button"
+                >
+                  Older
+                </button>
+                <button
+                  className="btn-primary note-editor-mobile-nav-btn note-editor-mobile-nav-search"
+                  onClick={onOpenSearch}
+                  type="button"
+                >
+                  Search Notes
+                </button>
+                <button
+                  className="btn-secondary note-editor-mobile-nav-btn"
+                  onPointerDown={(event) => startMobileNavRepeat('newer', event)}
+                  onPointerUp={stopMobileNavRepeat}
+                  onPointerCancel={cancelMobileNavRepeat}
+                  onLostPointerCapture={stopMobileNavRepeat}
+                  onClick={() => handleMobileNavClick('newer')}
+                  disabled={!canOpenNewerNote}
+                  type="button"
+                >
+                  Newer
                 </button>
               </div>
             )}
           </div>
-        )}
-        {hasLinkedAudio && <AudioCaptureList body={editor.body} sourcePath={sourcePath} />}
 
-        {editor.editing ? (
-          <textarea
-            ref={handleBodyRef}
-            className="note-editor-body note-editor-body--edit"
-            value={editor.body}
-            onChange={(event) => session.updateBody(event.target.value)}
-            onKeyDown={session.handleBodyKeyDown}
-          />
-        ) : (
-          <ReadableNoteBody body={editor.body} sessionId={voiceSessionIdForBody(editor.body)} />
-        )}
-
-        {isMobile && (
-          <div className="note-editor-mobile-nav" aria-label="Note navigation">
-            <button
-              className="btn-secondary note-editor-mobile-nav-btn"
-              onPointerDown={(event) => startMobileNavRepeat('older', event)}
-              onPointerUp={stopMobileNavRepeat}
-              onPointerCancel={cancelMobileNavRepeat}
-              onLostPointerCapture={stopMobileNavRepeat}
-              onClick={() => handleMobileNavClick('older')}
-              disabled={!canOpenOlderNote}
-              type="button"
-            >
-              Older
-            </button>
-            <button
-              className="btn-primary note-editor-mobile-nav-btn note-editor-mobile-nav-search"
-              onClick={onOpenSearch}
-              type="button"
-            >
-              Search Notes
-            </button>
-            <button
-              className="btn-secondary note-editor-mobile-nav-btn"
-              onPointerDown={(event) => startMobileNavRepeat('newer', event)}
-              onPointerUp={stopMobileNavRepeat}
-              onPointerCancel={cancelMobileNavRepeat}
-              onLostPointerCapture={stopMobileNavRepeat}
-              onClick={() => handleMobileNavClick('newer')}
-              disabled={!canOpenNewerNote}
-              type="button"
-            >
-              Newer
-            </button>
-          </div>
-        )}
+          {showRecordingsPanel && (
+            <VoiceRecordingsPanel
+              audioRecorder={audioRecorder}
+              audioNoteMessage={audioNoteMessage}
+              voiceRecordingConfig={voiceRecordingConfig}
+              voiceConfigOpen={voiceConfigOpen}
+              sourcePath={sourcePath}
+              editorBody={editor.body}
+              hasLinkedAudio={hasLinkedAudio}
+              refreshKey={audioTranscriptRefreshKey}
+              onVoiceLanguageCapture={onVoiceLanguageCapture}
+              onVoiceConfigOpenChange={onVoiceConfigOpenChange}
+              onVoiceRecordingConfigChange={onVoiceRecordingConfigChange}
+              onSelectVoiceCredentialFile={onSelectVoiceCredentialFile}
+              onClose={() => {
+                setRecordingsPanelOpen(false)
+                onVoiceConfigOpenChange(false)
+              }}
+            />
+          )}
+        </div>
       </div>
     </article>
+  )
+}
+
+interface VoiceRecordingsPanelProps {
+  audioRecorder: UseAudioNoteRecorderResult
+  audioNoteMessage: string | null
+  refreshKey: number
+  voiceRecordingConfig: VoiceRecordingConfig
+  voiceConfigOpen: boolean
+  sourcePath: string
+  editorBody: string
+  hasLinkedAudio: boolean
+  onVoiceLanguageCapture: (languageCode: string) => void
+  onVoiceConfigOpenChange: (open: boolean) => void
+  onVoiceRecordingConfigChange: (patch: Partial<VoiceRecordingConfig>) => void
+  onSelectVoiceCredentialFile: () => Promise<void>
+  onClose: () => void
+}
+
+function VoiceRecordingsPanel({
+  audioRecorder,
+  audioNoteMessage,
+  refreshKey,
+  voiceRecordingConfig,
+  voiceConfigOpen,
+  sourcePath,
+  editorBody,
+  hasLinkedAudio,
+  onVoiceLanguageCapture,
+  onVoiceConfigOpenChange,
+  onVoiceRecordingConfigChange,
+  onSelectVoiceCredentialFile,
+  onClose,
+}: VoiceRecordingsPanelProps) {
+  const hasActivity = audioRecorder.status !== 'idle' || Boolean(audioRecorder.audioUrl || audioNoteMessage)
+  const recordingBusy = audioRecorder.status === 'requesting' || audioRecorder.status === 'stopping'
+  const recordButtonLabel = audioRecorder.recording
+    ? audioRecorder.status === 'stopping' ? 'Pausing' : 'Pause'
+    : audioRecorder.status === 'stopped' ? 'Continue' : 'Record'
+
+  function handlePrimaryRecordAction() {
+    if (audioRecorder.recording) {
+      audioRecorder.stop()
+      return
+    }
+
+    onVoiceLanguageCapture(voiceRecordingConfig.languageCode)
+  }
+
+  return (
+    <aside className="voice-recordings-panel" aria-label="Recordings and transcript">
+      <div className="voice-recordings-panel-head">
+        <div>
+          <p className="voice-recordings-kicker">Recordings</p>
+          <h3>Audio room</h3>
+        </div>
+        <button className="voice-recordings-close" onClick={onClose} type="button" aria-label="Close recordings panel">
+          Hide
+        </button>
+      </div>
+
+      <div className="voice-recordings-primary">
+        <div className="voice-recordings-primary-copy" aria-live="polite">
+          <span className={`voice-recorder-dot${audioRecorder.recording ? ' voice-recorder-dot--active' : ''}`} />
+          <span>{voiceRecorderStatusLabel(audioRecorder)}</span>
+          <span>{formatElapsed(audioRecorder.elapsedMs)}</span>
+        </div>
+        <button
+          className={`voice-recordings-record${audioRecorder.recording ? ' voice-recordings-record--active' : ''}`}
+          onClick={handlePrimaryRecordAction}
+          disabled={recordingBusy || !audioRecorder.mediaRecorderAvailable}
+          type="button"
+        >
+          {audioRecorder.mediaRecorderAvailable ? recordButtonLabel : 'Unavailable'}
+        </button>
+      </div>
+
+      <label className="voice-recorder-field voice-recordings-language">
+        <span>Language</span>
+        <select
+          value={voiceRecordingConfig.languageCode}
+          onChange={(event) => {
+            const nextLanguageCode = event.target.value
+            onVoiceRecordingConfigChange({ languageCode: nextLanguageCode })
+            audioRecorder.switchLanguage(nextLanguageCode)
+          }}
+        >
+          {VOICE_LANGUAGE_OPTIONS.map((option) => (
+            <option key={option.code} value={option.code}>{option.label}</option>
+          ))}
+        </select>
+      </label>
+
+      {(audioRecorder.interimTranscript || audioRecorder.finalTranscript) && (
+        <div className="voice-transcript-card">
+          <p className="voice-recordings-kicker">Transcript</p>
+          {audioRecorder.interimTranscript && (
+            <p className="voice-recorder-interim">{audioRecorder.interimTranscript}</p>
+          )}
+          {audioRecorder.finalTranscript && (
+            <p className="voice-recorder-muted">{audioRecorder.finalTranscript}</p>
+          )}
+        </div>
+      )}
+
+      {audioRecorder.error && <p className="voice-recorder-error">{audioRecorder.error}</p>}
+      {audioRecorder.error && audioRecorder.diagnostic && <p className="voice-recorder-muted">{audioRecorder.diagnostic}</p>}
+      {audioNoteMessage && <p className="voice-recorder-muted">{audioNoteMessage}</p>}
+
+      {audioRecorder.audioUrl && !hasLinkedAudio && (
+        <div className="voice-recorder-playback">
+          <AudioPlayer
+            id="latest-captured-segment"
+            src={audioRecorder.audioUrl}
+            blob={audioRecorder.audioBlob}
+            mimeType={audioRecorder.mimeType ?? undefined}
+            label="Latest segment"
+            downloadName={audioDownloadName(audioRecorder.mimeType)}
+            showDownload
+            fallbackDurationMs={audioRecorder.elapsedMs}
+          />
+          <button className="btn-secondary" onClick={audioRecorder.clear} type="button">
+            Clear
+          </button>
+        </div>
+      )}
+
+      {hasLinkedAudio && <AudioCaptureList body={editorBody} sourcePath={sourcePath} refreshKey={refreshKey} />}
+
+      {!hasActivity && !hasLinkedAudio && (
+        <p className="voice-recorder-muted">No recordings yet.</p>
+      )}
+
+      <div className="voice-recordings-tools">
+        <span>{voiceRecordingConfig.transcriptionMode === 'off' ? 'Audio only' : 'Transcript sidecar'}</span>
+        <button className="btn-secondary" onClick={() => onVoiceConfigOpenChange(!voiceConfigOpen)} type="button">
+          {voiceConfigOpen ? 'Hide settings' : 'Settings'}
+        </button>
+      </div>
+
+      {voiceConfigOpen && (
+        <div className="voice-recorder-config-menu voice-recorder-config-menu--panel" role="group" aria-label="Voice recording settings">
+          <label className="voice-recorder-field">
+            <span>Mode</span>
+            <select
+              value={voiceRecordingConfig.transcriptionMode}
+              onChange={(event) => onVoiceRecordingConfigChange({ transcriptionMode: event.target.value as VoiceRecordingConfig['transcriptionMode'] })}
+            >
+              <option value="chirp3">Transcript</option>
+              <option value="off">Audio only</option>
+            </select>
+          </label>
+          {voiceRecordingConfig.transcriptionMode === 'chirp3' && (
+            <div className="voice-recorder-native-grid">
+              <label className="voice-recorder-field">
+                <span>Project</span>
+                <input
+                  value={voiceRecordingConfig.projectId}
+                  onChange={(event) => onVoiceRecordingConfigChange({ projectId: event.target.value })}
+                  placeholder="gcp-project-id"
+                />
+              </label>
+              <label className="voice-recorder-field">
+                <span>Location</span>
+                <input
+                  value={voiceRecordingConfig.location}
+                  onChange={(event) => onVoiceRecordingConfigChange({ location: event.target.value })}
+                  placeholder="us"
+                />
+              </label>
+              <label className="voice-recorder-field">
+                <span>Model</span>
+                <select
+                  value={voiceRecordingConfig.model}
+                  onChange={(event) => onVoiceRecordingConfigChange({ model: event.target.value })}
+                >
+                  {VOICE_TRANSCRIPTION_MODEL_OPTIONS.map((option) => (
+                    <option key={option.model} value={option.model}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="voice-recorder-field voice-recorder-field--wide">
+                <span>Key path</span>
+                <div className="voice-recorder-file-row">
+                  <input
+                    value={voiceRecordingConfig.serviceAccountKeyPath}
+                    onChange={(event) => onVoiceRecordingConfigChange({ serviceAccountKeyPath: event.target.value })}
+                    placeholder="optional"
+                  />
+                  <button className="btn-secondary" onClick={() => void onSelectVoiceCredentialFile()} type="button">
+                    Choose
+                  </button>
+                </div>
+              </label>
+            </div>
+          )}
+          <p className="voice-recorder-muted">Transcripts are saved beside the audio segment when file storage is available, with app storage as fallback.</p>
+        </div>
+      )}
+    </aside>
   )
 }
 
@@ -629,12 +707,12 @@ function voiceSessionIdForBody(body: string): string | null {
 }
 
 function voiceRecorderStatusLabel(recorder: UseAudioNoteRecorderResult): string {
-  if (recorder.status === 'requesting') return 'requesting microphone'
-  if (recorder.status === 'recording') return 'recording voice'
-  if (recorder.status === 'stopping') return 'stopping recording'
-  if (recorder.status === 'stopped') return 'recording saved locally'
-  if (recorder.status === 'error') return 'recording error'
-  return 'ready to record'
+  if (recorder.status === 'requesting') return 'requesting'
+  if (recorder.status === 'recording') return 'recording'
+  if (recorder.status === 'stopping') return 'pausing'
+  if (recorder.status === 'stopped') return 'paused'
+  if (recorder.status === 'error') return 'error'
+  return 'ready'
 }
 
 function formatElapsed(elapsedMs: number): string {

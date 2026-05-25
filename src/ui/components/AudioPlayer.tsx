@@ -16,6 +16,7 @@ interface AudioPlayerProps {
   peaks?: number[][]
   markers?: AudioPlayerMarker[]
   waveformUnavailable?: boolean
+  waveformHeight?: number
 }
 
 export interface AudioPlayerMarker {
@@ -49,6 +50,7 @@ export function AudioPlayer({
   peaks = [],
   markers = [],
   waveformUnavailable = false,
+  waveformHeight = 48,
 }: AudioPlayerProps) {
   const regions = useMemo(() => RegionsPlugin.create(), [src])
   const plugins = useMemo(() => [regions], [regions])
@@ -379,7 +381,7 @@ export function AudioPlayer({
               duration={displayDuration || undefined}
               peaks={peaks.length > 0 ? peaks : undefined}
               minPxPerSec={waveformZoom > 0 ? waveformZoom : undefined}
-              height={48}
+              height={waveformHeight}
               waveColor="rgba(232, 224, 214, 0.3)"
               progressColor="rgba(232, 168, 76, 0.78)"
               cursorColor="rgba(232, 168, 76, 0.92)"

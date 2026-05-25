@@ -197,6 +197,8 @@ async function shell(rawArgs) {
               'allow-android-select-source-file',
               'allow-android-read-source-file',
               'allow-android-write-source-file',
+              'allow-android-save-audio-capture',
+              'allow-android-read-audio-capture',
               'allow-transcribe-with-chirp',
               'fs:default',
               'dialog:default',

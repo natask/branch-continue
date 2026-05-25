@@ -15,8 +15,6 @@ import {
 } from './ui/lib/note-order'
 import {
   appendAudioCaptureReference,
-  appendVoiceTranscriptAfterAudioCaptureReference,
-  appendVoiceTranscriptSegment,
   cleanVoiceTranscriptSegment,
 } from './ui/lib/voice-transcript'
 import {
@@ -34,6 +32,7 @@ import { isCommandPaletteOpenShortcut } from './ui/lib/keyboard-shortcuts'
 import {
   createAudioCaptureId,
   saveAudioCapture,
+  saveAudioTranscriptSegment,
 } from './core/audio/audio-store'
 import { transcribeAudioWithChirp } from './core/audio/chirp-transcription'
 import type { QuickNoteSearchHit, SourceNote } from './core/quicknote/types'
@@ -223,6 +222,7 @@ function LoadedSourceApp({
     : { sessionKey: null, body: '' }
   const station = useAgentStation({ sourcePath })
   const [audioNoteMessage, setAudioNoteMessage] = useState<string | null>(null)
+  const [audioTranscriptRefreshKey, setAudioTranscriptRefreshKey] = useState(0)
   const [voiceRecordingConfig, setVoiceRecordingConfig] = useState(resolveInitialVoiceRecordingConfig)
   const [voiceConfigOpen, setVoiceConfigOpen] = useState(false)
 
@@ -256,39 +256,6 @@ function LoadedSourceApp({
     }
   }, [updateVoiceRecordingConfig])
 
-  const applyTranscriptToCurrentEditor = useCallback((
-    segment: string,
-    options: { audioUri?: string; insertMode?: VoiceRecordingConfig['insertMode']; offsetMs?: number } = {},
-  ) => {
-    const cleanSegment = cleanVoiceTranscriptSegment(segment)
-    if (!cleanSegment || cleanSegment === '(no speech detected)') {
-      setAudioNoteMessage('Audio saved. Chirp 3 did not detect speech.')
-      return
-    }
-
-    const current = editorSessionRef.current.editor
-    if (!current) {
-      setAudioNoteMessage('Transcript heard. Open a note to attach the next segment.')
-      return
-    }
-
-    const baseBody = editorBodyMirrorRef.current.sessionKey === current.sessionKey
-      ? editorBodyMirrorRef.current.body
-      : current.body
-
-    const replacedBody = options.insertMode === 'replace-selection'
-      ? replaceSelectedEditorText(baseBody, cleanSegment, editorSessionRef.current.bodyRef.current)
-      : null
-    const nextBody = replacedBody ?? (
-      options.audioUri
-        ? appendVoiceTranscriptAfterAudioCaptureReference(baseBody, options.audioUri, cleanSegment, options.offsetMs)
-        : appendVoiceTranscriptSegment(baseBody, cleanSegment)
-    )
-    editorBodyMirrorRef.current = { sessionKey: current.sessionKey, body: nextBody }
-    editorSessionRef.current.updateBody(nextBody)
-    setAudioNoteMessage(replacedBody ? 'Chirp 3 transcript replaced the selected note text.' : 'Chirp 3 transcript is under the audio link.')
-  }, [])
-
   const processCompletedAudioSegment = useCallback(async (capture: AudioRecordingComplete) => {
     const id = createAudioCaptureId()
     setAudioNoteMessage(`Saving voice segment ${capture.segmentIndex + 1}...`)
@@ -317,18 +284,17 @@ function LoadedSourceApp({
     }
 
     const current = editorSessionRef.current.editor
-    if (!current) {
+    if (current) {
+      const baseBody = editorBodyMirrorRef.current.sessionKey === current.sessionKey
+        ? editorBodyMirrorRef.current.body
+        : current.body
+      const nextBody = appendAudioCaptureReference(baseBody, saved.uri)
+      editorBodyMirrorRef.current = { sessionKey: current.sessionKey, body: nextBody }
+      editorSessionRef.current.updateBody(nextBody)
+      setAudioNoteMessage(`Audio segment ${capture.segmentIndex + 1} saved to ${saved.uri}.`)
+    } else {
       setAudioNoteMessage(`Audio saved as ${saved.uri}. Open a note to paste this reference.`)
-      return
     }
-
-    const baseBody = editorBodyMirrorRef.current.sessionKey === current.sessionKey
-      ? editorBodyMirrorRef.current.body
-      : current.body
-    const nextBody = appendAudioCaptureReference(baseBody, saved.uri)
-    editorBodyMirrorRef.current = { sessionKey: current.sessionKey, body: nextBody }
-    editorSessionRef.current.updateBody(nextBody)
-    setAudioNoteMessage(`Audio segment ${capture.segmentIndex + 1} saved to ${saved.uri}.`)
 
     if (voiceRecordingConfig.transcriptionMode === 'off') return
     if (!chirpConfigReady(voiceRecordingConfig)) {
@@ -346,15 +312,33 @@ function LoadedSourceApp({
           languageCode: capture.languageCode || voiceRecordingConfig.languageCode,
         },
       })
-      applyTranscriptToCurrentEditor(transcript, {
-        audioUri: saved.uri,
-        insertMode: capture.segmentIndex === 0 ? voiceRecordingConfig.insertMode : 'append',
+      const cleanTranscript = cleanVoiceTranscriptSegment(transcript)
+      if (!cleanTranscript || cleanTranscript === '(no speech detected)') {
+        setAudioNoteMessage(`Audio saved to ${saved.uri}. Chirp 3 did not detect speech.`)
+        return
+      }
+
+      const savedTranscript = await saveAudioTranscriptSegment({
+        sourcePath,
+        audio: saved,
+        text: cleanTranscript,
         offsetMs: capture.offsetMs,
+        languageCode: capture.languageCode || voiceRecordingConfig.languageCode,
+        sessionId: capture.sessionId,
+        segmentIndex: capture.segmentIndex,
+        createdAt: new Date().toISOString(),
+        durationMs: capture.durationMs,
       })
+      setAudioTranscriptRefreshKey((current) => current + 1)
+      if (savedTranscript?.storage === 'file' && savedTranscript.transcriptUri) {
+        setAudioNoteMessage(`Transcript saved to ${savedTranscript.transcriptUri}.`)
+        return
+      }
+      setAudioNoteMessage('Transcript saved in app audio storage.')
     } catch (error) {
       setAudioNoteMessage(`Audio saved to ${saved.uri}. Transcription failed: ${errorMessage(error)}`)
     }
-  }, [applyTranscriptToCurrentEditor, sourcePath, voiceRecordingConfig])
+  }, [sourcePath, voiceRecordingConfig])
 
   const attachCompletedAudioToCurrentEditor = useCallback((capture: AudioRecordingComplete) => {
     audioSegmentQueueRef.current = audioSegmentQueueRef.current
@@ -497,9 +481,9 @@ function LoadedSourceApp({
   const handleCreateVoiceNote = useCallback(async (languageCode?: string) => {
     const ok = await editorSessionRef.current.flushAutoSave()
     if (!ok) return
-    editorSessionRef.current.openBranchEditor(null)
+    editorSessionRef.current.openBranchEditor(currentContextNote ?? null)
     window.setTimeout(() => void audioRecorder.start(languageCode, { newSession: true }), 0)
-  }, [audioRecorder.start])
+  }, [audioRecorder.start, currentContextNote])
 
   const setVoiceLanguage = useCallback((languageCode: string) => {
     updateVoiceRecordingConfig({ languageCode })
@@ -722,9 +706,9 @@ function LoadedSourceApp({
       })),
       {
         id: 'stop-voice-recording',
-        label: 'Stop Voice Recording',
+        label: 'Pause Voice Recording',
         hint: voiceLanguageLabel(voiceRecordingConfig.languageCode),
-        keywords: ['voice', 'audio', 'record', 'stop'],
+        keywords: ['voice', 'audio', 'record', 'stop', 'pause'],
         group: 'Capture',
         disabled: !audioRecorder.recording,
         run: () => audioRecorder.stop(),
@@ -768,18 +752,12 @@ function LoadedSourceApp({
         run: () => updateVoiceRecordingConfig({ model: option.model }),
       })),
       {
-        id: 'set-voice-transcript-target-append',
-        label: `Voice Transcript Target: Under Audio Link${voiceRecordingConfig.insertMode === 'append' ? ' (current)' : ''}`,
-        keywords: ['voice', 'audio', 'record', 'transcript', 'append', 'target'],
+        id: 'voice-transcript-storage-sidecar',
+        label: 'Voice Transcript Storage: Sidecar File',
+        keywords: ['voice', 'audio', 'record', 'transcript', 'storage', 'sidecar', 'file'],
         group: 'Voice Settings',
-        run: () => updateVoiceRecordingConfig({ insertMode: 'append' }),
-      },
-      {
-        id: 'set-voice-transcript-target-replace-selection',
-        label: `Voice Transcript Target: Replace Selection${voiceRecordingConfig.insertMode === 'replace-selection' ? ' (current)' : ''}`,
-        keywords: ['voice', 'audio', 'record', 'transcript', 'replace', 'selection', 'target'],
-        group: 'Voice Settings',
-        run: () => updateVoiceRecordingConfig({ insertMode: 'replace-selection' }),
+        disabled: true,
+        run: () => undefined,
       },
       {
         id: 'choose-voice-credential-file',
@@ -797,7 +775,7 @@ function LoadedSourceApp({
       },
       {
         id: 'create-voice-note',
-        label: audioRecorder.recording ? 'Stop Voice Note Recording' : `Create Voice Note In ${voiceLanguageLabel(voiceRecordingConfig.languageCode)}`,
+        label: audioRecorder.recording ? 'Pause Voice Note Recording' : `Create Voice Note In ${voiceLanguageLabel(voiceRecordingConfig.languageCode)}`,
         keywords: ['create', 'new', 'note', 'voice', 'record', 'dictate', 'transcribe'],
         group: 'Actions',
         run: () => {
@@ -1091,7 +1069,7 @@ function LoadedSourceApp({
             })}
             {audioRecorder.recording && (
               <button className="topbar-search" onClick={audioRecorder.stop} type="button">
-                Stop
+                Pause
               </button>
             )}
           </div>
@@ -1174,6 +1152,7 @@ function LoadedSourceApp({
           canOpenNewerNote={Boolean(newerEditorNote)}
           audioRecorder={audioRecorder}
           audioNoteMessage={audioNoteMessage}
+          audioTranscriptRefreshKey={audioTranscriptRefreshKey}
           voiceRecordingConfig={voiceRecordingConfig}
           voiceConfigOpen={voiceConfigOpen}
           sourcePath={sourcePath}
@@ -1257,7 +1236,6 @@ function SourceSelectionScreen({
         onSelect={() => undefined}
         commandActions={commandActions}
       />
-      <CommandAccessBar onOpen={() => setSearchOpen(true)} />
       {station.element}
     </div>
   )
@@ -1342,40 +1320,9 @@ function ErrorRecoveryScreen({
         onSelect={() => undefined}
         commandActions={commandActions}
       />
-      <CommandAccessBar onOpen={() => setSearchOpen(true)} />
       {station.element}
     </div>
   )
-}
-
-function CommandAccessBar({ onOpen }: { onOpen: () => void }) {
-  return (
-    <div className="command-access-bar" role="navigation" aria-label="Command access">
-      <button className="command-access-button" onClick={onOpen} type="button">
-        <span>Commands</span>
-        <kbd>⌘K</kbd>
-      </button>
-    </div>
-  )
-}
-
-function replaceSelectedEditorText(
-  body: string,
-  replacement: string,
-  textarea: HTMLTextAreaElement | null,
-): string | null {
-  if (!textarea || textarea.selectionStart === textarea.selectionEnd) return null
-  if (textarea.value !== body) return null
-
-  const start = textarea.selectionStart
-  const end = textarea.selectionEnd
-  const nextBody = `${body.slice(0, start)}${replacement}${body.slice(end)}`
-  const nextCaret = start + replacement.length
-  window.requestAnimationFrame(() => {
-    textarea.focus()
-    textarea.setSelectionRange(nextCaret, nextCaret)
-  })
-  return nextBody
 }
 
 function errorMessage(error: unknown): string {

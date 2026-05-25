@@ -1243,53 +1243,10 @@ pre {
   bottom: calc(16px + env(safe-area-inset-bottom, 0px)) !important;
 }
 
-.command-access-bar {
-  position: fixed;
-  left: 16px;
-  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
-  z-index: 95;
-  width: 220px;
-  pointer-events: none;
-}
-
-.command-access-button {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  width: 100%;
-  min-height: 42px;
-  padding: 10px 14px;
-  border: 1px solid rgba(232, 168, 76, 0.32);
-  border-radius: 999px;
-  background: rgba(232, 168, 76, 0.14);
-  color: var(--text);
-  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.38);
-  pointer-events: auto;
-}
-
-.command-access-button span {
-  color: var(--text);
-  font-size: 0.78rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.command-access-button kbd {
-  color: var(--accent);
-  font-size: 0.68rem;
-}
-
 @media (max-width: 760px) {
   .agent-station-agentation {
     right: 12px !important;
     bottom: calc(10px + env(safe-area-inset-bottom, 0px)) !important;
-  }
-
-  .command-access-bar {
-    left: 12px;
-    bottom: calc(10px + env(safe-area-inset-bottom, 0px));
-    width: min(360px, calc(100vw - 96px));
   }
 }
 
@@ -1575,6 +1532,22 @@ pre {
   padding: 3px 4px;
 }
 
+.note-editor-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+  min-width: 0;
+}
+
+.note-editor-content--with-recordings {
+  grid-template-columns: minmax(0, 1fr) minmax(286px, 0.42fr);
+}
+
+.note-editor-main {
+  min-width: 0;
+}
+
 .note-editor-body {
   flex: 0 0 auto;
   min-height: min(45vh, 34rem);
@@ -1700,27 +1673,64 @@ pre {
   padding: 0.55em 0.82em;
 }
 
+.recordings-toggle--active {
+  border-color: rgba(232, 168, 76, 0.38);
+  background: rgba(232, 168, 76, 0.12);
+  color: var(--accent);
+}
+
+.recordings-stealth-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  min-height: 2.65em;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.24);
+  color: var(--text-dim);
+  padding: 0.58em 0.78em;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.recordings-stealth-toggle:hover,
+.recordings-stealth-toggle--active {
+  border-color: rgba(232, 168, 76, 0.34);
+  background: rgba(232, 168, 76, 0.1);
+  color: var(--accent);
+}
+
+.recordings-stealth-dot {
+  width: 0.56em;
+  height: 0.56em;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.recordings-stealth-dot--active {
+  background: var(--danger);
+  box-shadow: 0 0 0 0.42em rgba(229, 115, 115, 0.1);
+}
+
 .voice-recorder-config-menu {
-  position: absolute;
-  top: calc(100% + 0.6em);
-  right: 0;
-  z-index: 70;
   display: grid;
-  width: min(32em, calc(100vw - 2em));
   gap: 0.75em;
   border: 1px solid rgba(232, 168, 76, 0.18);
   border-radius: 1.15em;
   background: rgba(18, 18, 18, 0.98);
-  box-shadow: 0 1.4em 4em rgba(0, 0, 0, 0.42);
   padding: 1em;
   color: var(--text);
 }
 
-.voice-recorder-config-kicker {
-  color: var(--accent);
-  font-size: 0.78em;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+.voice-recorder-config-menu--panel {
+  background: rgba(0, 0, 0, 0.16);
+  box-shadow: none;
+}
+
+.voice-recordings-language {
+  max-width: 18em;
 }
 
 .voice-recorder-native-grid {
@@ -1770,23 +1780,161 @@ pre {
   gap: 0.5em;
 }
 
-.voice-recorder-config-note {
-  color: var(--text-dim);
-  font-size: 0.86em;
-  line-height: 1.5;
+/* root scalar: --voice-recordings-panel-font */
+.voice-recordings-panel {
+  --voice-recordings-panel-font: 12px;
+  position: sticky;
+  top: 0;
+  display: grid;
+  gap: 0.82em;
+  align-self: start;
+  max-height: calc(100vh - 13em);
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 1.35em;
+  background:
+    linear-gradient(145deg, rgba(232, 168, 76, 0.04), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), transparent 18%),
+    rgba(8, 8, 8, 0.93);
+  box-shadow: 0 1.2em 3.4em rgba(0, 0, 0, 0.36);
+  padding: 1em;
+  overflow: auto;
+  color: var(--text);
+  font-size: var(--voice-recordings-panel-font);
+  container-type: inline-size;
 }
 
-.voice-recorder-menu-actions {
+.voice-recordings-panel-head,
+.voice-recordings-tools,
+.voice-recordings-status {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0.62em;
+  align-items: center;
+  gap: 0.67em;
 }
 
-.voice-recorder-panel,
+.voice-recordings-panel-head {
+  justify-content: space-between;
+  padding-bottom: 0.17em;
+}
+
+.voice-recordings-panel h3 {
+  font-family: var(--font-serif);
+  font-size: 1.7em;
+  font-style: italic;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.voice-recordings-kicker {
+  color: var(--accent);
+  font-size: 0.72em;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.voice-recordings-close {
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-dim);
+  padding: 0.58em 0.78em;
+  font-size: 0.78em;
+}
+
+.voice-recordings-close:hover {
+  border-color: rgba(232, 168, 76, 0.32);
+  color: var(--accent);
+}
+
+.voice-recordings-status {
+  color: var(--text-dim);
+  font-size: 0.72em;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.voice-recordings-primary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85em;
+  min-width: 0;
+  border-radius: 1em;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 0.78em;
+}
+
+.voice-recordings-primary-copy {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 0.62em;
+  color: var(--text-dim);
+  font-size: 0.78em;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.voice-recordings-record {
+  flex: 0 0 auto;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #23170a;
+  padding: 0.72em 1.05em;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transition: transform 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.voice-recordings-record:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.voice-recordings-record--active {
+  background: rgba(229, 115, 115, 0.18);
+  color: #ffb8b8;
+}
+
+.voice-recordings-record:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+.voice-recordings-status .voice-recorder-dot {
+  width: 0.67em;
+  height: 0.67em;
+}
+
+.voice-recordings-status .voice-recorder-dot--active {
+  box-shadow: 0 0 0 0.5em rgba(229, 115, 115, 0.1);
+}
+
+.voice-transcript-card {
+  display: grid;
+  gap: 0.58em;
+  border-left: 0.16em solid rgba(232, 168, 76, 0.28);
+  background: rgba(255, 255, 255, 0.035);
+  border-radius: 0.92em;
+  padding: 0.83em 0.92em;
+}
+
+.voice-recordings-tools {
+  justify-content: space-between;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  padding-top: 0.83em;
+  color: var(--text-muted);
+  font-size: 0.78em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .audio-capture-list {
   display: grid;
-  gap: 0.67em;
+  gap: 0.82em;
   flex-shrink: 0;
   width: 100%;
   max-width: 100%;
@@ -1803,7 +1951,79 @@ pre {
   container-type: inline-size;
 }
 
-.voice-recorder-panel-row,
+.audio-transcript-detail {
+  display: grid;
+  gap: 0.7em;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 1em;
+  background: rgba(0, 0, 0, 0.18);
+  padding: 0.82em;
+}
+
+.audio-transcript-detail--empty {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.audio-transcript-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8em;
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.audio-transcript-detail-head span:first-child {
+  color: var(--accent);
+}
+
+.audio-transcript-cues {
+  display: grid;
+  gap: 0.64em;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.audio-transcript-cue {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.34em 0.7em;
+  align-items: start;
+}
+
+.audio-transcript-cue-time {
+  border: 1px solid rgba(232, 168, 76, 0.18);
+  border-radius: 999px;
+  background: rgba(232, 168, 76, 0.08);
+  color: var(--accent);
+  padding: 0.28em 0.56em;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.audio-transcript-cue-time:hover {
+  border-color: rgba(232, 168, 76, 0.42);
+  background: rgba(232, 168, 76, 0.16);
+}
+
+.audio-transcript-cue p {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.audio-transcript-cue span {
+  grid-column: 2;
+  color: var(--text-muted);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .audio-capture-meta {
   display: flex;
   flex-wrap: wrap;
@@ -2522,6 +2742,16 @@ pre {
   .tm-stage {
     min-height: 0;
   }
+
+  .note-editor-content--with-recordings {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .voice-recordings-panel {
+    position: relative;
+    max-height: none;
+    order: -1;
+  }
 }
 
 @media (max-width: 760px) {
@@ -2648,6 +2878,19 @@ pre {
     padding: 18px 18px calc(18px + env(safe-area-inset-bottom, 0px) + var(--editor-keyboard-inset, 0px));
   }
 
+  .note-editor-content {
+    gap: 14px;
+  }
+
+  .voice-recordings-panel {
+    --voice-recordings-panel-font: 11px;
+  }
+
+  .voice-recorder-native-grid,
+  .voice-recorder-file-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .note-editor-header {
     flex-direction: column;
   }
@@ -2672,7 +2915,8 @@ pre {
   }
 
   .note-editor-actions .btn-primary,
-  .note-editor-actions .btn-secondary {
+  .note-editor-actions .btn-secondary,
+  .note-editor-actions .recordings-stealth-toggle {
     padding: 9px 10px;
     white-space: nowrap;
     font-size: 0.74rem;
