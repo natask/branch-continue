@@ -33,10 +33,6 @@ interface AgentStationContext {
   surface?: StationSurface
 }
 
-interface AgentStationOptions {
-  useAgentation?: boolean
-}
-
 interface AgentStationIntegration {
   actions: SearchCommandAction[]
   element: ReactNode | null
@@ -62,7 +58,6 @@ interface RawInboxNotice extends PreviewReadyNotice {
 
 export function useAgentStation(
   context: AgentStationContext,
-  options: AgentStationOptions = {},
 ): AgentStationIntegration {
   const contextRef = useRef(context)
   contextRef.current = context
@@ -72,7 +67,6 @@ export function useAgentStation(
   const stationSurface = context.surface ?? currentSurface()
   const masterOrchUrl = resolveMasterOrchUrl()
   const masterOrchDashboardUrl = resolveMasterOrchDashboardUrl(masterOrchUrl)
-  const agentationEnabled = stationConfigured && options.useAgentation !== false && isAgentationEnabled()
   const [dashboardFrameOpen, setDashboardFrameOpen] = useState(false)
 
   const showDashboardFrame = useCallback(() => {
@@ -101,8 +95,8 @@ export function useAgentStation(
     intervalMs: envNumber(import.meta.env.VITE_MASTER_ORCH_POLL_MS, DEFAULT_POLL_MS),
     context: () => buildStationContext({ ...contextRef.current, surface: stationSurface }),
     commandAdapter: adaptStationCommands,
-    agentation: agentationEnabled,
-    initialAgentationVisible: agentationEnabled,
+    agentation: false,
+    initialAgentationVisible: false,
     agentationProps: {
       className: 'agent-station-agentation',
       copyToClipboard: false,
@@ -330,9 +324,8 @@ export function useAgentStation(
 
 export function useAgentStationCommands(
   context: AgentStationContext,
-  options: AgentStationOptions = {},
 ): SearchCommandAction[] {
-  return useAgentStation(context, options).actions
+  return useAgentStation(context).actions
 }
 
 function toSearchCommandAction(command: StationCommand): SearchCommandAction {
@@ -833,10 +826,6 @@ function routeNow(): string {
 
 function isAgentStationEnabled(): boolean {
   return import.meta.env.VITE_MASTER_ORCH_DISABLED !== '1'
-}
-
-function isAgentationEnabled(): boolean {
-  return import.meta.env.VITE_MASTER_ORCH_AGENTATION !== '0'
 }
 
 function subscribeMasterOrchAvailability(listener: (availability: MasterOrchAvailability) => void): () => void {

@@ -85,7 +85,7 @@ export function AgentLinkExperiment() {
   const [searchOpen, setSearchOpen] = useState(false)
   const [editorOpen, setEditorOpen] = useState(true)
   const [chatDraft, setChatDraft] = useState('')
-  const station = useAgentStation({ sourcePath: SOURCE_PATH }, { useAgentation: false })
+  const station = useAgentStation({ sourcePath: SOURCE_PATH })
   const bodyRef = useRef<HTMLTextAreaElement | null>(null)
 
   const activeThread = useMemo(
@@ -396,7 +396,6 @@ export function AgentLinkExperiment() {
         commandActions={commandActions}
       />
 
-      {!editorOpen && <ExperimentCommandAccessBar onOpen={() => setSearchOpen(true)} />}
       {station.element}
 
       {editorOpen && (
@@ -553,17 +552,6 @@ function ContinuationPane({
         </button>
       </form>
     </aside>
-  )
-}
-
-function ExperimentCommandAccessBar({ onOpen }: { onOpen: () => void }) {
-  return (
-    <div className="command-access-bar" role="navigation" aria-label="Command access">
-      <button className="command-access-button" onClick={onOpen} type="button">
-        <span>Commands</span>
-        <kbd>Cmd K</kbd>
-      </button>
-    </div>
   )
 }
 

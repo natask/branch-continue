@@ -29,6 +29,7 @@
     "tauri:android:dev": "tauri android dev",
     "tauri:android:build": "tauri android build",
     "tauri:ios:dev": "tauri ios dev",
+    "local:qwen:probe": "node scripts/local-qwen-probe.mjs",
     "tauri:ios:build": "tauri ios build"
   },
   "dependencies": {

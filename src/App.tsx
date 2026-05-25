@@ -1140,7 +1140,6 @@ function LoadedSourceApp({
         onSelect={handleSearchSelect}
         commandActions={commandActions}
       />
-      <CommandAccessBar onOpen={() => setSearchOpen(true)} />
       {station.element}
 
       {editorSession.editor && (
