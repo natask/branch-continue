@@ -30,6 +30,7 @@
     "tauri:android:build": "tauri android build",
     "tauri:ios:dev": "tauri ios dev",
     "local:qwen:probe": "node scripts/local-qwen-probe.mjs",
+    "agent:runtime": "node scripts/agent-runtime-service.mjs",
     "tauri:ios:build": "tauri ios build"
   },
   "dependencies": {

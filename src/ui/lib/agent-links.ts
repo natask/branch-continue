@@ -1,6 +1,7 @@
 import type { SourceNote } from '../../core/quicknote/types'
 
 export interface AgentPromptMatch {
+  agent: string
   prompt: string
   lineIndex: number
   line: string
@@ -20,12 +21,15 @@ export function extractLatestAgentPrompt(body: string): AgentPromptMatch | null 
   const lines = body.split('\n')
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const line = lines[index] ?? ''
-    const match = line.match(/^\s*@(.+?)\s*$/)
+    const matches = Array.from(line.matchAll(/(^|\s)@([a-zA-Z][\w-]*)(?:\s+([^@]+))?/g))
+    const match = matches[matches.length - 1]
     if (!match) continue
 
-    const prompt = match[1]?.trim() ?? ''
+    const agent = match[2]?.trim() ?? ''
+    if (!agent) continue
+    const prompt = (match[3]?.trim() || line.trim()).trim()
     if (!prompt) continue
-    return { prompt, lineIndex: index, line }
+    return { agent, prompt, lineIndex: index, line }
   }
 
   return null
@@ -39,6 +43,7 @@ export function shortAgentTitle(prompt: string, maxLength = 58): string {
 }
 
 export function buildAgentResponseBody(input: {
+  agent?: string
   prompt: string
   sourceNote: SourceNote
   sourceBody: string
@@ -48,6 +53,7 @@ export function buildAgentResponseBody(input: {
   const lines = [
     'Agent response link',
     '',
+    ...(input.agent ? [`Agent: @${input.agent}`] : []),
     `Prompt: ${input.prompt}`,
     `Source note: ${sourceLabel}`,
     '',

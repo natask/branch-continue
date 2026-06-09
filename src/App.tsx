@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createAgentRouter } from './core/agents/router'
+import { createLocalAgentRuntime } from './core/agents/local-runtime'
 import { useApp } from './ui/hooks/use-app'
 import { useEditorSession } from './ui/hooks/use-editor-session'
 import { SearchModal, type SearchCommandAction } from './ui/components/SearchModal'
 import { TimeMachine } from './ui/components/TimeMachine'
 import { Editor } from './ui/components/Editor'
 import { AgentLinkExperiment } from './ui/experiments/AgentLinkExperiment'
+import { AgenticMarkdownPage } from './ui/agentic-markdown/AgenticMarkdownPage'
 import { useAgentStation } from './ui/agent-station/use-agent-station'
+import { createAgentServiceRuntime } from './ui/agent-runtime/agent-service-runtime'
+import { createMasterOrchAgentRuntime } from './ui/agent-runtime/master-orch-runtime'
 import { useAudioNoteRecorder, type AudioRecordingComplete } from './ui/hooks/use-audio-note-recorder'
 import {
   formatNotePosition,
@@ -17,6 +22,12 @@ import {
   appendAudioCaptureReference,
   cleanVoiceTranscriptSegment,
 } from './ui/lib/voice-transcript'
+import {
+  buildAgentResponseBody,
+  extractLatestAgentPrompt,
+  shortAgentTitle,
+  type AgentLaunchSummary,
+} from './ui/lib/agent-links'
 import {
   PRIMARY_VOICE_LANGUAGE_OPTIONS,
   VOICE_LANGUAGE_OPTIONS,
@@ -48,6 +59,10 @@ type ScrollDirectionViewport = 'desktop' | 'mobile'
 type WheelNavDirectionByViewport = Partial<Record<ScrollDirectionViewport, WheelNavDirection>>
 
 export default function App() {
+  if (isAgenticMarkdownRoute()) {
+    return <AgenticMarkdownPage />
+  }
+
   if (isAgentLinkExperimentRoute()) {
     return <AgentLinkExperiment />
   }
@@ -221,6 +236,17 @@ function LoadedSourceApp({
     ? { sessionKey: editorSession.editor.sessionKey, body: editorSession.editor.body }
     : { sessionKey: null, body: '' }
   const station = useAgentStation({ sourcePath })
+  const agentRouter = useMemo(
+    () =>
+      createAgentRouter({
+        runtimes: [
+          createAgentServiceRuntime(),
+          createMasterOrchAgentRuntime(station),
+          createLocalAgentRuntime(),
+        ],
+      }),
+    [station],
+  )
   const [audioNoteMessage, setAudioNoteMessage] = useState<string | null>(null)
   const [audioTranscriptRefreshKey, setAudioTranscriptRefreshKey] = useState(0)
   const [voiceRecordingConfig, setVoiceRecordingConfig] = useState(resolveInitialVoiceRecordingConfig)
@@ -484,6 +510,69 @@ function LoadedSourceApp({
     editorSessionRef.current.openBranchEditor(currentContextNote ?? null)
     window.setTimeout(() => void audioRecorder.start(languageCode, { newSession: true }), 0)
   }, [audioRecorder.start, currentContextNote])
+
+  const handleRunLatestAgentPrompt = useCallback(async () => {
+    const current = editorSessionRef.current.editor
+    const sourceBody = current?.body ?? currentContextNote?.body ?? ''
+    const match = extractLatestAgentPrompt(sourceBody)
+    if (!match) {
+      setAudioNoteMessage('No @agent request found in the current note.')
+      return
+    }
+
+    const ok = await editorSessionRef.current.flushAutoSave()
+    if (!ok) return
+
+    const sourceNote = editorSessionRef.current.editor?.source ?? currentContextNote
+    if (!sourceNote) {
+      setAudioNoteMessage('Save or open a source note before running an @agent request.')
+      return
+    }
+
+    setAudioNoteMessage(`Running @${match.agent}: ${shortAgentTitle(match.prompt)}`)
+    const result = await agentRouter.route({
+      id: createAgentRequestId(),
+      agentId: match.agent,
+      prompt: match.prompt,
+      source: sourceNote.sourcePath,
+      context: {
+        pageId: sourceNote.noteUid ?? sourceNote.id,
+        anchorId: `note:${sourceNote.noteUid ?? sourceNote.id}:line:${match.lineIndex}`,
+        threadId: `note-agent:${sourceNote.noteUid ?? sourceNote.id}:${match.lineIndex}`,
+        quote: match.line.trim(),
+        localContext: sourceBody.trim() || sourceNote.preview,
+        documentText: sourceBody,
+      },
+      metadata: {
+        source: 'source-backed-note',
+        sourceNoteId: sourceNote.id,
+        sourceNoteUid: sourceNote.noteUid,
+        sourcePath: sourceNote.sourcePath,
+        lineIndex: match.lineIndex,
+      },
+    })
+    const launch = agentWorkResultToLaunchSummary(result, station.dashboardUrl)
+    const response = await createNote({
+      title: `@${match.agent}: ${shortAgentTitle(match.prompt)}`,
+      tags: ['agent', match.agent],
+      parentNoteId: sourceNote.noteUid ?? sourceNote.id,
+      body: buildAgentResponseBody({
+        agent: match.agent,
+        prompt: match.prompt,
+        sourceNote,
+        sourceBody,
+        launch,
+      }),
+    })
+
+    selectNote(response)
+    editorSessionRef.current.openNoteEditor(response)
+    setAudioNoteMessage(
+      launch.status === 'launched'
+        ? `@${match.agent} request launched and linked.`
+        : `@${match.agent} response note created; ${launch.reason ?? 'agent station is offline'}`,
+    )
+  }, [agentRouter, createNote, currentContextNote, selectNote, station.dashboardUrl])
 
   const setVoiceLanguage = useCallback((languageCode: string) => {
     updateVoiceRecordingConfig({ languageCode })
@@ -804,6 +893,15 @@ function LoadedSourceApp({
         run: () => editorSession.openBranchEditor(currentContextNote ?? null),
       },
       {
+        id: 'run-latest-agent-request',
+        label: 'Run Latest @agent Request',
+        hint: 'current note',
+        keywords: ['agent', 'run', 'request', 'mention', 'launch'],
+        group: 'Actions',
+        disabled: !editorSession.editor && !currentContextNote,
+        run: () => void handleRunLatestAgentPrompt(),
+      },
+      {
         id: 'open-parent-note',
         label: 'Open Parent Note',
         hint: '⌘[',
@@ -972,6 +1070,7 @@ function LoadedSourceApp({
       handleVoiceNoteLanguageCapture,
       handleCreateNewNote,
       handleCreateVoiceNote,
+      handleRunLatestAgentPrompt,
       handleGoToBoundary,
       handleOpenLinkedNote,
       olderEditorNote,
@@ -1166,6 +1265,46 @@ function LoadedSourceApp({
       )}
     </div>
   )
+}
+
+function agentWorkResultToLaunchSummary(
+  result: {
+    status: 'completed' | 'launched' | 'failed'
+    runtimeId: string
+    response: string
+    runUrl?: string
+    externalId?: string
+    error?: string
+  },
+  dashboardUrl: string,
+): AgentLaunchSummary {
+  if (result.status === 'launched') {
+    return {
+      status: 'launched',
+      dashboardUrl,
+      runUrl: result.runUrl,
+      commentId: result.externalId,
+      runId: result.runUrl?.split('#run-')[1],
+    }
+  }
+
+  if (result.status === 'failed') {
+    return {
+      status: 'failed',
+      dashboardUrl,
+      reason: result.error ?? result.response,
+    }
+  }
+
+  return {
+    status: 'offline',
+    dashboardUrl,
+    reason: `Handled by ${result.runtimeId}.`,
+  }
+}
+
+function createAgentRequestId(): string {
+  return `request_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
 }
 
 function SourceSelectionScreen({
@@ -1439,6 +1578,16 @@ function isAgentLinkExperimentRoute(): boolean {
   if (typeof window === 'undefined') return false
   const params = new URLSearchParams(window.location.search)
   return params.get('agent-links') === '1' || window.location.hash === '#agent-links'
+}
+
+function isAgenticMarkdownRoute(): boolean {
+  if (typeof window === 'undefined') return false
+  const params = new URLSearchParams(window.location.search)
+  return (
+    params.get('agentic-markdown') === '1' ||
+    window.location.hash === '#agentic-markdown' ||
+    window.location.pathname.replace(/\/+$/, '') === '/agentic-markdown'
+  )
 }
 
 function resolveInitialMobilePreview(): boolean {

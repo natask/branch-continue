@@ -22,15 +22,22 @@ const NOTE: SourceNote = {
 }
 
 describe('agent link helpers', () => {
-  it('extracts the latest standalone @ prompt', () => {
-    const match = extractLatestAgentPrompt('notes\n@first\nmore notes\n  @what do you think  ')
+  it('extracts the latest inline @agent prompt', () => {
+    const match = extractLatestAgentPrompt('notes\n@first\nmore notes\nask @critic what do you think')
 
+    expect(match?.agent).toBe('critic')
     expect(match?.prompt).toBe('what do you think')
     expect(match?.lineIndex).toBe(3)
   })
 
-  it('ignores empty or inline mentions', () => {
-    expect(extractLatestAgentPrompt('email me @later')).toBeNull()
+  it('uses the containing line when an inline mention has no trailing prompt', () => {
+    const match = extractLatestAgentPrompt('email me @later')
+
+    expect(match?.agent).toBe('later')
+    expect(match?.prompt).toBe('email me @later')
+  })
+
+  it('ignores empty mentions', () => {
     expect(extractLatestAgentPrompt('@   ')).toBeNull()
   })
 
@@ -42,6 +49,7 @@ describe('agent link helpers', () => {
   it('writes station links into the response body', () => {
     const body = buildAgentResponseBody({
       prompt: 'what do you think',
+      agent: 'critic',
       sourceNote: NOTE,
       sourceBody: 'source context',
       launch: {
@@ -53,6 +61,7 @@ describe('agent link helpers', () => {
     })
 
     expect(body).toContain('Prompt: what do you think')
+    expect(body).toContain('Agent: @critic')
     expect(body).toContain('Run link: https://orch.main.lan/logs/run-1')
     expect(body).toContain('source context')
   })
