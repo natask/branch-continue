@@ -58,12 +58,11 @@ async function bundle(rawArgs) {
   const distDir = path.join(repoRoot, 'dist')
 
   if (!skipBuild) {
-    run('pnpm', ['build'], {
-      ...process.env,
+    run('pnpm', ['build'], frontendBuildEnv({
       BRANCH_CONTINUE_MOBILE_OTA: '1',
       VITE_BRANCH_CONTINUE_MOBILE_OTA_RELEASE_ID: releaseId,
       ...(normalizedPublicUrl ? { VITE_BRANCH_CONTINUE_MOBILE_OTA_URL: normalizedPublicUrl } : {}),
-    })
+    }))
   }
 
   await assertFile(path.join(distDir, 'index.html'), 'Missing dist/index.html; run pnpm build first.')
@@ -124,6 +123,8 @@ async function deploy(rawArgs) {
 
   run('ssh', [remoteHost, `mkdir -p ${shellQuote(remoteRelease)}`], process.env)
   run('rsync', ['-az', '--delete', `${currentDir}/`, `${remoteHost}:${remoteRelease}/`], process.env)
+  await assertRemoteMobileBundle(remoteHost, remoteRelease, manifest)
+  await installRemotePreviewFallbacks(remoteHost, remoteBase, remoteRelease)
   run(
     'ssh',
     [
@@ -168,11 +169,10 @@ async function shell(rawArgs) {
   const configPath = path.join(outputRoot, 'generated', `tauri.mobile-ota.${platform}.json`)
 
   if (!remoteOnly) {
-    run('pnpm', ['build'], {
-      ...process.env,
+    run('pnpm', ['build'], frontendBuildEnv({
       BRANCH_CONTINUE_MOBILE_OTA: '1',
       VITE_BRANCH_CONTINUE_MOBILE_OTA_URL: normalizedUrl,
-    })
+    }))
   }
 
   const config = {
@@ -245,6 +245,34 @@ function appFileScopes() {
     { path: '$APPDATA/**' },
     { path: '$APPLOCALDATA/**' },
   ]
+}
+
+function frontendBuildEnv(extra = {}) {
+  return {
+    ...process.env,
+    ...safeVoiceFrontendEnv(),
+    ...extra,
+  }
+}
+
+function safeVoiceFrontendEnv() {
+  const env = {}
+  const projectId = firstEnv(['VITE_GCP_PROJECT_ID', 'BRANCH_CONTINUE_GCP_PROJECT_ID', 'GCP_PROJECT_ID'])
+  const location = firstEnv(['VITE_GCP_LOCATION', 'BRANCH_CONTINUE_GCP_LOCATION', 'GCP_LOCATION'])
+  const model = firstEnv(['VITE_CHIRP_MODEL', 'BRANCH_CONTINUE_CHIRP_MODEL', 'CHIRP_MODEL'])
+
+  if (projectId) env.VITE_GCP_PROJECT_ID = projectId
+  if (location) env.VITE_GCP_LOCATION = location
+  if (model) env.VITE_CHIRP_MODEL = model
+  return env
+}
+
+function firstEnv(names) {
+  for (const name of names) {
+    const value = process.env[name]?.trim()
+    if (value) return value
+  }
+  return ''
 }
 
 function parseArgs(rawArgs) {
@@ -374,9 +402,13 @@ async function registerMasterOrchDeployment(manifest) {
 
   const deploymentId = `deployment-mobile-${manifest.releaseId}`
   const manifestUrl = new URL('branch-continue-mobile-ota.json', mobileUrl).href
+  const commit = gitCommitMetadata()
+  const summary = deploymentSummary(commit)
   const body = {
     id: deploymentId,
     appId: manifest.app,
+    title: summary,
+    summary,
     kind: 'mobile-ota-release',
     surface: 'mobile',
     status: 'ready',
@@ -390,6 +422,9 @@ async function registerMasterOrchDeployment(manifest) {
     metadata: {
       releaseId: manifest.releaseId,
       runtime: manifest.runtime,
+      summary,
+      commitSha: commit.sha,
+      commitSubject: commit.subject,
       appVersion: manifest.appVersion,
       packageVersion: manifest.packageVersion,
       source: 'mobile-ota-deploy',
@@ -399,6 +434,7 @@ async function registerMasterOrchDeployment(manifest) {
 
   await masterOrchRequest(baseUrl, token, 'POST', '/deployments', body)
   await masterOrchRequest(baseUrl, token, 'POST', `/deployments/${encodeURIComponent(deploymentId)}/ready`, {
+    summary,
     mobileUrl,
     manifestUrl,
     urls: { mobile: mobileUrl },
@@ -408,6 +444,25 @@ async function registerMasterOrchDeployment(manifest) {
   })
   await masterOrchRequest(baseUrl, token, 'POST', `/deployments/${encodeURIComponent(deploymentId)}/apply`, {})
   console.log(`mobile-ota: registered applied deployment ${deploymentId} in Master Orch`)
+}
+
+function deploymentSummary(commit) {
+  return firstEnv(['MOBILE_OTA_SUMMARY', 'DEPLOYMENT_SUMMARY']) || commit.subject || 'Unlabeled OTA deployment'
+}
+
+function gitCommitMetadata() {
+  const sha = spawnSync('git', ['rev-parse', '--short', 'HEAD'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  })
+  const subject = spawnSync('git', ['log', '-1', '--format=%s'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  })
+  return {
+    sha: sha.status === 0 ? sha.stdout.trim() : '',
+    subject: subject.status === 0 ? subject.stdout.trim() : '',
+  }
 }
 
 async function masterOrchRequest(baseUrl, token, method, pathName, body) {
@@ -424,6 +479,53 @@ async function masterOrchRequest(baseUrl, token, method, pathName, body) {
     throw new Error(`${method} ${pathName} failed: ${text || response.status}`)
   }
   return text ? JSON.parse(text) : null
+}
+
+async function assertRemoteMobileBundle(remoteHost, remoteRelease, manifest) {
+  assertBundleManifest(manifest)
+  const requiredFiles = Array.from(new Set(manifest.files.map((file) => file.path).filter(Boolean)))
+  const checks = [
+    `cd ${shellQuote(remoteRelease)}`,
+    ...requiredFiles.map((file) => `test -s ${shellQuote(file)}`),
+  ].join(' && ')
+  run('ssh', [remoteHost, checks], process.env)
+}
+
+function assertBundleManifest(manifest) {
+  if (manifest.app !== appName || manifest.entrypoint !== 'index.html') {
+    throw new Error('Mobile OTA manifest is not for branch-continue/index.html.')
+  }
+
+  if (!Array.isArray(manifest.files) || manifest.files.length === 0) {
+    throw new Error('Mobile OTA manifest has no files; refusing to deploy an unloadable bundle.')
+  }
+
+  if (!manifest.files.some((file) => file.path === manifest.entrypoint)) {
+    throw new Error('Mobile OTA manifest does not list index.html; refusing to deploy an unloadable bundle.')
+  }
+}
+
+async function installRemotePreviewFallbacks(remoteHost, remoteBase, remoteRelease) {
+  const script = [
+    'set -e',
+    `base=${shellQuote(remoteBase.replace(/\/+$/, ''))}`,
+    `release=${shellQuote(remoteRelease)}`,
+    'mkdir -p "$release/previews"',
+    'if [ -d "$base/previews" ]; then',
+    '  for path in "$base"/previews/*; do',
+    '    [ -e "$path" ] || continue',
+    '    name=$(basename "$path")',
+    '    ln -sfn .. "$release/previews/$name"',
+    '    case "$name" in',
+    '      *-mobile) ln -sfn .. "$release/previews/${name%-mobile}" ;;',
+    '    esac',
+    '    case "$name" in',
+    '      run-*) ln -sfn .. "$release/previews/deployment-$name" ;;',
+    '    esac',
+    '  done',
+    'fi',
+  ].join('\n')
+  run('ssh', [remoteHost, script], process.env)
 }
 
 async function writeJson(file, value) {

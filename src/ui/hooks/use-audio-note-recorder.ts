@@ -44,6 +44,7 @@ export interface UseAudioNoteRecorderResult {
   mimeType: string | null
   speechRecognitionAvailable: boolean
   mediaRecorderAvailable: boolean
+  diagnostic: string | null
   start: (languageCode?: string, options?: AudioRecorderStartOptions) => Promise<void>
   switchLanguage: (languageCode: string) => void
   stop: () => void
@@ -64,6 +65,7 @@ export function useAudioNoteRecorder({
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null)
   const [mimeType, setMimeType] = useState<string | null>(null)
+  const [diagnostic, setDiagnostic] = useState<string | null>(null)
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -214,11 +216,11 @@ export function useAudioNoteRecorder({
   const start = useCallback(async (nextLanguageCode?: string, options: AudioRecorderStartOptions = {}) => {
     if (recordingRef.current) return
     if (nextLanguageCode) languageCodeRef.current = nextLanguageCode
-    const browserRecorderAvailable = browserAudioRecordingAvailable()
     const continueSession = hasSessionRef.current && status === 'stopped' && !options.newSession
 
     setStatus('requesting')
     setError(null)
+    setDiagnostic(null)
     setInterimTranscript('')
     setFinalTranscript('')
     setAudioBlob(null)
@@ -228,15 +230,10 @@ export function useAudioNoteRecorder({
       setAudioUrl(null)
     }
 
-    if (!browserRecorderAvailable) {
-      setStatus('error')
-      setError('Microphone capture requires WebView MediaRecorder support on this platform.')
-      return
-    }
-
     try {
       await requestNativeMicrophonePermission()
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      assertMediaRecorderAvailable()
+      const stream = await getAudioStream()
       const preferredMimeType = pickAudioMimeType()
 
       streamRef.current = stream
@@ -360,6 +357,7 @@ export function useAudioNoteRecorder({
       cleanupRecording()
       setStatus('error')
       setError(errorMessage(nextError))
+      setDiagnostic(null)
     }
   }, [cleanupRecording, startSpeechRecognition, status])
 
@@ -421,7 +419,8 @@ export function useAudioNoteRecorder({
     audioBlob,
     mimeType,
     speechRecognitionAvailable: livePreview && typeof window !== 'undefined' && Boolean(window.SpeechRecognition ?? window.webkitSpeechRecognition),
-    mediaRecorderAvailable: browserAudioRecordingAvailable(),
+    mediaRecorderAvailable: maybeBrowserAudioRecordingAvailable(),
+    diagnostic,
     start,
     switchLanguage,
     stop,
@@ -456,9 +455,37 @@ function pickAudioMimeType(): string {
   return ''
 }
 
-function browserAudioRecordingAvailable(): boolean {
-  if (typeof navigator === 'undefined' || typeof MediaRecorder === 'undefined') return false
-  return Boolean(navigator.mediaDevices?.getUserMedia)
+function maybeBrowserAudioRecordingAvailable(): boolean {
+  if (typeof navigator === 'undefined') return false
+  if (typeof MediaRecorder === 'undefined') return isAndroidTauriRuntime()
+  return Boolean(navigator.mediaDevices?.getUserMedia || legacyGetUserMedia()) || isAndroidTauriRuntime()
+}
+
+function assertMediaRecorderAvailable(): void {
+  if (typeof MediaRecorder === 'undefined') {
+    throw new Error('Audio recording is unavailable in this WebView.')
+  }
+}
+
+async function getAudioStream(): Promise<MediaStream> {
+  if (navigator.mediaDevices?.getUserMedia) {
+    return navigator.mediaDevices.getUserMedia({ audio: true })
+  }
+
+  const legacy = legacyGetUserMedia()
+  if (!legacy) throw new Error('Audio recording is unavailable in this WebView.')
+
+  return new Promise((resolve, reject) => {
+    legacy.call(navigator, { audio: true }, resolve, reject)
+  })
+}
+
+function legacyGetUserMedia(): ((constraints: MediaStreamConstraints, success: (stream: MediaStream) => void, error: (error: unknown) => void) => void) | null {
+  const legacyNavigator = navigator as Navigator & {
+    getUserMedia?: (constraints: MediaStreamConstraints, success: (stream: MediaStream) => void, error: (error: unknown) => void) => void
+    webkitGetUserMedia?: (constraints: MediaStreamConstraints, success: (stream: MediaStream) => void, error: (error: unknown) => void) => void
+  }
+  return legacyNavigator.getUserMedia ?? legacyNavigator.webkitGetUserMedia ?? null
 }
 
 async function requestNativeMicrophonePermission(): Promise<void> {
@@ -504,7 +531,7 @@ function isMissingNativePermissionBridgeError(error: unknown): boolean {
 function errorMessage(error: unknown): string {
   if (error instanceof DOMException) {
     if (error.name === 'NotAllowedError' || error.name === 'SecurityError') {
-      return 'Microphone permission was denied. Enable microphone access for Branch Continue in system settings, then try recording again.'
+      return 'Microphone permission was denied.'
     }
     if (error.name === 'NotFoundError') return 'No microphone was found on this device.'
     if (error.name === 'NotReadableError') return 'The microphone is already in use or cannot be opened by this WebView.'

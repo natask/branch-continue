@@ -5,6 +5,10 @@ const MANIFEST = {
   app: 'branch-continue',
   entrypoint: 'index.html',
   releaseId: 'release-b',
+  files: [
+    { path: 'index.html', bytes: 100, sha256: 'index-sha' },
+    { path: 'assets/index.js', bytes: 100, sha256: 'asset-sha' },
+  ],
 }
 
 describe('resolveMobileOtaAction', () => {
@@ -57,5 +61,15 @@ describe('resolveMobileOtaAction', () => {
         storedReleaseId: 'release-a',
       }).type,
     ).toBe('reload')
+  })
+
+  it('does not redirect to an empty or incomplete mobile OTA manifest', () => {
+    expect(
+      resolveMobileOtaAction({
+        targetUrl: 'https://branch-continue.main.lan/mobile/',
+        currentUrl: 'tauri://localhost/index.html',
+        manifest: { app: 'branch-continue', entrypoint: 'index.html', releaseId: 'release-b' },
+      }),
+    ).toEqual({ type: 'none' })
   })
 })

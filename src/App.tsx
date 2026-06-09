@@ -122,7 +122,7 @@ function SourceBackedApp() {
   if (app.error) {
     content = <ErrorRecoveryScreen app={app} />
   } else if (!app.ready) {
-    content = <div className="loading">loading file session</div>
+    content = <StartupLoadingScreen app={app} />
   } else if (!app.sourceSelected) {
     content = (
       <SourceSelectionScreen
@@ -145,6 +145,23 @@ function SourceBackedApp() {
   }
 
   return <>{content}</>
+}
+
+function StartupLoadingScreen({ app }: { app: ReturnType<typeof useApp> }) {
+  return (
+    <div className="app">
+      <div className="empty-panel">
+        <div>
+          <p className="empty-title">Restoring file session...</p>
+          <div className="empty-actions">
+            <button className="btn-primary" onClick={() => void app.selectSourceFile()} type="button">
+              {app.selectingSource ? 'Selecting...' : 'Choose File'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function LoadedSourceApp({
@@ -783,7 +800,6 @@ function LoadedSourceApp({
         label: audioRecorder.recording ? 'Stop Voice Note Recording' : `Create Voice Note In ${voiceLanguageLabel(voiceRecordingConfig.languageCode)}`,
         keywords: ['create', 'new', 'note', 'voice', 'record', 'dictate', 'transcribe'],
         group: 'Actions',
-        disabled: !audioRecorder.recording && !audioRecorder.mediaRecorderAvailable,
         run: () => {
           if (audioRecorder.recording) {
             audioRecorder.stop()
@@ -795,10 +811,10 @@ function LoadedSourceApp({
       ...PRIMARY_VOICE_LANGUAGE_OPTIONS.map((option) => ({
         id: `create-voice-note-${option.code}`,
         label: `Create Voice Note In ${option.label}`,
-        hint: option.flag,
         keywords: ['create', 'new', 'note', 'voice', 'record', 'dictate', 'transcribe', option.label, option.code],
         group: 'Actions',
-        disabled: audioRecorder.recording || !audioRecorder.mediaRecorderAvailable,
+        disabled: audioRecorder.recording,
+        hint: option.flag,
         run: () => handleVoiceNoteLanguageCapture(option.code),
       })),
       {
@@ -1146,7 +1162,7 @@ function LoadedSourceApp({
         onSelect={handleSearchSelect}
         commandActions={commandActions}
       />
-      {!editorSession.editor && <CommandAccessBar onOpen={() => setSearchOpen(true)} />}
+      <CommandAccessBar onOpen={() => setSearchOpen(true)} />
       {station.element}
 
       {editorSession.editor && (
@@ -1224,9 +1240,6 @@ function SourceSelectionScreen({
       <div className="empty-panel">
         <div>
           <p className="empty-title">Select a source file to start.</p>
-          <p className="empty-copy">
-            Made with Love
-          </p>
           <div className="empty-actions">
             <button className="btn-primary" onClick={() => void selectSourceFile()} type="button">
               {selectingSource ? 'Selecting...' : 'Choose File'}

@@ -492,6 +492,7 @@ export function Editor({
               <p className="voice-recorder-muted">Local preview: {audioRecorder.finalTranscript}</p>
             )}
             {audioRecorder.error && <p className="voice-recorder-error">{audioRecorder.error}</p>}
+            {audioRecorder.diagnostic && <p className="voice-recorder-muted">{audioRecorder.diagnostic}</p>}
             {audioNoteMessage && <p className="voice-recorder-muted">{audioNoteMessage}</p>}
             {audioRecorder.audioUrl && !hasLinkedAudio && (
               <div className="voice-recorder-playback">

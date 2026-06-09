@@ -11,6 +11,7 @@ interface MobileOtaManifest {
   app: string
   entrypoint: string
   releaseId?: string
+  files?: Array<{ path?: string; bytes?: number; sha256?: string }>
 }
 
 export type MobileOtaAction =
@@ -46,7 +47,9 @@ export function startMobileOtaRedirect(): void {
       signal: controller.signal,
     })
       .then((response) => (response.ok ? response.json() : null))
-      .then((manifest) => {
+      .then(async (manifest) => {
+        if (!(await validateRemoteMobileBundle(targetUrl, manifest, controller.signal))) return
+
         const action = resolveMobileOtaAction({
           targetUrl: targetUrl.href,
           currentUrl: window.location.href,
@@ -167,8 +170,45 @@ function shouldDeferUpdateApply(): boolean {
 
 function isMobileOtaManifest(value: unknown): value is MobileOtaManifest {
   if (!value || typeof value !== 'object') return false
-  const manifest = value as { app?: unknown; entrypoint?: unknown }
-  return manifest.app === 'branch-continue' && manifest.entrypoint === 'index.html'
+  const manifest = value as { app?: unknown; entrypoint?: unknown; files?: unknown }
+  if (manifest.app !== 'branch-continue' || manifest.entrypoint !== 'index.html') return false
+  if (!Array.isArray(manifest.files) || manifest.files.length === 0) return false
+  return manifest.files.some((file) => {
+    if (!file || typeof file !== 'object') return false
+    return (file as { path?: unknown }).path === manifest.entrypoint
+  })
+}
+
+async function validateRemoteMobileBundle(baseUrl: URL, manifest: unknown, signal: AbortSignal): Promise<boolean> {
+  if (!isMobileOtaManifest(manifest)) return false
+
+  const files = manifest.files ?? []
+  const requiredPaths = new Set<string>([manifest.entrypoint])
+  for (const file of files) {
+    const filePath = file.path?.trim()
+    if (!filePath) continue
+    if (/\.(js|css|wasm)$/i.test(filePath)) requiredPaths.add(filePath)
+    if (requiredPaths.size >= 8) break
+  }
+
+  for (const filePath of requiredPaths) {
+    if (!(await canFetchBundleFile(baseUrl, filePath, signal))) return false
+  }
+
+  return true
+}
+
+async function canFetchBundleFile(baseUrl: URL, filePath: string, signal: AbortSignal): Promise<boolean> {
+  try {
+    const response = await fetch(new URL(filePath, baseUrl), {
+      method: 'GET',
+      cache: 'no-store',
+      signal,
+    })
+    return response.ok
+  } catch {
+    return false
+  }
 }
 
 function normalizeReleaseId(value?: string | null): string | undefined {

@@ -29,6 +29,7 @@ dist-ssr
 *.sw?
 
 # Local QA/session artifacts
+.chat/
 .context/
 scratch/
 playwright-report/

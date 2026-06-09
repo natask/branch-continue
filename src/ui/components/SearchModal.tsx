@@ -8,7 +8,10 @@ export interface SearchCommandAction {
   hint?: string
   keywords?: string[]
   group?: string
+  mode?: string
+  nextMode?: string | null
   disabled?: boolean
+  closeOnRun?: boolean
   run: () => void | Promise<unknown>
 }
 
@@ -22,21 +25,25 @@ interface SearchModalProps {
 
 export function SearchModal({ open, onClose, onSearch, onSelect, commandActions }: SearchModalProps) {
   const [query, setQuery] = useState('')
+  const [mode, setMode] = useState('root')
   const [results, setResults] = useState<QuickNoteSearchHit[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const requestIdRef = useRef(0)
   const openRef = useRef(open)
 
-  const groupedActions = useMemo(() => {
-    const groups = new Map<string, SearchCommandAction[]>()
+  const groupedActionsByMode = useMemo(() => {
+    const modes = new Map<string, Map<string, SearchCommandAction[]>>()
     for (const action of commandActions) {
+      const modeName = action.mode ?? 'root'
       const groupName = action.group ?? 'Commands'
+      const groups = modes.get(modeName) ?? new Map<string, SearchCommandAction[]>()
       const existing = groups.get(groupName) ?? []
       existing.push(action)
       groups.set(groupName, existing)
+      modes.set(modeName, groups)
     }
-    return Array.from(groups.entries())
+    return Array.from(modes.entries()).map(([modeName, groups]) => [modeName, Array.from(groups.entries())] as const)
   }, [commandActions])
 
   useEffect(() => {
@@ -45,6 +52,7 @@ export function SearchModal({ open, onClose, onSearch, onSelect, commandActions 
 
   useEffect(() => {
     if (!open) return
+    setMode('root')
     setQuery('')
     setResults([])
     setError(null)
@@ -69,7 +77,7 @@ export function SearchModal({ open, onClose, onSearch, onSelect, commandActions 
       setError(null)
 
       try {
-        const nextResults = await onSearch(nextQuery)
+        const nextResults = mode === 'root' ? await onSearch(nextQuery) : []
         if (signal?.aborted || requestIdRef.current !== currentRequest || !openRef.current) return
         setResults(nextResults)
       } catch (nextError) {
@@ -82,7 +90,7 @@ export function SearchModal({ open, onClose, onSearch, onSelect, commandActions 
         }
       }
     },
-    [onSearch],
+    [mode, onSearch],
   )
 
   const handleActionSelect = useCallback(
@@ -90,7 +98,16 @@ export function SearchModal({ open, onClose, onSearch, onSelect, commandActions 
       setError(null)
       try {
         await action.run()
-        onClose()
+        if (action.nextMode !== undefined) {
+          setMode(action.nextMode ?? 'root')
+        }
+        if (action.closeOnRun !== false) {
+          onClose()
+          return
+        }
+        setQuery('')
+        setResults([])
+        setLoading(false)
       } catch (nextError) {
         setError(nextError instanceof Error ? nextError.message : String(nextError))
       }
@@ -107,7 +124,7 @@ export function SearchModal({ open, onClose, onSearch, onSelect, commandActions 
   )
 
   const hasSearch = query.trim().length > 0
-  const showNotes = hasSearch && !error && results.length > 0
+  const showNotes = mode === 'root' && hasSearch && !error && results.length > 0
 
   return (
     <Command.Dialog
@@ -120,6 +137,8 @@ export function SearchModal({ open, onClose, onSearch, onSelect, commandActions 
       label="Command palette"
       description="Run commands and search notes."
       pointerBehavior="split"
+      mode={mode}
+      onModeChange={setMode}
       onKeyDown={(event) => {
         if (event.key !== 'Escape') return
         event.preventDefault()
@@ -136,66 +155,72 @@ export function SearchModal({ open, onClose, onSearch, onSelect, commandActions 
       />
 
       <Command.List className="search-results">
-        {groupedActions.map(([groupName, actions], groupIndex) => (
-          <div key={groupName}>
-            {groupIndex > 0 && <Command.Separator className="search-separator" />}
-            <Command.Group heading={groupName}>
-              {actions.map((action) => (
+        {groupedActionsByMode.map(([modeName, groupedActions]) => (
+          <Command.Mode key={modeName} value={modeName}>
+            {groupedActions.map(([groupName, actions], groupIndex) => (
+              <div key={groupName}>
+                {groupIndex > 0 && <Command.Separator className="search-separator" />}
+                <Command.Group heading={groupName}>
+                  {actions.map((action) => (
+                    <Command.Item
+                      key={action.id}
+                      className="search-result search-result-command"
+                      value={`${action.label} ${action.id}`}
+                      keywords={action.keywords}
+                      disabled={action.disabled}
+                      onSelect={() => handleActionSelect(action)}
+                    >
+                      <div className="search-result-copy">
+                        <div className="search-result-heading">
+                          <span className="search-result-title">{action.label}</span>
+                          {action.hint && <span className="search-result-line">{action.hint}</span>}
+                        </div>
+                      </div>
+                    </Command.Item>
+                  ))}
+                </Command.Group>
+              </div>
+            ))}
+          </Command.Mode>
+        ))}
+
+        <Command.Mode value="root">
+          {showNotes && <Command.Separator className="search-separator" />}
+          {showNotes && (
+            <Command.Group heading={`Notes (${results.length})`}>
+              {results.map((result) => (
                 <Command.Item
-                  key={action.id}
-                  className="search-result search-result-command"
-                  value={`${action.label} ${action.id}`}
-                  keywords={action.keywords}
-                  disabled={action.disabled}
-                  onSelect={() => handleActionSelect(action)}
+                  key={result.id}
+                  className="search-result"
+                  value={`${result.id} ${result.note.title} ${result.preview}`}
+                  keywords={[
+                    `line ${result.lineNumber}`,
+                    result.note.timestamp ?? '',
+                    ...result.note.tags,
+                  ]}
+                  onSelect={() => handleResultSelect(result)}
                 >
                   <div className="search-result-copy">
                     <div className="search-result-heading">
-                      <span className="search-result-title">{action.label}</span>
-                      {action.hint && <span className="search-result-line">{action.hint}</span>}
+                      <span className="search-result-title">{result.note.title}</span>
+                      <span className="search-result-line">L{result.lineNumber}</span>
                     </div>
+                    <div className="search-result-meta">
+                      {result.note.timestamp && <span>{result.note.timestamp}</span>}
+                      {result.note.tags.length > 0 && (
+                        <span>{result.note.tags.map((tag) => `#${tag}`).join(' ')}</span>
+                      )}
+                    </div>
+                    <p className="search-result-preview">{result.preview}</p>
                   </div>
                 </Command.Item>
               ))}
             </Command.Group>
-          </div>
-        ))}
+          )}
 
-        {showNotes && <Command.Separator className="search-separator" />}
-        {showNotes && (
-          <Command.Group heading={`Notes (${results.length})`}>
-            {results.map((result) => (
-              <Command.Item
-                key={result.id}
-                className="search-result"
-                value={`${result.id} ${result.note.title} ${result.preview}`}
-                keywords={[
-                  `line ${result.lineNumber}`,
-                  result.note.timestamp ?? '',
-                  ...result.note.tags,
-                ]}
-                onSelect={() => handleResultSelect(result)}
-              >
-                <div className="search-result-copy">
-                  <div className="search-result-heading">
-                    <span className="search-result-title">{result.note.title}</span>
-                    <span className="search-result-line">L{result.lineNumber}</span>
-                  </div>
-                  <div className="search-result-meta">
-                    {result.note.timestamp && <span>{result.note.timestamp}</span>}
-                    {result.note.tags.length > 0 && (
-                      <span>{result.note.tags.map((tag) => `#${tag}`).join(' ')}</span>
-                    )}
-                  </div>
-                  <p className="search-result-preview">{result.preview}</p>
-                </div>
-              </Command.Item>
-            ))}
-          </Command.Group>
-        )}
-
-        {loading && <Command.Loading className="search-empty">searching notes…</Command.Loading>}
-        {error && <p className="search-empty">{error}</p>}
+          {loading && <Command.Loading className="search-empty">searching notes…</Command.Loading>}
+          {error && <p className="search-empty">{error}</p>}
+        </Command.Mode>
         <Command.Empty className="search-empty">No matching commands or notes.</Command.Empty>
       </Command.List>
     </Command.Dialog>

@@ -34,6 +34,7 @@ fn main() {
     let attrs =
         tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(&[
             "transcribe_with_chirp",
+            "android_request_microphone_permission",
             "android_select_source_file",
             "android_read_source_file",
             "android_write_source_file",

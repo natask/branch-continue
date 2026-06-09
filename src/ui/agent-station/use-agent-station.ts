@@ -19,6 +19,7 @@ const DEFAULT_APP_ID = 'branch-continue'
 const DEFAULT_BASE_BRANCH = 'master'
 const DEFAULT_POLL_MS = 1500
 const MASTER_ORCH_AVAILABILITY_RETRY_MS = 2500
+const MOBILE_OTA_MANIFEST = 'branch-continue-mobile-ota.json'
 
 type MasterOrchAvailability = 'unknown' | 'checking' | 'available' | 'unavailable'
 type StationSurface = 'web' | 'desktop' | 'mobile'
@@ -146,13 +147,15 @@ export function useAgentStation(
       if (!deploymentId) return
       setNoticeError(null)
       try {
+        const deployment = deploymentById(station.snapshot.state, deploymentId)
+        await assertDeploymentLoadable(deployment, stationSurface)
         await station.client.acceptDeployment(deploymentId)
         await station.refresh({ reason: 'preview-accept', deploymentId })
       } catch (error) {
         setNoticeError(errorMessage(error))
       }
     },
-    [station],
+    [station, stationSurface],
   )
 
   const applyDeployment = useCallback(
@@ -160,20 +163,23 @@ export function useAgentStation(
       if (!deploymentId) return
       setNoticeError(null)
       try {
+        const deployment = deploymentById(station.snapshot.state, deploymentId)
+        await assertDeploymentLoadable(deployment, stationSurface)
         await station.client.applyDeployment(deploymentId)
         await station.refresh({ reason: 'preview-apply', deploymentId })
       } catch (error) {
         setNoticeError(errorMessage(error))
       }
     },
-    [station],
+    [station, stationSurface],
   )
 
   const promoteDeployment = useCallback(
-    async (deployment?: StationDeployment | null) => {
+    async (deployment?: StationDeployment | null, surface: StationSurface = stationSurface) => {
       if (!deployment) return
       setNoticeError(null)
       try {
+        await assertDeploymentLoadable(deployment, surface)
         if (deployment.status !== 'accepted' && deployment.status !== 'applied') {
           await station.client.acceptDeployment(deployment.id)
         }
@@ -185,21 +191,28 @@ export function useAgentStation(
         setNoticeError(errorMessage(error))
       }
     },
-    [station],
+    [station, stationSurface],
   )
 
   const switchToDeployment = useCallback(
-    (deployment?: StationDeployment | null, surface: StationSurface = stationSurface, fallbackUrl?: string | null) => {
+    async (deployment?: StationDeployment | null, surface: StationSurface = stationSurface, fallbackUrl?: string | null) => {
       if (!deployment) return
-      const url = storeOtaPreviewTarget(deployment, fallbackUrl ?? deploymentOpenUrl(deployment, null, surface), surface)
-      if (!url) {
-        setNoticeError(`No switchable ${surface} URL was recorded for this deployment.`)
-        return
+      try {
+        const fallback = fallbackUrl ?? deploymentOpenUrl(deployment, null, surface)
+        const targetUrl = deploymentOpenUrl(deployment, fallback, surface)
+        if (targetUrl) await assertDeploymentUrlLoadable(targetUrl, surface)
+        const url = storeOtaPreviewTarget(deployment, fallback, surface)
+        if (!url) {
+          setNoticeError(`No switchable ${surface} URL was recorded for this deployment.`)
+          return
+        }
+        setNoticeError(null)
+        setPreviewOverrideUrl(url)
+        setPreviewOverrideDeploymentId(deployment.id)
+        if (stationSurface === 'mobile' && surface === 'mobile') window.location.replace(url)
+      } catch (error) {
+        setNoticeError(errorMessage(error))
       }
-      setNoticeError(null)
-      setPreviewOverrideUrl(url)
-      setPreviewOverrideDeploymentId(deployment.id)
-      if (stationSurface === 'mobile' && surface === 'mobile') window.location.replace(url)
     },
     [stationSurface],
   )
@@ -207,11 +220,12 @@ export function useAgentStation(
   const deploymentActions = useMemo(
     () => managedDeploymentActions({
       deployments: Object.values((station.snapshot.state.deployments ?? {}) as Record<string, StationDeployment>),
+      state: station.snapshot.state,
       surfaces: stationSurface === 'mobile' ? ['mobile'] : [stationSurface, 'mobile'],
       onSwitch: switchToDeployment,
       onPromote: promoteDeployment,
     }),
-    [promoteDeployment, station.snapshot.state.deployments, stationSurface, switchToDeployment],
+    [promoteDeployment, station.snapshot.state, stationSurface, switchToDeployment],
   )
 
   const actions = useMemo(
@@ -335,16 +349,57 @@ function toSearchCommandAction(command: StationCommand): SearchCommandAction {
 
 function managedDeploymentActions({
   deployments,
+  state,
   surfaces,
   onSwitch,
   onPromote,
 }: {
   deployments: StationDeployment[]
+  state: Record<string, unknown>
   surfaces: StationSurface[]
-  onSwitch: (deployment: StationDeployment, surface: StationSurface) => void
-  onPromote: (deployment: StationDeployment) => void | Promise<unknown>
+  onSwitch: (deployment: StationDeployment, surface: StationSurface) => void | Promise<unknown>
+  onPromote: (deployment: StationDeployment, surface: StationSurface) => void | Promise<unknown>
 }): SearchCommandAction[] {
-  const actions: SearchCommandAction[] = []
+  const actions: SearchCommandAction[] = [
+    {
+      id: 'station.deployment.flow.test',
+      label: 'Test Deployment',
+      group: 'Deployment',
+      keywords: ['deployment', 'test', 'preview', 'switch', 'ota'],
+      nextMode: 'deployment:test',
+      closeOnRun: false,
+      run: () => undefined,
+    },
+    {
+      id: 'station.deployment.flow.promote',
+      label: 'Promote Deployment',
+      group: 'Deployment',
+      keywords: ['deployment', 'promote', 'apply', 'accept', 'ota'],
+      nextMode: 'deployment:promote',
+      closeOnRun: false,
+      run: () => undefined,
+    },
+    {
+      id: 'station.deployment.flow.test.back',
+      label: 'Back',
+      group: 'Deployment',
+      mode: 'deployment:test',
+      keywords: ['deployment', 'back', 'cancel'],
+      nextMode: 'root',
+      closeOnRun: false,
+      run: () => undefined,
+    },
+    {
+      id: 'station.deployment.flow.promote.back',
+      label: 'Back',
+      group: 'Deployment',
+      mode: 'deployment:promote',
+      keywords: ['deployment', 'back', 'cancel'],
+      nextMode: 'root',
+      closeOnRun: false,
+      run: () => undefined,
+    },
+  ]
   const uniqueSurfaces = Array.from(new Set(surfaces))
 
   for (const surface of uniqueSurfaces) {
@@ -352,15 +407,14 @@ function managedDeploymentActions({
     for (let index = 0; index < latest.length; index += 1) {
       const deployment = latest[index]!
       const url = deploymentOpenUrl(deployment, null, surface)
-      const surfaceName = surfaceTitle(surface)
-      const targetName = deploymentLabel(deployment)
-      const latestPrefix = index === 0 ? 'Latest ' : ''
+      const targetName = deploymentSummary(deployment, state)
 
       actions.push({
         id: `station.deployment.${surface}.switch.${deployment.id}`,
-        label: `Deployment: Test ${latestPrefix}${surfaceName} ${targetName}`,
+        label: targetName,
         hint: deploymentHint(deployment, url),
-        group: 'Deployment',
+        group: 'Test Deployment',
+        mode: 'deployment:test',
         keywords: ['deployment', 'test', 'preview', 'switch', 'ota', surface, deployment.id, deployment.runId ?? ''],
         disabled: !url,
         run: () => onSwitch(deployment, surface),
@@ -368,12 +422,13 @@ function managedDeploymentActions({
 
       actions.push({
         id: `station.deployment.${surface}.promote.${deployment.id}`,
-        label: `Deployment: Promote ${latestPrefix}${surfaceName} ${targetName}`,
+        label: targetName,
         hint: deploymentHint(deployment, url),
-        group: 'Deployment',
+        group: 'Promote Deployment',
+        mode: 'deployment:promote',
         keywords: ['deployment', 'promote', 'apply', 'advance', 'ota', surface, deployment.id, deployment.runId ?? ''],
-        disabled: deployment.status === 'applied',
-        run: () => onPromote(deployment),
+        disabled: !url || deployment.status === 'applied',
+        run: () => onPromote(deployment, surface),
       })
     }
   }
@@ -384,6 +439,7 @@ function managedDeploymentActions({
 function latestOpenableDeployments(deployments: StationDeployment[], surface: StationSurface, limit: number): StationDeployment[] {
   return deployments
     .filter((deployment) => Boolean(deploymentOpenUrl(deployment, null, surface)))
+    .filter((deployment) => Boolean(hasDeploymentSummary(deployment) || deployment.runId))
     .sort((a, b) => deploymentTime(b) - deploymentTime(a))
     .slice(0, limit)
 }
@@ -393,15 +449,85 @@ function deploymentTime(deployment: StationDeployment): number {
 }
 
 function deploymentLabel(deployment: StationDeployment): string {
-  return deployment.runId ? `${deployment.runId} / ${deployment.id}` : deployment.id
+  const metadata = deployment.metadata && typeof deployment.metadata === 'object' ? deployment.metadata : {}
+  return [
+    stringValue(metadata.version),
+    stringValue(metadata.releaseId),
+    stringValue(metadata.appVersion),
+    deployment.runId,
+    cleanDeploymentId(deployment.id),
+  ].find(Boolean) ?? cleanDeploymentId(deployment.id)
+}
+
+function deploymentSummary(deployment: StationDeployment, state: Record<string, unknown>): string {
+  const metadata = deployment.metadata && typeof deployment.metadata === 'object' ? deployment.metadata : {}
+  return [
+    stringValue(deployment.summary),
+    stringValue(deployment.title),
+    stringValue(metadata.ticketSummary),
+    stringValue(metadata.summary),
+    stringValue(metadata.title),
+    stringValue(metadata.description),
+    stringValue(metadata.instruction),
+    runSummaryForDeployment(deployment, state),
+    stringValue(metadata.commitSubject),
+  ].find(Boolean) ?? 'Unlabeled deployment'
+}
+
+function hasDeploymentSummary(deployment: StationDeployment): boolean {
+  const metadata = deployment.metadata && typeof deployment.metadata === 'object' ? deployment.metadata : {}
+  return Boolean(
+    stringValue(deployment.summary) ||
+    stringValue(deployment.title) ||
+    stringValue(metadata.ticketSummary) ||
+    stringValue(metadata.summary) ||
+    stringValue(metadata.title) ||
+    stringValue(metadata.description) ||
+    stringValue(metadata.instruction) ||
+    stringValue(metadata.commitSubject),
+  )
 }
 
 function deploymentHint(deployment: StationDeployment, url: string): string {
-  return [deployment.status, deployment.channel, url].filter(Boolean).join(' / ')
+  void url
+  return deploymentLabel(deployment)
 }
 
-function surfaceTitle(surface: StationSurface): string {
-  return surface.charAt(0).toUpperCase() + surface.slice(1)
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function cleanDeploymentId(value: string): string {
+  return value.replace(/^deployment-/, '').replace(/^mobile-/, '')
+}
+
+function runSummaryForDeployment(deployment: StationDeployment, state: Record<string, unknown>): string | undefined {
+  const runId = deployment.runId?.trim()
+  if (!runId) return undefined
+
+  const runs = (state.runs ?? {}) as Record<string, { summary?: unknown; instruction?: unknown; message?: unknown; ticketIds?: unknown; ticketSummaries?: unknown }>
+  const run = runs[runId]
+  if (!run) return undefined
+
+  const ticketSummaries = Array.isArray(run.ticketSummaries) ? run.ticketSummaries : []
+  const fromRunTickets = ticketSummaries
+    .map((ticket) => ticket && typeof ticket === 'object' ? stringValue((ticket as { summary?: unknown; title?: unknown }).summary) ?? stringValue((ticket as { summary?: unknown; title?: unknown }).title) : undefined)
+    .filter(Boolean)
+    .slice(0, 3)
+    .join('; ')
+  if (fromRunTickets) return fromRunTickets
+
+  const tickets = (state.tickets ?? {}) as Record<string, { summary?: unknown; displayTitle?: unknown; title?: unknown; body?: unknown }>
+  const ticketIds = Array.isArray(run.ticketIds) ? run.ticketIds.filter((id): id is string => typeof id === 'string') : []
+  const fromTickets = ticketIds
+    .map((id) => tickets[id])
+    .map((ticket) => ticket ? stringValue(ticket.summary) ?? stringValue(ticket.displayTitle) ?? stringValue(ticket.title) ?? stringValue(ticket.body) : undefined)
+    .filter(Boolean)
+    .slice(0, 3)
+    .join('; ')
+  if (fromTickets) return fromTickets
+
+  return stringValue(run.summary) ?? stringValue(run.instruction) ?? stringValue(run.message)
 }
 
 function masterOrchStatusActions({
@@ -483,6 +609,70 @@ function deploymentOpenUrl(
   surface: 'web' | 'desktop' | 'mobile' = 'web',
 ): string {
   return otaPreviewUrlFromDeployment(deployment, fallbackUrl, surface) ?? ''
+}
+
+function deploymentById(state: Record<string, unknown>, deploymentId: string): StationDeployment | null {
+  const deployments = (state.deployments ?? {}) as Record<string, StationDeployment>
+  return deployments[deploymentId] ?? null
+}
+
+async function assertDeploymentLoadable(deployment: StationDeployment | null, surface: StationSurface): Promise<void> {
+  const url = deploymentOpenUrl(deployment, null, surface)
+  if (!url) throw new Error(`No loadable ${surface} URL was recorded for this deployment.`)
+  await assertDeploymentUrlLoadable(url, surface)
+}
+
+async function assertDeploymentUrlLoadable(url: string, surface: StationSurface): Promise<void> {
+  if (surface !== 'mobile') return
+  const manifest = await fetchJson(new URL(MOBILE_OTA_MANIFEST, url).href)
+  if (!isLoadableMobileManifest(manifest)) {
+    throw new Error('Mobile OTA is not loadable: manifest is missing, empty, or does not list index.html.')
+  }
+
+  for (const path of mobileManifestProbePaths(manifest)) {
+    if (!(await canFetchUrl(new URL(path, url).href))) {
+      throw new Error(`Mobile OTA is not loadable: ${path} is not served.`)
+    }
+  }
+}
+
+async function fetchJson(url: string): Promise<unknown> {
+  const response = await window.fetch(url, { cache: 'no-store' })
+  if (!response.ok) throw new Error(`Mobile OTA is not loadable: ${url} returned ${response.status}.`)
+  return response.json()
+}
+
+async function canFetchUrl(url: string): Promise<boolean> {
+  try {
+    const response = await window.fetch(url, { cache: 'no-store' })
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
+function isLoadableMobileManifest(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false
+  const manifest = value as { app?: unknown; entrypoint?: unknown; files?: unknown }
+  if (manifest.app !== 'branch-continue' || manifest.entrypoint !== 'index.html') return false
+  if (!Array.isArray(manifest.files) || manifest.files.length === 0) return false
+  return manifest.files.some((file) => file && typeof file === 'object' && (file as { path?: unknown }).path === 'index.html')
+}
+
+function mobileManifestProbePaths(value: unknown): string[] {
+  if (!value || typeof value !== 'object') return ['index.html']
+  const manifest = value as { entrypoint?: unknown; files?: unknown }
+  const paths = new Set<string>([typeof manifest.entrypoint === 'string' ? manifest.entrypoint : 'index.html'])
+  if (Array.isArray(manifest.files)) {
+    for (const file of manifest.files) {
+      if (!file || typeof file !== 'object') continue
+      const path = (file as { path?: unknown }).path
+      if (typeof path !== 'string' || !/\.(js|css|wasm)$/i.test(path)) continue
+      paths.add(path)
+      if (paths.size >= 8) break
+    }
+  }
+  return Array.from(paths)
 }
 
 function createPreviewReadyToast({

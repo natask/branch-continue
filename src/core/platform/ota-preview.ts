@@ -28,14 +28,7 @@ export function otaPreviewUrlFromDeployment(input?: OtaPreviewInput | null, fall
       const url = normalizeHttpUrl(value)
       if (url && isUnderUrlBase(url, mobileBase)) return url
     }
-
-    for (const value of deploymentUrlCandidates(input, fallbackUrl)) {
-      const url = normalizeHttpUrl(value)
-      if (url && isUnderUrlBase(url, mobileBase)) return url
-    }
-
-    const deploymentId = deploymentReleaseId(input)
-    return deploymentId ? new URL(`previews/${encodeURIComponent(deploymentId)}/`, mobileBase).href : null
+    return null
   }
 
   for (const value of surfaceUrlCandidates(input, fallbackUrl, surface)) {
@@ -108,10 +101,6 @@ function directoryUrlFromManifest(value?: string | null): string | null {
   } catch {
     return null
   }
-}
-
-function deploymentUrlCandidates(input?: OtaPreviewInput | null, fallbackUrl?: string | null): Array<string | null | undefined> {
-  return [...webUrlCandidates(input, fallbackUrl), ...mobileUrlCandidates(input)]
 }
 
 function deploymentSurface(input?: OtaPreviewInput | null): string | null {
@@ -256,6 +245,7 @@ function mobileUrlCandidates(input?: OtaPreviewInput | null): Array<string | nul
   const metadataEntryUrls = objectRecord(metadata.entryUrls)
   const metadataUrls = objectRecord(metadata.urls)
   const metadataDeviceUrls = objectRecord(metadata.deviceUrls)
+  const metadataManifestUrl = stringValue(metadata.manifestUrl)
 
   return [
     input?.mobileUrl,
@@ -265,21 +255,9 @@ function mobileUrlCandidates(input?: OtaPreviewInput | null): Array<string | nul
     metadataEntryUrls.mobile,
     metadataUrls.mobile,
     metadataDeviceUrls.mobile,
+    directoryUrlFromManifest(input?.manifestUrl),
+    directoryUrlFromManifest(metadataManifestUrl),
   ]
-}
-
-function deploymentReleaseId(input?: OtaPreviewInput | null): string | null {
-  const metadata = input?.metadata && typeof input.metadata === 'object' ? input.metadata : {}
-  return (
-    input?.mobileReleaseId ??
-    input?.releaseId ??
-    stringValue(metadata.mobileReleaseId) ??
-    stringValue(metadata.releaseId) ??
-    input?.runId ??
-    input?.deploymentId ??
-    input?.id ??
-    null
-  )
 }
 
 function currentMobileBaseUrl(): URL | null {

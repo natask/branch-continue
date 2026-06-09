@@ -47,6 +47,7 @@ interface AppActions {
 
 const sourceBridge = createSourceBridge()
 const EMPTY_PATH = 'No file selected'
+const SOURCE_RESTORE_TIMEOUT_MS = 6000
 
 export function useApp(): AppState & AppActions {
   const [lifecycle, setLifecycle] = useState<AppState['lifecycle']>('booting')
@@ -112,10 +113,18 @@ export function useApp(): AppState & AppActions {
 
   useEffect(() => {
     let cancelled = false
+    let settled = false
+    const restoreTimeout = window.setTimeout(() => {
+      if (settled) return
+      cancelled = true
+      clearSourceState()
+    }, SOURCE_RESTORE_TIMEOUT_MS)
 
     ;(async () => {
       try {
         const restored = await sourceBridge.restoreLastSelection()
+        settled = true
+        window.clearTimeout(restoreTimeout)
         if (cancelled) return
 
         if (restored) {
@@ -129,6 +138,8 @@ export function useApp(): AppState & AppActions {
           clearSourceState()
         }
       } catch (nextError) {
+        settled = true
+        window.clearTimeout(restoreTimeout)
         if (cancelled) return
         if (isSourceUnavailable(nextError)) {
           clearSourceState()
@@ -141,6 +152,7 @@ export function useApp(): AppState & AppActions {
 
     return () => {
       cancelled = true
+      window.clearTimeout(restoreTimeout)
       sourceBridge.stopWatching()
     }
   }, [applyParsed, applySourceSummary, clearSourceState])

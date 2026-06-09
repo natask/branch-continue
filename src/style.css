@@ -1788,7 +1788,10 @@ pre {
   border-radius: 1.17em;
   background: rgba(255, 255, 255, 0.035);
   padding: 0.83em 1em;
-  overflow: hidden;
+  max-block-size: min(42vh, 30em);
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   container-type: inline-size;
 }
 
@@ -2739,5 +2742,10 @@ pre {
     padding: 9px 10px;
     font-size: 0.74rem;
     border-radius: 10px;
+  }
+
+  .voice-recorder-panel,
+  .audio-capture-list {
+    max-block-size: min(38svh, 24em);
   }
 }
