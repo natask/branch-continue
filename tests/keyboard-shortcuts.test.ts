@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { isCommandPaletteOpenShortcut } from '../src/ui/lib/keyboard-shortcuts'
+import {
+  isCommandPaletteOpenShortcut,
+  shouldOpenCommandPalette,
+} from '../src/ui/lib/keyboard-shortcuts'
 
 function keyEvent(overrides: Partial<Parameters<typeof isCommandPaletteOpenShortcut>[0]>) {
   return {
@@ -36,5 +39,36 @@ describe('isCommandPaletteOpenShortcut', () => {
         allowShiftX: true,
       }),
     ).toBe(false)
+  })
+})
+
+describe('shouldOpenCommandPalette', () => {
+  it('opens command+k outside editable controls', () => {
+    expect(shouldOpenCommandPalette(keyEvent({ metaKey: true }))).toBe(true)
+  })
+
+  it('does not open command+k from a focused input-like target', () => {
+    const inputTarget = {
+      closest: (selector: string) => (selector.includes('input') ? inputTarget : null),
+    } as EventTarget
+
+    expect(shouldOpenCommandPalette(keyEvent({ metaKey: true, target: inputTarget }))).toBe(false)
+  })
+
+  it('does not open command+k from contenteditable targets', () => {
+    const editorTarget = {
+      isContentEditable: true,
+      closest: () => null,
+    } as EventTarget
+
+    expect(shouldOpenCommandPalette(keyEvent({ metaKey: true, target: editorTarget }))).toBe(false)
+  })
+
+  it('keeps control+k available for native text editing behavior', () => {
+    const inputTarget = {
+      closest: (selector: string) => (selector.includes('textarea') ? inputTarget : null),
+    } as EventTarget
+
+    expect(shouldOpenCommandPalette(keyEvent({ ctrlKey: true, target: inputTarget }))).toBe(false)
   })
 })

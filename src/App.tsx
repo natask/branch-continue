@@ -6,12 +6,14 @@ import { useEditorSession } from './ui/hooks/use-editor-session'
 import { SearchModal, type SearchCommandAction } from './ui/components/SearchModal'
 import { TimeMachine } from './ui/components/TimeMachine'
 import { Editor } from './ui/components/Editor'
+import { FactoryPanel } from './ui/factory/FactoryPanel'
 import { AgentLinkExperiment } from './ui/experiments/AgentLinkExperiment'
 import { AgenticMarkdownPage } from './ui/agentic-markdown/AgenticMarkdownPage'
 import { useAgentStation } from './ui/agent-station/use-agent-station'
 import { createAgentServiceRuntime } from './ui/agent-runtime/agent-service-runtime'
 import { createMasterOrchAgentRuntime } from './ui/agent-runtime/master-orch-runtime'
 import { useAudioNoteRecorder, type AudioRecordingComplete } from './ui/hooks/use-audio-note-recorder'
+import { useFactoryWorkspace } from './ui/hooks/use-factory-workspace'
 import {
   formatNotePosition,
   orderNotes,
@@ -39,7 +41,7 @@ import {
   voiceModelLabel,
   type VoiceRecordingConfig,
 } from './ui/lib/voice-recording-config'
-import { isCommandPaletteOpenShortcut } from './ui/lib/keyboard-shortcuts'
+import { shouldOpenCommandPalette } from './ui/lib/keyboard-shortcuts'
 import {
   createAudioCaptureId,
   saveAudioCapture,
@@ -251,6 +253,17 @@ function LoadedSourceApp({
   const [audioTranscriptRefreshKey, setAudioTranscriptRefreshKey] = useState(0)
   const [voiceRecordingConfig, setVoiceRecordingConfig] = useState(resolveInitialVoiceRecordingConfig)
   const [voiceConfigOpen, setVoiceConfigOpen] = useState(false)
+  const {
+    packets: factoryPackets,
+    summary: factorySummary,
+    selectedPacket: factorySelectedPacket,
+    open: factoryOpen,
+    setOpen: setFactoryOpen,
+    selectPacket: selectFactoryPacket,
+    captureIntent: captureFactoryIntent,
+    advancePacket: advanceFactoryPacket,
+    resetWorkspace: resetFactoryWorkspace,
+  } = useFactoryWorkspace()
 
   useEffect(() => {
     persistVoiceRecordingConfig(voiceRecordingConfig)
@@ -574,6 +587,23 @@ function LoadedSourceApp({
     )
   }, [agentRouter, createNote, currentContextNote, selectNote, station.dashboardUrl])
 
+  const handleCaptureCurrentFactoryIntent = useCallback(() => {
+    const current = editorSessionRef.current.editor
+    const intent = current?.body.trim() || currentContextNote?.body.trim() || currentContextNote?.preview.trim() || ''
+    if (!intent) {
+      setFactoryOpen(true)
+      setAudioNoteMessage('Open a note or paste raw intent into the factory panel.')
+      return
+    }
+
+    const count = captureFactoryIntent(intent)
+    setAudioNoteMessage(
+      count === 1
+        ? 'Factory captured 1 work packet.'
+        : `Factory captured ${count} work packets.`,
+    )
+  }, [captureFactoryIntent, currentContextNote, setFactoryOpen])
+
   const setVoiceLanguage = useCallback((languageCode: string) => {
     updateVoiceRecordingConfig({ languageCode })
     if (audioRecorder.recording && voiceRecordingConfig.languageCode !== languageCode) {
@@ -627,7 +657,7 @@ function LoadedSourceApp({
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (!isCommandPaletteOpenShortcut(event, { allowShiftX: true })) return
+      if (!shouldOpenCommandPalette(event, { allowShiftX: true })) return
       event.preventDefault()
       setSearchOpen(true)
     }
@@ -902,6 +932,28 @@ function LoadedSourceApp({
         run: () => void handleRunLatestAgentPrompt(),
       },
       {
+        id: 'open-software-factory',
+        label: `Factory Status: ${factorySummary.active} Active`,
+        keywords: ['factory', 'status', 'ongoing', 'work', 'tasks', 'agents'],
+        group: 'Factory',
+        run: () => setFactoryOpen(true),
+      },
+      {
+        id: 'capture-current-note-as-factory-intent',
+        label: 'Factory: Capture Current Note Intent',
+        keywords: ['factory', 'capture', 'intent', 'thread', 'split', 'voice'],
+        group: 'Factory',
+        disabled: !editorSession.editor && !currentContextNote,
+        run: handleCaptureCurrentFactoryIntent,
+      },
+      {
+        id: 'reset-factory-workspace',
+        label: 'Factory: Reset Seed Packets',
+        keywords: ['factory', 'reset', 'seed', 'packets'],
+        group: 'Factory',
+        run: resetFactoryWorkspace,
+      },
+      {
         id: 'open-parent-note',
         label: 'Open Parent Note',
         hint: '⌘[',
@@ -1071,8 +1123,12 @@ function LoadedSourceApp({
       handleCreateNewNote,
       handleCreateVoiceNote,
       handleRunLatestAgentPrompt,
+      handleCaptureCurrentFactoryIntent,
       handleGoToBoundary,
       handleOpenLinkedNote,
+      factorySummary.active,
+      resetFactoryWorkspace,
+      setFactoryOpen,
       olderEditorNote,
       newerEditorNote,
       orderedNotes.length,
@@ -1138,6 +1194,13 @@ function LoadedSourceApp({
               Reload
             </button>
           )}
+          <button
+            className="topbar-search"
+            onClick={() => setFactoryOpen(true)}
+            type="button"
+          >
+            Factory {factorySummary.active}
+          </button>
           <button
             className="topbar-search"
             onClick={() => setShowCardStackTuner((current) => !current)}
@@ -1222,7 +1285,7 @@ function LoadedSourceApp({
         notes={notes}
         activeNoteId={activeNoteId}
         totalCount={totalCount}
-        navigationEnabled={!searchOpen && !editorSession.editorOpen}
+        navigationEnabled={!searchOpen && !factoryOpen && !editorSession.editorOpen}
         swipeUpNavTarget={swipeUpNavTarget}
         wheelNavDirection={wheelNavDirection}
         isMobile={isMobile}
@@ -1240,6 +1303,22 @@ function LoadedSourceApp({
         commandActions={commandActions}
       />
       {station.element}
+      <FactoryPanel
+        open={factoryOpen}
+        packets={factoryPackets}
+        summary={factorySummary}
+        selectedPacket={factorySelectedPacket}
+        stationStatus={{
+          configured: station.configured,
+          availability: station.availability,
+          dashboardUrl: station.dashboardUrl,
+        }}
+        onClose={() => setFactoryOpen(false)}
+        onSelectPacket={selectFactoryPacket}
+        onCaptureIntent={captureFactoryIntent}
+        onAdvancePacket={advanceFactoryPacket}
+        onReset={resetFactoryWorkspace}
+      />
 
       {editorSession.editor && (
         <Editor
@@ -1316,6 +1395,7 @@ function SourceSelectionScreen({
 }) {
   const [searchOpen, setSearchOpen] = useState(false)
   const station = useAgentStation({})
+  const factoryWorkspace = useFactoryWorkspace()
   const commandActions = useMemo<SearchCommandAction[]>(
     () => [
       {
@@ -1327,16 +1407,30 @@ function SourceSelectionScreen({
         disabled: selectingSource,
         run: () => void selectSourceFile(),
       },
+      {
+        id: 'open-software-factory',
+        label: `Factory Status: ${factoryWorkspace.summary.active} Active`,
+        keywords: ['factory', 'status', 'ongoing', 'work', 'tasks', 'agents'],
+        group: 'Factory',
+        run: () => factoryWorkspace.setOpen(true),
+      },
+      {
+        id: 'reset-factory-workspace',
+        label: 'Factory: Reset Seed Packets',
+        keywords: ['factory', 'reset', 'seed', 'packets'],
+        group: 'Factory',
+        run: factoryWorkspace.resetWorkspace,
+      },
       ...station.actions,
     ],
-    [selectSourceFile, selectingSource, station.actions],
+    [factoryWorkspace, selectSourceFile, selectingSource, station.actions],
   )
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const shortcut = event.metaKey || event.ctrlKey
       const key = event.key.toLowerCase()
-      if (isCommandPaletteOpenShortcut(event)) {
+      if (shouldOpenCommandPalette(event)) {
         event.preventDefault()
         setSearchOpen(true)
         return
@@ -1364,6 +1458,9 @@ function SourceSelectionScreen({
             <button className="btn-secondary" onClick={() => setSearchOpen(true)} type="button">
               Commands
             </button>
+            <button className="btn-secondary" onClick={() => factoryWorkspace.setOpen(true)} type="button">
+              Factory
+            </button>
           </div>
         </div>
       </div>
@@ -1375,6 +1472,22 @@ function SourceSelectionScreen({
         commandActions={commandActions}
       />
       {station.element}
+      <FactoryPanel
+        open={factoryWorkspace.open}
+        packets={factoryWorkspace.packets}
+        summary={factoryWorkspace.summary}
+        selectedPacket={factoryWorkspace.selectedPacket}
+        stationStatus={{
+          configured: station.configured,
+          availability: station.availability,
+          dashboardUrl: station.dashboardUrl,
+        }}
+        onClose={() => factoryWorkspace.setOpen(false)}
+        onSelectPacket={factoryWorkspace.selectPacket}
+        onCaptureIntent={factoryWorkspace.captureIntent}
+        onAdvancePacket={factoryWorkspace.advancePacket}
+        onReset={factoryWorkspace.resetWorkspace}
+      />
     </div>
   )
 }
@@ -1386,9 +1499,24 @@ function ErrorRecoveryScreen({
 }) {
   const [searchOpen, setSearchOpen] = useState(false)
   const station = useAgentStation({ sourcePath: app.sourcePath })
+  const factoryWorkspace = useFactoryWorkspace()
   const commandActions = useMemo<SearchCommandAction[]>(
     () => [
       ...station.actions,
+      {
+        id: 'open-software-factory',
+        label: `Factory Status: ${factoryWorkspace.summary.active} Active`,
+        keywords: ['factory', 'status', 'ongoing', 'work', 'tasks', 'agents'],
+        group: 'Factory',
+        run: () => factoryWorkspace.setOpen(true),
+      },
+      {
+        id: 'reset-factory-workspace',
+        label: 'Factory: Reset Seed Packets',
+        keywords: ['factory', 'reset', 'seed', 'packets'],
+        group: 'Factory',
+        run: factoryWorkspace.resetWorkspace,
+      },
       {
         id: 'select-source-file',
         label: app.selectingSource ? 'Select Source File (busy...)' : 'Select Source File',
@@ -1406,14 +1534,14 @@ function ErrorRecoveryScreen({
         run: () => void app.reloadSource(),
       },
     ],
-    [app, station.actions],
+    [app, factoryWorkspace, station.actions],
   )
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const shortcut = event.metaKey || event.ctrlKey
       const key = event.key.toLowerCase()
-      if (isCommandPaletteOpenShortcut(event)) {
+      if (shouldOpenCommandPalette(event)) {
         event.preventDefault()
         setSearchOpen(true)
         return
@@ -1448,6 +1576,9 @@ function ErrorRecoveryScreen({
             <button className="btn-secondary" onClick={() => void app.selectSourceFile()} type="button">
               Choose File
             </button>
+            <button className="btn-secondary" onClick={() => factoryWorkspace.setOpen(true)} type="button">
+              Factory
+            </button>
           </div>
         </div>
       </div>
@@ -1459,6 +1590,22 @@ function ErrorRecoveryScreen({
         commandActions={commandActions}
       />
       {station.element}
+      <FactoryPanel
+        open={factoryWorkspace.open}
+        packets={factoryWorkspace.packets}
+        summary={factoryWorkspace.summary}
+        selectedPacket={factoryWorkspace.selectedPacket}
+        stationStatus={{
+          configured: station.configured,
+          availability: station.availability,
+          dashboardUrl: station.dashboardUrl,
+        }}
+        onClose={() => factoryWorkspace.setOpen(false)}
+        onSelectPacket={factoryWorkspace.selectPacket}
+        onCaptureIntent={factoryWorkspace.captureIntent}
+        onAdvancePacket={factoryWorkspace.advancePacket}
+        onReset={factoryWorkspace.resetWorkspace}
+      />
     </div>
   )
 }

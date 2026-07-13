@@ -11,7 +11,7 @@ import {
 import { SearchModal, type SearchCommandAction } from '../components/SearchModal'
 import { TimeMachine } from '../components/TimeMachine'
 import { useAgentStation } from '../agent-station/use-agent-station'
-import { isCommandPaletteOpenShortcut } from '../lib/keyboard-shortcuts'
+import { shouldOpenCommandPalette } from '../lib/keyboard-shortcuts'
 import type { QuickNoteSearchHit, SourceNote } from '../../core/quicknote/types'
 
 type LinkThreadStatus = 'running' | 'ready'
@@ -110,8 +110,7 @@ export function AgentLinkExperiment() {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (!isCommandPaletteOpenShortcut(event)) return
-      if (isInteractiveTarget(event.target)) return
+      if (!shouldOpenCommandPalette(event)) return
       event.preventDefault()
       setSearchOpen(true)
     }
@@ -702,10 +701,4 @@ function previewText(value: string): string {
 
 function lineCount(value: string): number {
   return value.split('\n').length
-}
-
-function isInteractiveTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false
-  if (target.isContentEditable) return true
-  return target.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]') !== null
 }
