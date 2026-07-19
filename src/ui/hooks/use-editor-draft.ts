@@ -269,7 +269,9 @@ export function useEditorDraft({
     return () => {
       undoManager.clear()
     }
-  }, [editor?.sessionKey, editor?.title, editor?.timestamp, editor?.body, editor?.tags, updateUndoRedoAvailability])
+    // A draft document belongs to an editor session. Recreating it for every
+    // controlled-field value change clears the UndoManager on every keystroke.
+  }, [editor?.sessionKey, updateUndoRedoAvailability])
 
   useEffect(() => {
     if (!autoSaveEnabled) return
