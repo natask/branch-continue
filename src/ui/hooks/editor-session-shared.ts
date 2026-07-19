@@ -23,6 +23,7 @@ export interface UseEditorSessionOptions {
   sourceSelected: boolean
   createNote: (request: QuickNoteCreateRequest) => Promise<SourceNote>
   updateNote: (noteId: string, request: QuickNoteCreateRequest) => Promise<SourceNote>
+  beforeBranch?: () => Promise<boolean | void>
 }
 
 export interface OpenEditorOptions {

@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import fixWebmDuration from 'fix-webm-duration'
+import {
+  canonicalPcmCaptureAvailable,
+  startCanonicalPcmCapture,
+  type CanonicalPcmCapture,
+  type CanonicalPcmFrame,
+} from '../../core/audio/pcm-capture'
 
 export type AudioRecorderStatus = 'idle' | 'requesting' | 'recording' | 'stopping' | 'stopped' | 'error'
 
@@ -15,21 +21,39 @@ export interface AudioRecordingComplete {
   offsetMs: number
   segmentStartReason: AudioRecordingSegmentStartReason
   final: boolean
+  ownerSessionKey: string | number | null
 }
 
 export type AudioRecordingSegmentStartReason = 'start' | 'auto' | 'manual' | 'language-switch'
 
-interface AudioRecorderStartOptions {
-  newSession?: boolean
+export interface AudioRecorderResumeSession {
+  sessionId: string
+  segmentIndex: number
+  offsetMs: number
 }
 
-const MAX_TRANSCRIPTION_SEGMENT_MS = 45_000
+interface AudioRecorderStartOptions {
+  newSession?: boolean
+  resumeSession?: AudioRecorderResumeSession
+}
+
+// Keep transcription and waveform navigation blocks small enough to scan.
+// Natural speech gaps can create smaller presentation groups, but no raw
+// recognition segment should span more than thirty seconds.
+const MAX_TRANSCRIPTION_SEGMENT_MS = 30_000
 
 interface UseAudioNoteRecorderOptions {
+  /**
+   * Identity of the note/editor that owns this recording session. Pause and
+   * resume may reuse a session only while this key remains unchanged.
+   */
+  sessionKey?: string | number | null
   languageCode?: string
   livePreview?: boolean
   onFinalTranscript?: (segment: string) => void
   onRecordingComplete?: (capture: AudioRecordingComplete) => void | Promise<void>
+  /** Canonical 16 kHz PCM frames for a future streaming transcription consumer. */
+  onPcmFrame?: (frame: CanonicalPcmFrame) => void
 }
 
 export interface UseAudioNoteRecorderResult {
@@ -44,18 +68,22 @@ export interface UseAudioNoteRecorderResult {
   mimeType: string | null
   speechRecognitionAvailable: boolean
   mediaRecorderAvailable: boolean
+  pcmCaptureAvailable: boolean
   diagnostic: string | null
   start: (languageCode?: string, options?: AudioRecorderStartOptions) => Promise<void>
   switchLanguage: (languageCode: string) => void
   stop: () => void
+  stopAndWait: () => Promise<void>
   clear: () => void
 }
 
 export function useAudioNoteRecorder({
+  sessionKey = null,
   languageCode,
   livePreview = false,
   onFinalTranscript,
   onRecordingComplete,
+  onPcmFrame,
 }: UseAudioNoteRecorderOptions = {}): UseAudioNoteRecorderResult {
   const [status, setStatus] = useState<AudioRecorderStatus>('idle')
   const [elapsedMs, setElapsedMs] = useState(0)
@@ -74,15 +102,15 @@ export function useAudioNoteRecorder({
   const recordingRef = useRef(false)
   const stopRequestedRef = useRef(false)
   const segmentTimerRef = useRef<number | null>(null)
-  const segmentIndexRef = useRef(0)
-  const segmentOffsetMsRef = useRef(0)
+  const sessionCursorRef = useRef(createAudioRecorderSessionCursor(sessionKey))
+  const sessionBoundaryKeyRef = useRef<string | number | null>(sessionKey)
+  const presentationSessionKeyRef = useRef<string | number | null>(sessionKey)
+  const resetSessionAfterStopRef = useRef(false)
   const segmentStartedAtRef = useRef(0)
   const segmentStartedAtIsoRef = useRef<string | null>(null)
   const segmentLanguageCodeRef = useRef(resolveLanguageCode(languageCode))
   const segmentStartReasonRef = useRef<AudioRecordingSegmentStartReason>('start')
   const nextSegmentStartReasonRef = useRef<AudioRecordingSegmentStartReason>('auto')
-  const sessionIdRef = useRef(createAudioSessionId())
-  const hasSessionRef = useRef(false)
   const startedAtRef = useRef(0)
   const startedAtIsoRef = useRef<string | null>(null)
   const elapsedTimerRef = useRef<number | null>(null)
@@ -92,11 +120,38 @@ export function useAudioNoteRecorder({
   const onFinalTranscriptRef = useRef(onFinalTranscript)
   const onRecordingCompleteRef = useRef(onRecordingComplete)
   const completionQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const stopWaitersRef = useRef<Array<() => void>>([])
+  const startGenerationRef = useRef(0)
+  const pcmCaptureRef = useRef<CanonicalPcmCapture | null>(null)
+  const pcmCaptureGenerationRef = useRef(0)
+  const pcmSessionNextSampleRef = useRef(0)
+  const onPcmFrameRef = useRef(onPcmFrame)
+
+  if (!Object.is(sessionBoundaryKeyRef.current, sessionKey)) {
+    const previousSessionKey = sessionBoundaryKeyRef.current
+    sessionBoundaryKeyRef.current = sessionKey
+    startGenerationRef.current += 1
+    resetSessionAfterStopRef.current = transitionAudioRecorderSessionBoundary(
+      sessionCursorRef.current,
+      previousSessionKey,
+      sessionKey,
+      recordingRef.current,
+    )
+    if (!recordingRef.current) pcmSessionNextSampleRef.current = 0
+  }
 
   languageCodeRef.current = languageCode
   livePreviewRef.current = livePreview
   onFinalTranscriptRef.current = onFinalTranscript
   onRecordingCompleteRef.current = onRecordingComplete
+  onPcmFrameRef.current = onPcmFrame
+
+  const stopPcmCapture = useCallback(() => {
+    pcmCaptureGenerationRef.current += 1
+    const capture = pcmCaptureRef.current
+    pcmCaptureRef.current = null
+    if (capture) void capture.stop()
+  }, [])
 
   const stopElapsedTimer = useCallback(() => {
     if (elapsedTimerRef.current === null) return
@@ -135,9 +190,10 @@ export function useAudioNoteRecorder({
     stopSegmentTimer()
     stopElapsedTimer()
     stopSpeechRecognition()
+    stopPcmCapture()
     cleanupStream()
     mediaRecorderRef.current = null
-  }, [cleanupStream, stopElapsedTimer, stopSegmentTimer, stopSpeechRecognition])
+  }, [cleanupStream, stopElapsedTimer, stopPcmCapture, stopSegmentTimer, stopSpeechRecognition])
 
   const clear = useCallback(() => {
     if (recordingRef.current) return
@@ -215,8 +271,17 @@ export function useAudioNoteRecorder({
 
   const start = useCallback(async (nextLanguageCode?: string, options: AudioRecorderStartOptions = {}) => {
     if (recordingRef.current) return
+    const startGeneration = startGenerationRef.current + 1
+    startGenerationRef.current = startGeneration
+    const requestedOwnerSessionKey = sessionBoundaryKeyRef.current
     if (nextLanguageCode) languageCodeRef.current = nextLanguageCode
-    const continueSession = hasSessionRef.current && status === 'stopped' && !options.newSession
+    const cursor = sessionCursorRef.current
+    if (options.resumeSession && !options.newSession) {
+      hydrateAudioRecorderSessionCursor(cursor, options.resumeSession)
+    }
+    const continueSession = cursor.hasSession
+      && (status === 'stopped' || Boolean(options.resumeSession))
+      && !options.newSession
 
     setStatus('requesting')
     setError(null)
@@ -234,6 +299,13 @@ export function useAudioNoteRecorder({
       await requestNativeMicrophonePermission()
       assertMediaRecorderAvailable()
       const stream = await getAudioStream()
+      if (
+        startGeneration !== startGenerationRef.current
+        || !Object.is(requestedOwnerSessionKey, sessionBoundaryKeyRef.current)
+      ) {
+        for (const track of stream.getTracks()) track.stop()
+        return
+      }
       const preferredMimeType = pickAudioMimeType()
 
       if (isAndroidTauriRuntime() && !preferredMimeType) {
@@ -244,27 +316,53 @@ export function useAudioNoteRecorder({
       recordingRef.current = true
       stopRequestedRef.current = false
       if (!continueSession) {
-        segmentIndexRef.current = 0
-        segmentOffsetMsRef.current = 0
-        sessionIdRef.current = createAudioSessionId()
+        resetAudioRecorderSessionCursor(cursor)
+        pcmSessionNextSampleRef.current = 0
+      }
+
+      // MediaRecorder remains the persisted/batch-Chirp source. Consumers that
+      // opt into PCM receive a ChiefMoa-style canonical stream in parallel;
+      // unsupported WebViews simply continue on the established recorder.
+      if (onPcmFrameRef.current && canonicalPcmCaptureAvailable()) {
+        const generation = pcmCaptureGenerationRef.current + 1
+        pcmCaptureGenerationRef.current = generation
+        void startCanonicalPcmCapture(stream, {
+          startSample: pcmSessionNextSampleRef.current,
+          onFrame: (frame) => {
+            pcmSessionNextSampleRef.current = Math.max(pcmSessionNextSampleRef.current, frame.endSample)
+            onPcmFrameRef.current?.(frame)
+          },
+        }).then((capture) => {
+          if (!capture) return
+          if (generation !== pcmCaptureGenerationRef.current || !recordingRef.current) {
+            void capture.stop()
+            return
+          }
+          pcmCaptureRef.current = capture
+          capture.beginLive()
+        }).catch(() => {
+          // Capability and runtime failures deliberately fall back to the
+          // existing MediaRecorder batch path.
+        })
       }
       segmentStartReasonRef.current = continueSession ? 'manual' : 'start'
       nextSegmentStartReasonRef.current = 'auto'
-      hasSessionRef.current = true
+      cursor.hasSession = true
       const startedAt = new Date()
-      startedAtRef.current = startedAt.getTime() - segmentOffsetMsRef.current
+      startedAtRef.current = startedAt.getTime() - cursor.offsetMs
       startedAtIsoRef.current = startedAt.toISOString()
-      setElapsedMs(segmentOffsetMsRef.current)
+      setElapsedMs(cursor.offsetMs)
 
       const startRecorderSegment = () => {
         const recorder = preferredMimeType
           ? new MediaRecorder(stream, { mimeType: preferredMimeType })
           : new MediaRecorder(stream)
-        const segmentIndex = segmentIndexRef.current
-        const segmentOffsetMs = segmentOffsetMsRef.current
+        const segmentIndex = cursor.segmentIndex
+        const segmentOffsetMs = cursor.offsetMs
         const segmentStartedAt = new Date()
         const segmentLanguageCode = resolveLanguageCode(languageCodeRef.current)
         const segmentStartReason = segmentStartReasonRef.current
+        const ownerSessionKey = sessionBoundaryKeyRef.current
 
         chunksRef.current = []
         mediaRecorderRef.current = recorder
@@ -292,7 +390,7 @@ export function useAudioNoteRecorder({
           const isFinal = stopRequestedRef.current
           const captureStartedAtIso = segmentStartedAtIsoRef.current
           const captureLanguageCode = segmentLanguageCodeRef.current
-          const captureSessionId = sessionIdRef.current
+          const captureSessionId = cursor.sessionId
 
           if (rawBlob.size > 0 && durationMs > 0) {
             const fixedBlobPromise = normalizeRecordedBlobDuration(rawBlob, durationMs)
@@ -300,13 +398,17 @@ export function useAudioNoteRecorder({
               .catch(() => undefined)
               .then(async () => {
                 const blob = await fixedBlobPromise
-                const url = URL.createObjectURL(blob)
-                if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current)
-                audioUrlRef.current = url
-                setAudioBlob(blob)
-                setAudioUrl(url)
-                setMimeType(type)
-                void onRecordingCompleteRef.current?.({
+                // Persist an old note's final segment after navigation without
+                // leaking its playback state into the newly opened note.
+                if (Object.is(ownerSessionKey, sessionBoundaryKeyRef.current)) {
+                  const url = URL.createObjectURL(blob)
+                  if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current)
+                  audioUrlRef.current = url
+                  setAudioBlob(blob)
+                  setAudioUrl(url)
+                  setMimeType(type)
+                }
+                await onRecordingCompleteRef.current?.({
                   blob,
                   mimeType: type,
                   durationMs,
@@ -318,6 +420,7 @@ export function useAudioNoteRecorder({
                   offsetMs: segmentOffsetMs,
                   segmentStartReason,
                   final: isFinal,
+                  ownerSessionKey,
                 })
               })
             void completionQueueRef.current.catch((nextError) => {
@@ -325,13 +428,26 @@ export function useAudioNoteRecorder({
             })
           }
 
-          segmentOffsetMsRef.current = segmentOffsetMs + Math.max(0, durationMs)
-          segmentIndexRef.current = segmentIndex + 1
+          cursor.offsetMs = segmentOffsetMs + Math.max(0, durationMs)
+          cursor.segmentIndex = segmentIndex + 1
 
           if (isFinal) {
             setElapsedMs(Date.now() - startedAtRef.current)
-            setStatus('stopped')
             cleanupRecording()
+            if (resetSessionAfterStopRef.current) {
+              resetSessionAfterStopRef.current = false
+              resetAudioRecorderSessionCursor(cursor)
+              pcmSessionNextSampleRef.current = 0
+              setElapsedMs(0)
+              setStatus('idle')
+            } else {
+              setStatus('stopped')
+            }
+            const resolveStopWaiters = () => {
+              const waiters = stopWaitersRef.current.splice(0)
+              for (const resolve of waiters) resolve()
+            }
+            void completionQueueRef.current.then(resolveStopWaiters, resolveStopWaiters)
             return
           }
 
@@ -358,6 +474,7 @@ export function useAudioNoteRecorder({
       }, 500)
       setStatus('recording')
     } catch (nextError) {
+      if (startGeneration !== startGenerationRef.current) return
       cleanupRecording()
       setStatus('error')
       setError(errorMessage(nextError))
@@ -373,18 +490,7 @@ export function useAudioNoteRecorder({
 
     stopSpeechRecognition()
     startSpeechRecognition()
-
-    const recorder = mediaRecorderRef.current
-    if (!recorder || recorder.state !== 'recording') return
-
-    nextSegmentStartReasonRef.current = 'language-switch'
-    stopSegmentTimer()
-    try {
-      recorder.stop()
-    } catch (nextError) {
-      setError(errorMessage(nextError))
-    }
-  }, [startSpeechRecognition, stopSegmentTimer, stopSpeechRecognition])
+  }, [startSpeechRecognition, stopSpeechRecognition])
 
   const stop = useCallback(() => {
     if (!recordingRef.current) return
@@ -393,16 +499,45 @@ export function useAudioNoteRecorder({
     stopSegmentTimer()
     stopElapsedTimer()
     stopSpeechRecognition()
+    stopPcmCapture()
 
     const recorder = mediaRecorderRef.current
     if (!recorder || recorder.state === 'inactive') {
       cleanupRecording()
       setStatus('stopped')
+      const waiters = stopWaitersRef.current.splice(0)
+      for (const resolve of waiters) resolve()
       return
     }
 
     recorder.stop()
-  }, [cleanupRecording, stopElapsedTimer, stopSegmentTimer, stopSpeechRecognition])
+  }, [cleanupRecording, stopElapsedTimer, stopPcmCapture, stopSegmentTimer, stopSpeechRecognition])
+
+  const stopAndWait = useCallback(async () => {
+    if (!recordingRef.current) {
+      await completionQueueRef.current.catch(() => undefined)
+      return
+    }
+    await new Promise<void>((resolve) => {
+      stopWaitersRef.current.push(resolve)
+      stop()
+    })
+  }, [stop])
+
+  useEffect(() => {
+    // Changing notes (including creating a branch) is an explicit recording
+    // boundary. Finish an active segment so it remains valid, then clear every
+    // presentation field owned by the previous note. Stable keys intentionally
+    // preserve pause/resume and its latest playback blob.
+    if (Object.is(presentationSessionKeyRef.current, sessionKey)) return
+    presentationSessionKeyRef.current = sessionKey
+    const nextSessionKey = sessionKey
+
+    void stopAndWait().finally(() => {
+      if (!Object.is(sessionBoundaryKeyRef.current, nextSessionKey) || recordingRef.current) return
+      clear()
+    })
+  }, [clear, sessionKey, stopAndWait])
 
   useEffect(
     () => () => {
@@ -424,12 +559,64 @@ export function useAudioNoteRecorder({
     mimeType,
     speechRecognitionAvailable: livePreview && typeof window !== 'undefined' && Boolean(window.SpeechRecognition ?? window.webkitSpeechRecognition),
     mediaRecorderAvailable: maybeBrowserAudioRecordingAvailable(),
+    pcmCaptureAvailable: canonicalPcmCaptureAvailable(),
     diagnostic,
     start,
     switchLanguage,
     stop,
+    stopAndWait,
     clear,
   }
+}
+
+export interface AudioRecorderSessionCursor {
+  sessionId: string
+  hasSession: boolean
+  segmentIndex: number
+  offsetMs: number
+}
+
+export function createAudioRecorderSessionCursor(_sessionKey?: string | number | null): AudioRecorderSessionCursor {
+  return {
+    sessionId: createAudioSessionId(),
+    hasSession: false,
+    segmentIndex: 0,
+    offsetMs: 0,
+  }
+}
+
+export function resetAudioRecorderSessionCursor(cursor: AudioRecorderSessionCursor): void {
+  cursor.sessionId = createAudioSessionId()
+  cursor.hasSession = false
+  cursor.segmentIndex = 0
+  cursor.offsetMs = 0
+}
+
+export function hydrateAudioRecorderSessionCursor(
+  cursor: AudioRecorderSessionCursor,
+  session: AudioRecorderResumeSession,
+): void {
+  cursor.sessionId = session.sessionId
+  cursor.hasSession = true
+  cursor.segmentIndex = Math.max(0, session.segmentIndex)
+  cursor.offsetMs = Math.max(0, session.offsetMs)
+}
+
+/**
+ * Applies a note identity transition to a recorder cursor. Active recordings
+ * return `true` so the caller can stop first and reset after MediaRecorder has
+ * emitted the segment using the old session metadata.
+ */
+export function transitionAudioRecorderSessionBoundary(
+  cursor: AudioRecorderSessionCursor,
+  previousSessionKey: string | number | null,
+  nextSessionKey: string | number | null,
+  recording: boolean,
+): boolean {
+  if (Object.is(previousSessionKey, nextSessionKey)) return false
+  if (recording) return true
+  resetAudioRecorderSessionCursor(cursor)
+  return false
 }
 
 function resolveLanguageCode(languageCode: string | undefined): string {

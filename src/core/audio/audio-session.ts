@@ -22,6 +22,19 @@ export interface AudioSessionBlob {
   segments: AudioSessionSegment[]
 }
 
+/**
+ * Translate a timestamp persisted against the recorder's wall-clock session
+ * into the gap-free decoded WAV assembled for playback.
+ */
+export function remapRecorderTimeToAssembledTime(
+  timeMs: number,
+  recorderSegmentStartMs: number,
+  assembledSegmentStartMs: number,
+): number {
+  const withinSegmentMs = Math.max(0, timeMs - recorderSegmentStartMs)
+  return Math.max(0, Math.round(assembledSegmentStartMs + withinSegmentMs))
+}
+
 type AudioBufferToWav = (buffer: AudioBuffer, options?: { float32?: boolean }) => ArrayBuffer
 
 export async function buildAudioSessionBlob(records: AudioCaptureRecord[]): Promise<AudioSessionBlob | null> {

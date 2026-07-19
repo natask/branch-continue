@@ -65,6 +65,7 @@ export function useEditorSession({
   sourceSelected,
   createNote,
   updateNote,
+  beforeBranch,
 }: UseEditorSessionOptions): UseEditorSessionResult {
   const [editor, setEditor] = useState<EditorState | null>(null)
 
@@ -141,12 +142,15 @@ export function useEditorSession({
     const current = editorRef.current
     if (!current) return
 
+    const canBranch = await beforeBranch?.()
+    if (canBranch === false) return
+
     const ok = await draft.flushAutoSave()
     if (!ok) return
 
     const branchSource = editorRef.current?.source ?? current.source ?? null
     openBranchEditor(branchSource)
-  }, [draft, openBranchEditor])
+  }, [beforeBranch, draft, openBranchEditor])
 
   const fields = useEditorFields({
     editorRef,

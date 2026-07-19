@@ -3,6 +3,8 @@ export type VoiceTranscriptInsertMode = 'append' | 'replace-selection'
 
 export interface VoiceRecordingConfig {
   languageCode: string
+  spokenLanguageCodes: string[]
+  transcriptionPrompt: string
   transcriptionMode: VoiceRecordingTranscriptionMode
   projectId: string
   location: string
@@ -34,8 +36,27 @@ export const PRIMARY_VOICE_LANGUAGE_OPTIONS = [
   { code: 'am-ET', label: 'Amharic', shortLabel: 'AM', flag: '🇪🇹' },
 ]
 
+const PREVIOUS_VOICE_TRANSCRIPTION_PROMPT = [
+  'Transcribe this personal voice note faithfully.',
+  'The speaker uses English and Amharic and may switch naturally between them.',
+  'Preserve the language and script actually spoken; do not translate.',
+  'Preserve names and technical terms as spoken.',
+  'Use normal punctuation and output only the transcript with no commentary or newlines.',
+].join(' ')
+
+export const DEFAULT_VOICE_TRANSCRIPTION_PROMPT = [
+  'Transcribe this personal voice note faithfully.',
+  'The speaker uses English and Amharic and may switch naturally between them.',
+  'Preserve the language and script actually spoken; do not translate.',
+  'The speaker commonly uses a technical and academic register, especially computer science, software, systems, engineering, mathematics, frequency-domain concepts, and technical analogies.',
+  'Prefer contextually correct technical terms, notation, acronyms, proper names, and mathematical vocabulary over phonetically similar everyday words, but do not invent jargon that was not spoken.',
+  'Use normal punctuation and output only the transcript with no commentary or newlines.',
+].join(' ')
+
 export const DEFAULT_VOICE_RECORDING_CONFIG: VoiceRecordingConfig = {
   languageCode: 'en-US',
+  spokenLanguageCodes: PRIMARY_VOICE_LANGUAGE_OPTIONS.map((option) => option.code),
+  transcriptionPrompt: DEFAULT_VOICE_TRANSCRIPTION_PROMPT,
   transcriptionMode: 'chirp3',
   projectId: import.meta.env.VITE_GCP_PROJECT_ID?.trim() || '',
   location: import.meta.env.VITE_GCP_LOCATION?.trim() || 'us',
@@ -72,6 +93,8 @@ export function normalizeVoiceRecordingConfig(value: unknown): VoiceRecordingCon
 
   return {
     languageCode,
+    spokenLanguageCodes: normalizeSpokenLanguageCodes(record.spokenLanguageCodes, languageCode),
+    transcriptionPrompt: normalizeTranscriptionPrompt(record.transcriptionPrompt),
     transcriptionMode,
     projectId: stringOrDefault(record.projectId, DEFAULT_VOICE_RECORDING_CONFIG.projectId),
     location: stringOrDefault(record.location, DEFAULT_VOICE_RECORDING_CONFIG.location),
@@ -79,6 +102,28 @@ export function normalizeVoiceRecordingConfig(value: unknown): VoiceRecordingCon
     serviceAccountKeyPath: stringOrDefault(record.serviceAccountKeyPath, ''),
     insertMode,
   }
+}
+
+function normalizeTranscriptionPrompt(value: unknown): string {
+  if (typeof value !== 'string' || value === PREVIOUS_VOICE_TRANSCRIPTION_PROMPT) {
+    return DEFAULT_VOICE_TRANSCRIPTION_PROMPT
+  }
+  return value
+}
+
+function normalizeSpokenLanguageCodes(value: unknown, fallbackLanguageCode: string): string[] {
+  if (!Array.isArray(value)) {
+    return DEFAULT_VOICE_RECORDING_CONFIG.spokenLanguageCodes
+  }
+
+  const supportedCodes = new Set(VOICE_LANGUAGE_OPTIONS.map((option) => option.code))
+  const normalized = value
+    .filter((code): code is string => typeof code === 'string')
+    .map((code) => code.trim())
+    .filter((code, index, codes) => supportedCodes.has(code) && codes.indexOf(code) === index)
+    .slice(0, 3)
+
+  return normalized.length > 0 ? normalized : [fallbackLanguageCode]
 }
 
 export function voiceLanguageLabel(languageCode: string): string {

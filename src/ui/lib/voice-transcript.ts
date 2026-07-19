@@ -23,7 +23,20 @@ export function appendVoiceTranscriptSegment(body: string, segment: string): str
 
 export function appendAudioCaptureReference(body: string, uri: string): string {
   const cleanUri = uri.trim()
-  if (!cleanUri || body.includes(cleanUri)) return body
+  if (!cleanUri) return body
+
+  // A recording session is represented by exactly one note reference. Older
+  // versions appended every MediaRecorder chunk; collapse those lines while
+  // retaining the first (canonical) recording for backwards compatibility.
+  const existingLines = body.trimEnd().split('\n')
+  const firstAudioIndex = existingLines.findIndex((line) => /^\s*Audio recording:\s+/i.test(line))
+  if (firstAudioIndex >= 0) {
+    const withoutDuplicateAudioLines = existingLines.filter((line, index) => {
+      if (!/^\s*Audio recording:\s+/i.test(line)) return true
+      return index === firstAudioIndex
+    })
+    return withoutDuplicateAudioLines.join('\n').trimEnd()
+  }
 
   const trimmedBody = body.trimEnd()
   const line = formatAudioCaptureReferenceLine(cleanUri)

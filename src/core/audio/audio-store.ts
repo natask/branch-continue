@@ -1,7 +1,8 @@
 const DB_NAME = 'branch-continue-audio'
 const STORE_NAME = 'captures'
 const TRANSCRIPT_STORE_NAME = 'transcripts'
-const DB_VERSION = 2
+const SESSION_STORE_NAME = 'sessions'
+const DB_VERSION = 3
 const AUDIO_URI_PREFIX = 'branch-continue-audio://'
 const RECORDINGS_DIR = 'recordings'
 const TRANSCRIPT_FILE_SUFFIX = '.transcript.md'
@@ -29,6 +30,12 @@ export interface AudioCaptureRecord {
   relativePath?: string
   storage?: AudioCaptureStorage
   metadata?: AudioCaptureMetadata
+}
+
+export interface AudioCaptureResumeSession {
+  sessionId: string
+  segmentIndex: number
+  offsetMs: number
 }
 
 export interface SaveAudioCaptureInput {
@@ -63,6 +70,16 @@ export interface SaveAudioTranscriptSegmentInput {
   segmentIndex: number
   createdAt: string
   durationMs?: number
+  /** Word offsets returned by Chirp, relative to this captured audio chunk. */
+  words?: AudioTranscriptWord[]
+}
+
+export interface AudioTranscriptWord {
+  text: string
+  /** Absolute offset in the full pause/resume recording session. */
+  startMs: number
+  /** Absolute offset in the full pause/resume recording session. */
+  endMs: number
 }
 
 export interface AudioTranscriptSegment {
@@ -78,6 +95,7 @@ export interface AudioTranscriptSegment {
   segmentIndex: number
   durationMs?: number
   storage?: AudioCaptureStorage
+  words?: AudioTranscriptWord[]
 }
 
 export interface AudioCaptureReference {
@@ -87,6 +105,19 @@ export interface AudioCaptureReference {
   id?: string
   href?: string
   label: string
+}
+
+interface AudioCaptureSessionMember {
+  uri: string
+  segmentIndex: number
+}
+
+interface AudioCaptureSessionIndex {
+  id: string
+  sessionId: string
+  canonicalUri: string
+  members: AudioCaptureSessionMember[]
+  updatedAt: string
 }
 
 interface AndroidAudioCaptureFileResult {
@@ -219,6 +250,93 @@ export async function loadAudioCaptureReference(
   }
 }
 
+/**
+ * Resolve every persisted chunk belonging to the session represented by one
+ * canonical note reference. Older recordings without a session index still
+ * load as a single recording.
+ */
+export async function loadAudioCaptureSession(
+  reference: AudioCaptureReference,
+  sourcePath?: string,
+): Promise<AudioCaptureRecord[]> {
+  const canonical = await loadAudioCaptureReference(reference, sourcePath)
+  if (!canonical) return []
+
+  const sessionId = canonical.metadata?.sessionId
+  if (!sessionId) return [canonical]
+
+  const index = await loadAudioCaptureSessionIndex(canonical, sourcePath).catch(() => null)
+  const indexedMembers = index?.members ?? []
+  const discoveredMembers = indexedMembers.length > 0
+    ? indexedMembers
+    : await discoverAudioCaptureSessionMembers(canonical, sourcePath).catch(() => [])
+  if (discoveredMembers.length === 0) return [canonical]
+
+  const records: AudioCaptureRecord[] = []
+  const seen = new Set<string>()
+  for (const member of [...discoveredMembers].sort((a, b) => a.segmentIndex - b.segmentIndex)) {
+    if (seen.has(member.uri)) continue
+    seen.add(member.uri)
+    const memberReference = audioReferenceForUri(member.uri)
+    if (!memberReference) continue
+    const record = member.uri === reference.uri
+      ? canonical
+      : await loadAudioCaptureReference(memberReference, sourcePath).catch(() => null)
+    if (record) records.push(record)
+  }
+
+  if (!seen.has(reference.uri)) records.unshift(canonical)
+  return records.sort((a, b) => (a.metadata?.segmentIndex ?? 0) - (b.metadata?.segmentIndex ?? 0))
+}
+
+export function resolveAudioCaptureResumeSession(
+  records: AudioCaptureRecord[],
+): AudioCaptureResumeSession | null {
+  const sessionId = records.find((record) => record.metadata?.sessionId)?.metadata?.sessionId
+  if (!sessionId) return null
+  const sessionRecords = records.filter((record) => record.metadata?.sessionId === sessionId)
+  return {
+    sessionId,
+    segmentIndex: sessionRecords.reduce(
+      (next, record) => Math.max(next, (record.metadata?.segmentIndex ?? -1) + 1),
+      0,
+    ),
+    offsetMs: sessionRecords.reduce(
+      (next, record) => Math.max(
+        next,
+        (record.metadata?.offsetMs ?? 0) + Math.max(0, record.durationMs),
+      ),
+      0,
+    ),
+  }
+}
+
+/** Persist the membership needed to rebuild a pause/resume session on reload. */
+export async function registerAudioCaptureSessionSegment(
+  audio: SaveAudioCaptureResult,
+  sourcePath?: string,
+): Promise<string> {
+  const metadata = audio.metadata
+  if (!metadata?.sessionId) return audio.uri
+
+  const current = await loadSessionIndexForSavedAudio(audio, sourcePath).catch(() => null)
+  const canonicalUri = current?.canonicalUri || audio.uri
+  const members = upsertSessionMember(current?.members ?? [], {
+    uri: audio.uri,
+    segmentIndex: metadata.segmentIndex,
+  })
+  const index: AudioCaptureSessionIndex = {
+    id: metadata.sessionId,
+    sessionId: metadata.sessionId,
+    canonicalUri,
+    members,
+    updatedAt: new Date().toISOString(),
+  }
+
+  await saveAudioCaptureSessionIndex(index, audio, sourcePath)
+  return canonicalUri
+}
+
 export async function saveAudioTranscriptSegment(
   input: SaveAudioTranscriptSegmentInput,
 ): Promise<AudioTranscriptSegment | null> {
@@ -236,6 +354,7 @@ export async function saveAudioTranscriptSegment(
     sessionId: input.sessionId,
     segmentIndex: input.segmentIndex,
     durationMs: input.durationMs,
+    words: toSessionTranscriptWords(input.words, input.offsetMs, input.durationMs),
   }
 
   if (input.sourcePath && isAndroidContentSourcePath(input.sourcePath) && input.audio.relativePath && await isTauriRuntime()) {
@@ -411,6 +530,186 @@ async function saveAudioCaptureIndexedDb(record: SaveAudioCaptureInput): Promise
   }
 }
 
+async function loadSessionIndexForSavedAudio(
+  audio: SaveAudioCaptureResult,
+  sourcePath?: string,
+): Promise<AudioCaptureSessionIndex | null> {
+  if (audio.storage === 'indexed-db') return loadAudioCaptureSessionIndexIndexedDb(audio.metadata?.sessionId ?? '')
+  if (sourcePath && isAndroidContentSourcePath(sourcePath) && await isTauriRuntime()) {
+    return loadAndroidAudioCaptureSessionIndex(audio.metadata?.sessionId ?? '', sourcePath)
+  }
+  if (!audio.path || !await isTauriRuntime()) return null
+  return loadAudioCaptureSessionIndexFile(audio.metadata?.sessionId ?? '', audio.path)
+}
+
+async function saveAudioCaptureSessionIndex(
+  index: AudioCaptureSessionIndex,
+  audio: SaveAudioCaptureResult,
+  sourcePath?: string,
+): Promise<void> {
+  if (audio.storage === 'indexed-db') {
+    const db = await openAudioDb()
+    await transactionRequest(
+      db.transaction(SESSION_STORE_NAME, 'readwrite').objectStore(SESSION_STORE_NAME).put(index),
+    )
+    return
+  }
+
+  const bytes = new TextEncoder().encode(JSON.stringify(index, null, 2))
+  if (sourcePath && isAndroidContentSourcePath(sourcePath) && await isTauriRuntime()) {
+    const core = await import('@tauri-apps/api/core')
+    await core.invoke<AndroidAudioCaptureFileResult>('android_save_audio_capture', {
+      payload: {
+        sourceUri: sourcePath,
+        relativePath: sessionIndexRelativePath(index.sessionId),
+        mimeType: 'application/json',
+        base64: uint8ArrayToBase64(bytes),
+        metadataJson: null,
+      },
+    })
+    return
+  }
+
+  if (!audio.path || !await isTauriRuntime()) return
+  const fs = await import('@tauri-apps/plugin-fs')
+  await fs.writeFile(sessionIndexPathForAudioPath(audio.path, index.sessionId), bytes)
+}
+
+async function loadAudioCaptureSessionIndex(
+  canonical: AudioCaptureRecord,
+  sourcePath?: string,
+): Promise<AudioCaptureSessionIndex | null> {
+  const sessionId = canonical.metadata?.sessionId ?? ''
+  if (!sessionId) return null
+  if (canonical.storage === 'indexed-db') return loadAudioCaptureSessionIndexIndexedDb(sessionId)
+  if (sourcePath && isAndroidContentSourcePath(sourcePath) && await isTauriRuntime()) {
+    return loadAndroidAudioCaptureSessionIndex(sessionId, sourcePath)
+  }
+  if (!canonical.path || !await isTauriRuntime()) return null
+  return loadAudioCaptureSessionIndexFile(sessionId, canonical.path)
+}
+
+async function loadAudioCaptureSessionIndexIndexedDb(sessionId: string): Promise<AudioCaptureSessionIndex | null> {
+  if (!sessionId) return null
+  const db = await openAudioDb()
+  const index = await transactionRequest<AudioCaptureSessionIndex | undefined>(
+    db.transaction(SESSION_STORE_NAME, 'readonly').objectStore(SESSION_STORE_NAME).get(sessionId),
+  )
+  return normalizeAudioCaptureSessionIndex(index)
+}
+
+async function loadAudioCaptureSessionIndexFile(
+  sessionId: string,
+  audioPath: string,
+): Promise<AudioCaptureSessionIndex | null> {
+  if (!sessionId) return null
+  const fs = await import('@tauri-apps/plugin-fs')
+  const bytes = await fs.readFile(sessionIndexPathForAudioPath(audioPath, sessionId))
+  return normalizeAudioCaptureSessionIndex(JSON.parse(new TextDecoder().decode(bytes)))
+}
+
+async function loadAndroidAudioCaptureSessionIndex(
+  sessionId: string,
+  sourcePath: string,
+): Promise<AudioCaptureSessionIndex | null> {
+  if (!sessionId) return null
+  const core = await import('@tauri-apps/api/core')
+  const loaded = await core.invoke<AndroidAudioCaptureContentResult>('android_read_audio_capture', {
+    payload: {
+      sourceUri: sourcePath,
+      relativePath: sessionIndexRelativePath(sessionId),
+    },
+  })
+  if (!loaded.base64) return null
+  return normalizeAudioCaptureSessionIndex(JSON.parse(uint8ArrayToText(base64ToUint8Array(loaded.base64))))
+}
+
+async function discoverAudioCaptureSessionMembers(
+  canonical: AudioCaptureRecord,
+  sourcePath?: string,
+): Promise<AudioCaptureSessionMember[]> {
+  const sessionId = canonical.metadata?.sessionId
+  if (!sessionId) return []
+
+  if (canonical.storage === 'indexed-db') {
+    const db = await openAudioDb()
+    const records = await transactionRequest<AudioCaptureRecord[]>(
+      db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).getAll(),
+    )
+    return records
+      .filter((record) => record.metadata?.sessionId === sessionId)
+      .map((record) => ({ uri: audioUriForRecord(record), segmentIndex: record.metadata?.segmentIndex ?? 0 }))
+  }
+
+  // Android document trees cannot be enumerated by the current bridge. New
+  // sessions use the durable sidecar index; desktop can additionally recover
+  // sessions made before that index existed by scanning metadata sidecars.
+  if (!canonical.path || (sourcePath && isAndroidContentSourcePath(sourcePath)) || !await isTauriRuntime()) return []
+  const fs = await import('@tauri-apps/plugin-fs')
+  const pathApi = await import('@tauri-apps/api/path')
+  const directory = await pathApi.dirname(toLocalPathString(canonical.path))
+  const entries = await fs.readDir(directory)
+  const members: AudioCaptureSessionMember[] = []
+  for (const entry of entries) {
+    if (!entry.name?.endsWith('.json') || entry.name.endsWith('.session.json')) continue
+    const audioName = entry.name.slice(0, -'.json'.length)
+    if (!isAudioFileHref(`${RECORDINGS_DIR}/${audioName}`)) continue
+    const metadata = await readAudioCaptureMetadata(await pathApi.join(directory, audioName))
+    if (metadata?.sessionId !== sessionId) continue
+    members.push({
+      uri: `${RECORDINGS_DIR}/${audioName}`,
+      segmentIndex: metadata.segmentIndex,
+    })
+  }
+  return members
+}
+
+function upsertSessionMember(
+  members: AudioCaptureSessionMember[],
+  member: AudioCaptureSessionMember,
+): AudioCaptureSessionMember[] {
+  return [...members.filter((item) => item.uri !== member.uri), member]
+    .sort((a, b) => a.segmentIndex - b.segmentIndex)
+}
+
+function normalizeAudioCaptureSessionIndex(value: unknown): AudioCaptureSessionIndex | null {
+  if (!isRecord(value) || typeof value.sessionId !== 'string' || typeof value.canonicalUri !== 'string' || !Array.isArray(value.members)) {
+    return null
+  }
+  const members = value.members.flatMap((member): AudioCaptureSessionMember[] => {
+    if (!isRecord(member) || typeof member.uri !== 'string' || typeof member.segmentIndex !== 'number') return []
+    return [{ uri: member.uri, segmentIndex: member.segmentIndex }]
+  })
+  return {
+    id: typeof value.id === 'string' ? value.id : value.sessionId,
+    sessionId: value.sessionId,
+    canonicalUri: value.canonicalUri,
+    members,
+    updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : '',
+  }
+}
+
+function sessionIndexRelativePath(sessionId: string): string {
+  return `${RECORDINGS_DIR}/${safeSessionId(sessionId)}.session.json`
+}
+
+function sessionIndexPathForAudioPath(audioPath: string, sessionId: string): string {
+  const normalized = toLocalPathString(audioPath).split('\\').join('/')
+  const slashIndex = normalized.lastIndexOf('/')
+  const directory = slashIndex >= 0 ? normalized.slice(0, slashIndex + 1) : ''
+  return `${directory}${safeSessionId(sessionId)}.session.json`
+}
+
+function safeSessionId(sessionId: string): string {
+  return sessionId.replace(/[^A-Za-z0-9_-]/g, '_')
+}
+
+function audioReferenceForUri(uri: string): AudioCaptureReference | null {
+  const references = new Map<string, AudioCaptureReference>()
+  addHrefReference(references, uri)
+  return references.values().next().value ?? null
+}
+
 async function saveAudioTranscriptFile(
   input: SaveAudioTranscriptSegmentInput,
   segment: AudioTranscriptSegment,
@@ -480,7 +779,11 @@ async function loadAudioTranscriptIndexedDb(audioUri: string): Promise<AudioTran
   const record = await transactionRequest<AudioTranscriptSegment | undefined>(
     db.transaction(TRANSCRIPT_STORE_NAME, 'readonly').objectStore(TRANSCRIPT_STORE_NAME).get(transcriptIdForAudioUri(audioUri)),
   )
-  return record ?? null
+  if (!record) return null
+  return {
+    ...record,
+    words: normalizeAudioTranscriptWords(record.words),
+  }
 }
 
 async function loadAudioTranscriptFile(
@@ -711,6 +1014,7 @@ function formatAudioTranscriptFile(segment: AudioTranscriptSegment): string {
     `Language: ${segment.languageCode || 'unknown'}`,
     `Offset: ${formatTranscriptTime(segment.offsetMs)}`,
     `Created: ${segment.createdAt || new Date().toISOString()}`,
+    `Words: ${JSON.stringify(normalizeAudioTranscriptWords(segment.words) ?? [])}`,
     '',
     `[${formatTranscriptTime(segment.offsetMs)}] ${segment.text}`,
     '',
@@ -752,6 +1056,7 @@ function parseAudioTranscriptFile(
   if (!text) return null
 
   const offsetMs = cue?.timeMs ?? parseTranscriptTime(metadata.get('offset') ?? '') ?? fallback.offsetMs
+  const words = parseAudioTranscriptWords(metadata.get('words'))
   return {
     ...fallback,
     transcriptUri,
@@ -761,8 +1066,60 @@ function parseAudioTranscriptFile(
     createdAt: metadata.get('created') || fallback.createdAt,
     languageCode: metadata.get('language') || fallback.languageCode,
     sessionId: metadata.get('session') || fallback.sessionId,
+    words: words ?? fallback.words,
     storage,
   }
+}
+
+export function toSessionTranscriptWords(
+  words: AudioTranscriptWord[] | undefined,
+  offsetMs: number,
+  durationMs?: number,
+): AudioTranscriptWord[] | undefined {
+  const normalized = normalizeAudioTranscriptWords(words)
+  if (!normalized) return undefined
+
+  const cleanOffsetMs = Math.max(0, Math.round(offsetMs))
+  const cleanDurationMs = typeof durationMs === 'number' && Number.isFinite(durationMs)
+    ? Math.max(0, Math.round(durationMs))
+    : null
+  return normalized.map((word) => {
+    const relativeStartMs = cleanDurationMs === null ? word.startMs : Math.min(word.startMs, cleanDurationMs)
+    const relativeEndMs = cleanDurationMs === null ? word.endMs : Math.min(word.endMs, cleanDurationMs)
+    return {
+      text: word.text,
+      startMs: cleanOffsetMs + relativeStartMs,
+      endMs: cleanOffsetMs + Math.max(relativeStartMs, relativeEndMs),
+    }
+  })
+}
+
+export function normalizeAudioTranscriptWords(value: unknown): AudioTranscriptWord[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const words = value.flatMap((word): AudioTranscriptWord[] => {
+    if (!isRecord(word) || typeof word.text !== 'string') return []
+    const text = word.text.trim()
+    const startMs = finiteMilliseconds(word.startMs)
+    const endMs = finiteMilliseconds(word.endMs)
+    if (!text || startMs === null) return []
+    return [{ text, startMs, endMs: Math.max(startMs, endMs ?? startMs) }]
+  })
+  return words.length > 0 ? words : undefined
+}
+
+function parseAudioTranscriptWords(value: string | undefined): AudioTranscriptWord[] | undefined {
+  if (!value) return undefined
+  try {
+    return normalizeAudioTranscriptWords(JSON.parse(value))
+  } catch {
+    return undefined
+  }
+}
+
+function finiteMilliseconds(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, Math.round(value))
+    : null
 }
 
 function parseTranscriptCueLine(line: string): { timeMs: number; text: string } | null {
@@ -878,6 +1235,9 @@ function openAudioDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(TRANSCRIPT_STORE_NAME)) {
         db.createObjectStore(TRANSCRIPT_STORE_NAME, { keyPath: 'id' })
+      }
+      if (!db.objectStoreNames.contains(SESSION_STORE_NAME)) {
+        db.createObjectStore(SESSION_STORE_NAME, { keyPath: 'id' })
       }
     }
 
