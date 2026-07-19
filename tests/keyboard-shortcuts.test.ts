@@ -20,6 +20,10 @@ describe('isCommandPaletteOpenShortcut', () => {
     expect(isCommandPaletteOpenShortcut(keyEvent({ metaKey: true }))).toBe(true)
   })
 
+  it('opens on command+shift+k', () => {
+    expect(isCommandPaletteOpenShortcut(keyEvent({ metaKey: true, shiftKey: true }))).toBe(true)
+  })
+
   it('does not open on control+k', () => {
     expect(isCommandPaletteOpenShortcut(keyEvent({ ctrlKey: true }))).toBe(false)
   })
@@ -47,21 +51,23 @@ describe('shouldOpenCommandPalette', () => {
     expect(shouldOpenCommandPalette(keyEvent({ metaKey: true }))).toBe(true)
   })
 
-  it('does not open command+k from a focused input-like target', () => {
+  it('opens command+k from a focused input-like target', () => {
     const inputTarget = {
       closest: (selector: string) => (selector.includes('input') ? inputTarget : null),
     } as EventTarget
 
-    expect(shouldOpenCommandPalette(keyEvent({ metaKey: true, target: inputTarget }))).toBe(false)
+    expect(shouldOpenCommandPalette(keyEvent({ metaKey: true, target: inputTarget }))).toBe(true)
   })
 
-  it('does not open command+k from contenteditable targets', () => {
+  it('opens command+shift+k from contenteditable targets', () => {
     const editorTarget = {
       isContentEditable: true,
       closest: () => null,
     } as EventTarget
 
-    expect(shouldOpenCommandPalette(keyEvent({ metaKey: true, target: editorTarget }))).toBe(false)
+    expect(
+      shouldOpenCommandPalette(keyEvent({ metaKey: true, shiftKey: true, target: editorTarget })),
+    ).toBe(true)
   })
 
   it('keeps control+k available for native text editing behavior', () => {

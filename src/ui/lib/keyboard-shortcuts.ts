@@ -14,7 +14,9 @@ export function isCommandPaletteOpenShortcut(
   if (!event.metaKey || event.ctrlKey || event.altKey) return false
 
   const key = event.key.toLowerCase()
-  if (key === 'k') return !event.shiftKey
+  // The palette is an app-level escape hatch, so both Command+K and the more
+  // forceful Command+Shift+K must work even while an editor owns focus.
+  if (key === 'k') return true
   return Boolean(options.allowShiftX && key === 'x' && event.shiftKey)
 }
 
@@ -22,7 +24,7 @@ export function shouldOpenCommandPalette(
   event: CommandPaletteShortcutEvent,
   options: { allowShiftX?: boolean } = {},
 ): boolean {
-  return isCommandPaletteOpenShortcut(event, options) && !isEditableShortcutTarget(event.target ?? null)
+  return isCommandPaletteOpenShortcut(event, options)
 }
 
 export function isEditableShortcutTarget(target: EventTarget | null): boolean {

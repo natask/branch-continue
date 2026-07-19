@@ -104,17 +104,17 @@ export function createFactorySeedPackets(now = new Date().toISOString()): WorkPa
   return [
     createPacket({
       id: 'factory-keyboard-shortcuts',
-      title: 'Preserve native editing shortcuts',
-      summary: 'Focused text controls keep native caret/editing commands; the command palette opens only outside editable focus.',
+      title: 'Keep the command palette globally reachable',
+      summary: 'Command+K and Command+Shift+K open the palette even when a text control owns focus; Control+K remains native.',
       source: 'user-intent:keyboard',
       kind: 'implementation',
       phase: 'test-design',
       status: 'running',
       priority: 'critical',
-      nextAction: 'Add regression tests and scope palette handlers away from editable targets.',
+      nextAction: 'Keep regression coverage for palette shortcuts in every focus context.',
       acceptanceCriteria: [
-        'Cmd+K opens the palette outside editable controls.',
-        'Cmd+K and Ctrl+K do not open the palette inside inputs, textareas, contenteditable nodes, or role=textbox.',
+        'Cmd+K and Cmd+Shift+K open the palette inside and outside editable controls.',
+        'Ctrl+K does not open the palette and remains available to the focused editor.',
       ],
       verification: ['pnpm test', 'manual keyboard QA in editor fields'],
       evidence: [],
