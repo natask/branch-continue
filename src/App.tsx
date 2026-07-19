@@ -32,18 +32,19 @@ import {
 } from './ui/lib/agent-links'
 import {
   PRIMARY_VOICE_LANGUAGE_OPTIONS,
-  VOICE_LANGUAGE_OPTIONS,
-  VOICE_TRANSCRIPTION_MODEL_OPTIONS,
   normalizeVoiceRecordingConfig,
   persistVoiceRecordingConfig,
   resolveInitialVoiceRecordingConfig,
-  voiceLanguageLabel,
-  voiceModelLabel,
   type VoiceRecordingConfig,
 } from './ui/lib/voice-recording-config'
 import { shouldOpenCommandPalette } from './ui/lib/keyboard-shortcuts'
+import { createVoiceNoteCommandActions } from './ui/lib/voice-note-command-actions'
 import {
   createAudioCaptureId,
+  extractAudioCaptureReferences,
+  loadAudioCaptureSession,
+  resolveAudioCaptureResumeSession,
+  registerAudioCaptureSessionSegment,
   saveAudioCapture,
   saveAudioTranscriptSegment,
 } from './core/audio/audio-store'
@@ -221,15 +222,22 @@ function LoadedSourceApp({
   const mobileWheelNavDirection = wheelNavDirections.mobile ?? oppositeWheelNavDirection(desktopWheelNavDirection)
   const wheelNavDirection = isMobile ? mobileWheelNavDirection : desktopWheelNavDirection
   const editorWheelAccumRef = useRef(0)
+  const beforeEditorBranchRef = useRef<() => Promise<boolean | void>>(async () => true)
 
   const editorSession = useEditorSession({
     sourceSelected: true,
     createNote,
     updateNote,
+    beforeBranch: () => beforeEditorBranchRef.current(),
   })
   const editorSessionRef = useRef(editorSession)
   editorSessionRef.current = editorSession
   const audioSegmentQueueRef = useRef<Promise<void>>(Promise.resolve())
+  // A pause/resume session has one canonical audio reference in the note.
+  // Individual MediaRecorder chunks remain independently persisted so each
+  // chunk can be transcribed reliably, but the note always points at the
+  // first capture and receives timestamped transcript cues beneath it.
+  const audioSessionReferenceRef = useRef(new Map<string, string>())
   const editorBodyMirrorRef = useRef<{ sessionKey: number | null; body: string }>({
     sessionKey: null,
     body: '',
@@ -281,7 +289,7 @@ function LoadedSourceApp({
         directory: false,
         filters: [
           {
-            name: 'GCP service account JSON',
+            name: 'Google ADC or service account JSON',
             extensions: ['json'],
           },
         ],
@@ -289,7 +297,7 @@ function LoadedSourceApp({
 
       if (!selected || Array.isArray(selected)) return
       updateVoiceRecordingConfig({ serviceAccountKeyPath: selected })
-      setAudioNoteMessage('GCP service account key path saved for this app.')
+      setAudioNoteMessage('Google credential path saved for this app.')
     } catch (error) {
       setAudioNoteMessage(`Could not select GCP key file: ${errorMessage(error)}`)
     }
@@ -297,7 +305,12 @@ function LoadedSourceApp({
 
   const processCompletedAudioSegment = useCallback(async (capture: AudioRecordingComplete) => {
     const id = createAudioCaptureId()
-    setAudioNoteMessage(`Saving voice segment ${capture.segmentIndex + 1}...`)
+    const setCaptureMessage = (message: string) => {
+      if (editorSessionRef.current.editor?.sessionKey === capture.ownerSessionKey) {
+        setAudioNoteMessage(message)
+      }
+    }
+    setCaptureMessage(`Saving voice segment ${capture.segmentIndex + 1}...`)
 
     let saved: Awaited<ReturnType<typeof saveAudioCapture>>
     try {
@@ -318,32 +331,40 @@ function LoadedSourceApp({
         },
       })
     } catch (error) {
-      setAudioNoteMessage(`Audio captured, but local save failed: ${errorMessage(error)}`)
+      setCaptureMessage(`Audio captured, but local save failed: ${errorMessage(error)}`)
       return
     }
 
+    const sessionReference = await registerAudioCaptureSessionSegment(saved, sourcePath)
+    audioSessionReferenceRef.current.set(capture.sessionId, sessionReference)
+    setAudioTranscriptRefreshKey((current) => current + 1)
+
     const current = editorSessionRef.current.editor
-    if (current) {
+    if (current && current.sessionKey === capture.ownerSessionKey) {
       const baseBody = editorBodyMirrorRef.current.sessionKey === current.sessionKey
         ? editorBodyMirrorRef.current.body
         : current.body
-      const nextBody = appendAudioCaptureReference(baseBody, saved.uri)
+      const nextBody = appendAudioCaptureReference(baseBody, sessionReference)
       editorBodyMirrorRef.current = { sessionKey: current.sessionKey, body: nextBody }
       editorSessionRef.current.updateBody(nextBody)
-      setAudioNoteMessage(`Audio segment ${capture.segmentIndex + 1} saved to ${saved.uri}.`)
+      setCaptureMessage(`Audio segment ${capture.segmentIndex + 1} saved to ${saved.uri}.`)
+    } else if (!current) {
+      setCaptureMessage(`Audio saved as ${saved.uri}. Open a note to paste this reference.`)
     } else {
-      setAudioNoteMessage(`Audio saved as ${saved.uri}. Open a note to paste this reference.`)
+      // A branch/navigation transition may stop the previous note's recorder.
+      // Never attach that final parent segment to the newly opened note.
+      // Its save status must not leak into the new note's empty recorder UI.
     }
 
     if (voiceRecordingConfig.transcriptionMode === 'off') return
     if (!chirpConfigReady(voiceRecordingConfig)) {
-      setAudioNoteMessage(`Audio saved to ${saved.uri}. Choose a Chirp location/model to enable transcription.`)
+      setCaptureMessage(`Audio saved to ${saved.uri}. Choose a Chirp location/model to enable transcription.`)
       return
     }
 
-    setAudioNoteMessage(`Transcribing voice segment ${capture.segmentIndex + 1} with Chirp 3...`)
+    setCaptureMessage(`Transcribing voice segment ${capture.segmentIndex + 1} with Chirp 3...`)
     try {
-      const transcript = await transcribeAudioWithChirp({
+      const transcription = await transcribeAudioWithChirp({
         blob: capture.blob,
         mimeType: capture.mimeType,
         config: {
@@ -351,9 +372,9 @@ function LoadedSourceApp({
           languageCode: capture.languageCode || voiceRecordingConfig.languageCode,
         },
       })
-      const cleanTranscript = cleanVoiceTranscriptSegment(transcript)
+      const cleanTranscript = cleanVoiceTranscriptSegment(transcription.transcript)
       if (!cleanTranscript || cleanTranscript === '(no speech detected)') {
-        setAudioNoteMessage(`Audio saved to ${saved.uri}. Chirp 3 did not detect speech.`)
+        setCaptureMessage(`Audio saved to ${saved.uri}. Chirp 3 did not detect speech.`)
         return
       }
 
@@ -367,15 +388,18 @@ function LoadedSourceApp({
         segmentIndex: capture.segmentIndex,
         createdAt: new Date().toISOString(),
         durationMs: capture.durationMs,
+        words: transcription.words,
       })
+      // The raw transcript lives in its timed sidecar and the Raw/Ideas audio
+      // views; do not pour dictation text into the user's editable note body.
       setAudioTranscriptRefreshKey((current) => current + 1)
       if (savedTranscript?.storage === 'file' && savedTranscript.transcriptUri) {
-        setAudioNoteMessage(`Transcript saved to ${savedTranscript.transcriptUri}.`)
+        setCaptureMessage(`Transcript saved to ${savedTranscript.transcriptUri}.`)
         return
       }
-      setAudioNoteMessage('Transcript saved in app audio storage.')
+      setCaptureMessage('Transcript saved in app audio storage.')
     } catch (error) {
-      setAudioNoteMessage(`Audio saved to ${saved.uri}. Transcription failed: ${errorMessage(error)}`)
+      setCaptureMessage(`Audio saved to ${saved.uri}. Transcription failed: ${errorMessage(error)}`)
     }
   }, [sourcePath, voiceRecordingConfig])
 
@@ -387,10 +411,23 @@ function LoadedSourceApp({
   }, [processCompletedAudioSegment])
 
   const audioRecorder = useAudioNoteRecorder({
+    sessionKey: editorSession.editor?.sessionKey ?? null,
     languageCode: voiceRecordingConfig.languageCode,
     livePreview: true,
     onRecordingComplete: attachCompletedAudioToCurrentEditor,
   })
+
+  useEffect(() => {
+    // Recorder messages describe one editor session. A branch or navigation
+    // starts with a clean voice-note surface even when the previous save just
+    // completed successfully.
+    setAudioNoteMessage(null)
+  }, [editorSession.editor?.sessionKey])
+
+  beforeEditorBranchRef.current = async () => {
+    await audioRecorder.stopAndWait()
+    return true
+  }
 
   const orderedNotes = useMemo(() => orderNotes(notes), [notes])
   const notesById = useMemo(() => {
@@ -512,17 +549,38 @@ function LoadedSourceApp({
   )
 
   const handleCreateNewNote = useCallback(async () => {
+    await audioRecorder.stopAndWait()
     const ok = await editorSessionRef.current.flushAutoSave()
     if (!ok) return
     editorSessionRef.current.openBranchEditor(null)
-  }, [])
+  }, [audioRecorder.stopAndWait])
 
   const handleCreateVoiceNote = useCallback(async (languageCode?: string) => {
+    await audioRecorder.stopAndWait()
     const ok = await editorSessionRef.current.flushAutoSave()
     if (!ok) return
     editorSessionRef.current.openBranchEditor(currentContextNote ?? null)
     window.setTimeout(() => void audioRecorder.start(languageCode, { newSession: true }), 0)
-  }, [audioRecorder.start, currentContextNote])
+  }, [audioRecorder.start, audioRecorder.stopAndWait, currentContextNote])
+
+  const handleUpdateVoiceNotePrompt = useCallback(() => {
+    if (voiceRecordingConfig.transcriptionMode === 'off') {
+      updateVoiceRecordingConfig({ transcriptionMode: 'chirp3' })
+    }
+    setVoiceConfigOpen(true)
+    if (!editorSessionRef.current.editor && currentContextNote) {
+      editorSessionRef.current.openNoteEditor(currentContextNote, { focusBody: false })
+    }
+
+    const focusPrompt = () => {
+      const prompt = document.getElementById('voice-transcription-prompt')
+      if (!(prompt instanceof HTMLTextAreaElement)) return
+      prompt.focus()
+      prompt.select()
+    }
+    window.requestAnimationFrame(() => window.requestAnimationFrame(focusPrompt))
+    window.setTimeout(focusPrompt, 100)
+  }, [currentContextNote, updateVoiceRecordingConfig, voiceRecordingConfig.transcriptionMode])
 
   const handleRunLatestAgentPrompt = useCallback(async () => {
     const current = editorSessionRef.current.editor
@@ -611,11 +669,29 @@ function LoadedSourceApp({
     }
   }, [audioRecorder.recording, audioRecorder.switchLanguage, updateVoiceRecordingConfig, voiceRecordingConfig.languageCode])
 
-  const handleVoiceLanguageCapture = useCallback((languageCode: string) => {
+  const handleVoiceLanguageCapture = useCallback(async (languageCode: string) => {
     setVoiceLanguage(languageCode)
     if (audioRecorder.recording) return
-    void audioRecorder.start(languageCode)
-  }, [audioRecorder.recording, audioRecorder.start, setVoiceLanguage])
+    const currentBody = editorSessionRef.current.editor?.body ?? ''
+    const references = extractAudioCaptureReferences(currentBody)
+    const reference = references.find((candidate) => candidate.kind === 'file') ?? references[0]
+    if (reference && audioRecorder.status === 'idle') {
+      try {
+        const records = await loadAudioCaptureSession(reference, sourcePath)
+        const resumeSession = resolveAudioCaptureResumeSession(records)
+        if (!resumeSession) {
+          setAudioNoteMessage('This older voice note cannot be resumed yet, but it is still available to play.')
+          return
+        }
+        await audioRecorder.start(languageCode, { resumeSession })
+        return
+      } catch (error) {
+        setAudioNoteMessage(`Could not resume this voice note: ${errorMessage(error)}`)
+        return
+      }
+    }
+    await audioRecorder.start(languageCode)
+  }, [audioRecorder.recording, audioRecorder.start, audioRecorder.status, setVoiceLanguage, sourcePath])
 
   const handleVoiceNoteLanguageCapture = useCallback((languageCode: string) => {
     setVoiceLanguage(languageCode)
@@ -671,13 +747,13 @@ function LoadedSourceApp({
       const shortcut = event.metaKey || event.ctrlKey
       const key = event.key.toLowerCase()
 
-      if (editorSession.editor && shortcut && key === 'z' && !event.shiftKey) {
+      if (editorSession.editor && editorSession.canUndo && shortcut && key === 'z' && !event.shiftKey) {
         event.preventDefault()
         editorSession.handleUndo()
         return
       }
 
-      if (editorSession.editor && shortcut && ((key === 'z' && event.shiftKey) || key === 'y')) {
+      if (editorSession.editor && editorSession.canRedo && shortcut && ((key === 'z' && event.shiftKey) || key === 'y')) {
         event.preventDefault()
         editorSession.handleRedo()
         return
@@ -810,81 +886,12 @@ function LoadedSourceApp({
         group: 'Actions',
         run: () => void reloadSource(),
       },
-      ...PRIMARY_VOICE_LANGUAGE_OPTIONS.map((option) => ({
-        id: `capture-voice-${option.code}`,
-        label: `${audioRecorder.recording
-          ? 'Switch Voice Recording To'
-          : audioRecorder.status === 'stopped'
-            ? 'Continue Voice Recording In'
-            : 'Start Voice Recording In'} ${option.label}`,
-        hint: option.flag,
-        keywords: ['voice', 'audio', 'record', 'transcribe', 'speech', option.label, option.code],
-        group: 'Capture',
-        disabled: !editorSession.editor || (!audioRecorder.recording && !audioRecorder.mediaRecorderAvailable),
-        run: () => handleVoiceLanguageCapture(option.code),
-      })),
-      {
-        id: 'stop-voice-recording',
-        label: 'Pause Voice Recording',
-        hint: voiceLanguageLabel(voiceRecordingConfig.languageCode),
-        keywords: ['voice', 'audio', 'record', 'stop', 'pause'],
-        group: 'Capture',
-        disabled: !audioRecorder.recording,
-        run: () => audioRecorder.stop(),
-      },
-      {
-        id: 'open-voice-recording-config',
-        label: 'Open Voice Recording Settings Panel',
-        hint: voiceRecordingConfig.transcriptionMode === 'off' ? 'audio only' : voiceModelLabel(voiceRecordingConfig.model),
-        keywords: ['voice', 'audio', 'record', 'config', 'language', 'chirp', 'transcribe'],
-        group: 'Voice Settings',
-        disabled: !editorSession.editor,
-        run: () => setVoiceConfigOpen(true),
-      },
-      ...VOICE_LANGUAGE_OPTIONS.map((option) => ({
-        id: `set-voice-language-${option.code}`,
-        label: `Recording Language: ${option.label}${voiceRecordingConfig.languageCode === option.code ? ' (current)' : ''}`,
-        hint: option.code,
-        keywords: ['voice', 'audio', 'record', 'language', option.label, option.code],
-        group: 'Voice Settings',
-        run: () => setVoiceLanguage(option.code),
-      })),
-      {
-        id: 'set-voice-transcription-chirp3',
-        label: `Voice Transcription: Google Chirp${voiceRecordingConfig.transcriptionMode === 'chirp3' ? ' (current)' : ''}`,
-        keywords: ['voice', 'audio', 'record', 'transcribe', 'chirp', 'google'],
-        group: 'Voice Settings',
-        run: () => updateVoiceRecordingConfig({ transcriptionMode: 'chirp3' }),
-      },
-      {
-        id: 'set-voice-transcription-off',
-        label: `Voice Transcription: Save Audio Only${voiceRecordingConfig.transcriptionMode === 'off' ? ' (current)' : ''}`,
-        keywords: ['voice', 'audio', 'record', 'transcribe', 'off', 'audio only'],
-        group: 'Voice Settings',
-        run: () => updateVoiceRecordingConfig({ transcriptionMode: 'off' }),
-      },
-      ...VOICE_TRANSCRIPTION_MODEL_OPTIONS.map((option) => ({
-        id: `set-voice-model-${option.model}`,
-        label: `Voice Model: ${option.label}${voiceRecordingConfig.model === option.model ? ' (current)' : ''}`,
-        keywords: ['voice', 'audio', 'record', 'model', 'chirp', option.model, option.label],
-        group: 'Voice Settings',
-        run: () => updateVoiceRecordingConfig({ model: option.model }),
-      })),
-      {
-        id: 'voice-transcript-storage-sidecar',
-        label: 'Voice Transcript Storage: Sidecar File',
-        keywords: ['voice', 'audio', 'record', 'transcript', 'storage', 'sidecar', 'file'],
-        group: 'Voice Settings',
-        disabled: true,
-        run: () => undefined,
-      },
-      {
-        id: 'choose-voice-credential-file',
-        label: 'Choose Voice GCP Credential File',
-        keywords: ['voice', 'audio', 'record', 'credential', 'gcp', 'google', 'key'],
-        group: 'Voice Settings',
-        run: () => selectVoiceCredentialFile(),
-      },
+      ...createVoiceNoteCommandActions({
+        recording: audioRecorder.recording,
+        canUpdatePrompt: Boolean(editorSession.editor || currentContextNote),
+        onCreate: () => void handleCreateVoiceNote(),
+        onUpdatePrompt: handleUpdateVoiceNotePrompt,
+      }),
       {
         id: 'create-new-note',
         label: 'Create New Note',
@@ -893,34 +900,12 @@ function LoadedSourceApp({
         run: () => void handleCreateNewNote(),
       },
       {
-        id: 'create-voice-note',
-        label: audioRecorder.recording ? 'Pause Voice Note Recording' : `Create Voice Note In ${voiceLanguageLabel(voiceRecordingConfig.languageCode)}`,
-        keywords: ['create', 'new', 'note', 'voice', 'record', 'dictate', 'transcribe'],
-        group: 'Actions',
-        run: () => {
-          if (audioRecorder.recording) {
-            audioRecorder.stop()
-            return
-          }
-          void handleCreateVoiceNote(voiceRecordingConfig.languageCode)
-        },
-      },
-      ...PRIMARY_VOICE_LANGUAGE_OPTIONS.map((option) => ({
-        id: `create-voice-note-${option.code}`,
-        label: `Create Voice Note In ${option.label}`,
-        keywords: ['create', 'new', 'note', 'voice', 'record', 'dictate', 'transcribe', option.label, option.code],
-        group: 'Actions',
-        disabled: audioRecorder.recording,
-        hint: option.flag,
-        run: () => handleVoiceNoteLanguageCapture(option.code),
-      })),
-      {
         id: 'branch-current-note',
         label: 'Branch Current Note',
         hint: '⌘↩',
         keywords: ['branch', 'split'],
         group: 'Actions',
-        run: () => editorSession.openBranchEditor(currentContextNote ?? null),
+        run: () => void editorSession.handleBranchFromEditor(),
       },
       {
         id: 'run-latest-agent-request',
@@ -941,7 +926,7 @@ function LoadedSourceApp({
       {
         id: 'capture-current-note-as-factory-intent',
         label: 'Factory: Capture Current Note Intent',
-        keywords: ['factory', 'capture', 'intent', 'thread', 'split', 'voice'],
+        keywords: ['factory', 'capture', 'intent', 'thread', 'split'],
         group: 'Factory',
         disabled: !editorSession.editor && !currentContextNote,
         run: handleCaptureCurrentFactoryIntent,
@@ -1085,28 +1070,24 @@ function LoadedSourceApp({
         disabled: !editorSession.editor,
         run: () => editorSession.closeEditor(),
       },
-      ...(isMobile
-        ? []
-        : [
-            {
-              id: 'editor-undo',
-              label: 'Undo in Editor',
-              hint: '⌘Z',
-              keywords: ['undo', 'editor'],
-              group: 'Editor',
-              disabled: !editorSession.editor,
-              run: () => editorSession.handleUndo(),
-            },
-            {
-              id: 'editor-redo',
-              label: 'Redo in Editor',
-              hint: '⌘⇧Z',
-              keywords: ['redo', 'editor'],
-              group: 'Editor',
-              disabled: !editorSession.editor,
-              run: () => editorSession.handleRedo(),
-            },
-          ]),
+      {
+        id: 'editor-undo',
+        label: 'Undo',
+        hint: '⌘Z',
+        keywords: ['undo', 'editor', 'history'],
+        group: 'History',
+        disabled: !editorSession.editor || !editorSession.canUndo,
+        run: () => editorSession.handleUndo(),
+      },
+      {
+        id: 'editor-redo',
+        label: 'Redo',
+        hint: '⌘⇧Z',
+        keywords: ['redo', 'editor', 'history'],
+        group: 'History',
+        disabled: !editorSession.editor || !editorSession.canRedo,
+        run: () => editorSession.handleRedo(),
+      },
     ],
     [
       currentChildNotes,
@@ -1118,10 +1099,10 @@ function LoadedSourceApp({
       audioRecorder.mediaRecorderAvailable,
       audioRecorder.start,
       audioRecorder.stop,
-      handleVoiceLanguageCapture,
       handleVoiceNoteLanguageCapture,
       handleCreateNewNote,
       handleCreateVoiceNote,
+      handleUpdateVoiceNotePrompt,
       handleRunLatestAgentPrompt,
       handleCaptureCurrentFactoryIntent,
       handleGoToBoundary,
@@ -1135,9 +1116,7 @@ function LoadedSourceApp({
       reloadSource,
       resetWheelNavDirections,
       selectingSource,
-      selectVoiceCredentialFile,
       selectSourceFile,
-      setVoiceLanguage,
       station.actions,
       showCardStackTuner,
       isMobileDevice,
@@ -1221,7 +1200,7 @@ function LoadedSourceApp({
                   onClick={() => handleVoiceNoteLanguageCapture(option.code)}
                   disabled={audioRecorder.status === 'requesting' || audioRecorder.status === 'stopping' || !audioRecorder.mediaRecorderAvailable}
                   type="button"
-                  title={`${audioRecorder.recording ? 'Switch voice recording to' : 'Create voice note in'} ${option.label}`}
+                  title={`${audioRecorder.recording ? 'Switch live preview to' : 'Create voice note with'} ${option.label} live preview`}
                   aria-pressed={active}
                 >
                   <span className="voice-language-flag" aria-hidden="true">{option.flag}</span>
@@ -1235,9 +1214,6 @@ function LoadedSourceApp({
               </button>
             )}
           </div>
-          <button className="topbar-search" onClick={() => setSearchOpen(true)} type="button">
-            Search
-          </button>
           <button className="topbar-search topbar-search-strong" onClick={() => setSearchOpen(true)} type="button">
             Commands
           </button>

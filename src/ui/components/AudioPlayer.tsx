@@ -3,6 +3,7 @@ import WavesurferPlayer from '@wavesurfer/react'
 import type WaveSurfer from 'wavesurfer.js'
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js'
 import { getGlobalAudioSnapshot, pauseGlobalAudio, playGlobalAudio, useGlobalAudioPlayer } from '../lib/global-audio-player'
+import { VOICE_SEEK_EVENT, type VoiceSeekDetail } from '../lib/voice-seek'
 
 interface AudioPlayerProps {
   id: string
@@ -61,6 +62,7 @@ export function AudioPlayer({
   const pinchDistanceRef = useRef<number | null>(null)
   const pinchActiveRef = useRef(false)
   const suppressNextClickRef = useRef(false)
+  const pendingWaveformSeekRef = useRef<number | null>(null)
   const [wavesurfer, setWavesurfer] = useState<WaveSurfer | null>(null)
   const [duration, setDuration] = useState(0)
   const [currentTime, setCurrentTime] = useState(0)
@@ -105,7 +107,7 @@ export function AudioPlayer({
     if (!isActive) return
     const nextTime = globalAudio.currentTime
     setCurrentTime(nextTime)
-    if (wavesurfer && Math.abs(wavesurfer.getCurrentTime() - nextTime) > 0.35) {
+    if (wavesurfer && Math.abs(wavesurfer.getCurrentTime() - nextTime) > 0.01) {
       wavesurfer.setTime(nextTime)
     }
   }, [globalAudio.currentTime, isActive, wavesurfer])
@@ -152,6 +154,7 @@ export function AudioPlayer({
 
   const seekTo = useCallback((nextTimeMs: number) => {
     const seconds = Math.max(0, nextTimeMs / 1000)
+    pendingWaveformSeekRef.current = seconds
     wavesurfer?.setTime(seconds)
     setCurrentTime(seconds)
     playAt(nextTimeMs)
@@ -159,17 +162,19 @@ export function AudioPlayer({
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ id: string; timeMs: number }>).detail
+      const detail = (event as CustomEvent<VoiceSeekDetail>).detail
       if (detail?.id !== id) return
       seekTo(detail.timeMs)
     }
 
-    window.addEventListener('branch-continue:voice-seek', handler)
-    return () => window.removeEventListener('branch-continue:voice-seek', handler)
+    window.addEventListener(VOICE_SEEK_EVENT, handler)
+    return () => window.removeEventListener(VOICE_SEEK_EVENT, handler)
   }, [id, seekTo])
 
   const handleReady = useCallback((nextWavesurfer: WaveSurfer, nextDuration: number) => {
     setWavesurfer(nextWavesurfer)
+    const pendingTime = pendingWaveformSeekRef.current
+    if (pendingTime !== null) nextWavesurfer.setTime(pendingTime)
     if (Number.isFinite(nextDuration) && nextDuration > 0) {
       setDuration(nextDuration)
     }
@@ -395,7 +400,6 @@ export function AudioPlayer({
               onReady={handleReady}
               onDecode={handleDecode}
               onTimeupdate={handleTimeUpdate}
-              onInteraction={(_wavesurfer, nextTime) => seekTo(nextTime * 1000)}
               onPlay={stopWaveformPlayback}
               onError={handleWaveformError}
             />
@@ -430,7 +434,7 @@ function captureActivePointers(element: HTMLDivElement, points: Map<number, { x:
   }
 }
 
-function seekFromClientX(
+export function seekFromClientX(
   element: HTMLDivElement,
   clientX: number,
   durationSeconds: number,

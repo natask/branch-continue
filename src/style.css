@@ -2435,7 +2435,8 @@ pre {
 }
 
 .voice-recorder-field input,
-.voice-recorder-field select {
+.voice-recorder-field select,
+.voice-recorder-field textarea {
   width: 100%;
   min-width: 0;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -2448,8 +2449,35 @@ pre {
 }
 
 .voice-recorder-field input:focus,
-.voice-recorder-field select:focus {
+.voice-recorder-field select:focus,
+.voice-recorder-field textarea:focus {
   border-color: rgba(232, 168, 76, 0.5);
+}
+
+.voice-recorder-field textarea {
+  resize: vertical;
+  font: inherit;
+  line-height: 1.45;
+}
+
+.voice-recorder-language-profile {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+}
+
+.voice-recorder-language-profile label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42em;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  padding: 0.5em 0.7em;
+}
+
+.voice-recorder-language-profile input {
+  width: auto;
+  margin: 0;
 }
 
 .voice-recorder-file-row {
@@ -2611,39 +2639,49 @@ pre {
 }
 
 .audio-capture-list {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 0.82em;
   flex-shrink: 0;
   width: 100%;
   max-width: 100%;
   min-width: 0;
+  min-height: 0;
   margin-bottom: 0.83em;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 1.17em;
   background: rgba(255, 255, 255, 0.035);
   padding: 0.83em 1em;
-  max-block-size: min(42vh, 30em);
-  overflow: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
+  max-block-size: min(56vh, 40em);
+  overflow: hidden;
   container-type: inline-size;
 }
 
+.audio-capture-list .audio-player {
+  flex: 0 0 auto;
+}
+
 .audio-transcript-detail {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 0.7em;
+  min-height: 0;
+  flex: 1 1 auto;
   border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 1em;
   background: rgba(0, 0, 0, 0.18);
   padding: 0.82em;
+  overflow: hidden;
 }
 
 .audio-transcript-detail--empty {
+  flex: 0 0 auto;
   background: rgba(255, 255, 255, 0.025);
 }
 
 .audio-transcript-detail-head {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   gap: 0.8em;
@@ -2653,16 +2691,66 @@ pre {
   text-transform: uppercase;
 }
 
+.audio-transcript-detail-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.audio-transcript-detail-actions .btn-secondary {
+  min-height: 30px;
+  padding: 0.3rem 0.65rem;
+}
+
 .audio-transcript-detail-head span:first-child {
+  color: var(--accent);
+}
+
+.audio-transcript-tabs {
+  display: inline-flex;
+  gap: 0.25em;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 0.2em;
+}
+
+.audio-transcript-tab,
+.audio-transcript-idea-title,
+.audio-transcript-word {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.audio-transcript-tab {
+  border-radius: 999px;
+  padding: 0.35em 0.7em;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.audio-transcript-tab--active {
+  background: rgba(232, 168, 76, 0.16);
   color: var(--accent);
 }
 
 .audio-transcript-cues {
   display: grid;
+  align-content: start;
   gap: 0.64em;
   margin: 0;
   padding: 0;
+  padding-right: 0.3em;
   list-style: none;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .audio-transcript-cue {
@@ -2700,6 +2788,42 @@ pre {
   font-size: 0.66rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.audio-transcript-words {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15em 0.28em;
+}
+
+.audio-transcript-word {
+  border-radius: 0.3em;
+  padding: 0.05em 0.08em;
+  cursor: pointer;
+}
+
+.audio-transcript-word:hover,
+.audio-transcript-word--active {
+  background: rgba(232, 168, 76, 0.2);
+  color: var(--accent);
+}
+
+.audio-transcript-idea-title {
+  margin: 0 0 0.3em;
+  padding: 0;
+  color: var(--text);
+  font-weight: 650;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+}
+
+.audio-transcript-idea-title:hover {
+  color: var(--accent);
+}
+
+.audio-transcript-idea p {
+  color: var(--text-dim);
 }
 
 .audio-capture-meta {
