@@ -212,6 +212,10 @@ function LoadedSourceApp({
     updateNote,
     selectSourceFile,
     reloadSource,
+    canUndoFile,
+    canRedoFile,
+    undoFile,
+    redoFile,
   } = app
   const [searchOpen, setSearchOpen] = useState(false)
   const [sortMode, setSortMode] = useState<NoteSortMode>(resolveInitialSortMode)
@@ -1088,6 +1092,22 @@ function LoadedSourceApp({
         disabled: !editorSession.editor || !editorSession.canRedo,
         run: () => editorSession.handleRedo(),
       },
+      {
+        id: 'file-undo',
+        label: 'Undo Last Saved Change',
+        keywords: ['undo', 'file', 'saved', 'persistent', 'history'],
+        group: 'History',
+        disabled: Boolean(editorSession.editor) || !canUndoFile,
+        run: () => void undoFile(),
+      },
+      {
+        id: 'file-redo',
+        label: 'Redo Last Saved Change',
+        keywords: ['redo', 'file', 'saved', 'persistent', 'history'],
+        group: 'History',
+        disabled: Boolean(editorSession.editor) || !canRedoFile,
+        run: () => void redoFile(),
+      },
     ],
     [
       currentChildNotes,
@@ -1129,6 +1149,10 @@ function LoadedSourceApp({
       mobileWheelNavDirection,
       voiceRecordingConfig,
       updateVoiceRecordingConfig,
+      canUndoFile,
+      canRedoFile,
+      undoFile,
+      redoFile,
       setWheelNavDirectionForViewport,
       setMobilePreview,
     ],

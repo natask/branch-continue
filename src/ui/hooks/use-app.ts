@@ -16,6 +16,18 @@ import type {
   QuickNoteSearchHit,
   SourceNote,
 } from '../../core/quicknote/types'
+import {
+  appendSourceFileCommand,
+  canRedoSourceFile,
+  canUndoSourceFile,
+  createSourceFileCommand,
+  emptySourceFileHistory,
+  loadSourceFileHistory,
+  redoSourceFileCommand,
+  saveSourceFileHistory,
+  undoSourceFileCommand,
+  type SourceFileHistoryState,
+} from '../../core/history/source-file-history'
 import { resolveActiveSelection } from './use-app-selection'
 
 interface AppState {
@@ -33,6 +45,8 @@ interface AppState {
   sourceWritable: boolean
   sourceMode: 'direct' | 'download'
   selectingSource: boolean
+  canUndoFile: boolean
+  canRedoFile: boolean
 }
 
 interface AppActions {
@@ -43,6 +57,8 @@ interface AppActions {
   updateNote: (noteId: string, request: QuickNoteCreateRequest) => Promise<SourceNote>
   selectSourceFile: () => Promise<void>
   reloadSource: () => Promise<void>
+  undoFile: () => Promise<boolean>
+  redoFile: () => Promise<boolean>
 }
 
 const sourceBridge = createSourceBridge()
@@ -62,6 +78,28 @@ export function useApp(): AppState & AppActions {
   const [sourceWritable, setSourceWritable] = useState(false)
   const [sourceMode, setSourceMode] = useState<'direct' | 'download'>('direct')
   const [selectingSource, setSelectingSource] = useState(false)
+  const [historyState, setHistoryState] = useState<SourceFileHistoryState | null>(null)
+  const historyStateRef = useRef<SourceFileHistoryState | null>(null)
+  const historyLoadGenerationRef = useRef(0)
+
+  const setActiveHistory = useCallback((next: SourceFileHistoryState | null) => {
+    historyStateRef.current = next
+    setHistoryState(next)
+  }, [])
+
+  const activateHistory = useCallback(async (path: string) => {
+    const generation = historyLoadGenerationRef.current + 1
+    historyLoadGenerationRef.current = generation
+    setActiveHistory(null)
+    try {
+      const loaded = await loadSourceFileHistory(path)
+      if (historyLoadGenerationRef.current === generation) setActiveHistory(loaded)
+    } catch {
+      if (historyLoadGenerationRef.current === generation) {
+        setActiveHistory(emptySourceFileHistory(path))
+      }
+    }
+  }, [setActiveHistory])
 
   const setActiveSelection = useCallback((note: SourceNote | null) => {
     const id = note?.id ?? null
@@ -104,10 +142,12 @@ export function useApp(): AppState & AppActions {
     setSourcePath(EMPTY_PATH)
     setSourceWritable(false)
     setSourceMode('direct')
+    historyLoadGenerationRef.current += 1
+    setActiveHistory(null)
     setError(null)
     setLifecycle('no_source')
     sourceBridge.stopWatching()
-  }, [setActiveSelection])
+  }, [setActiveHistory, setActiveSelection])
 
   const reloadSourceRef = useRef<(() => Promise<void>) | null>(null)
 
@@ -130,6 +170,7 @@ export function useApp(): AppState & AppActions {
         if (restored) {
           applySourceSummary(restored.summary)
           applyParsed(parseQuickNoteFile(restored.content, restored.summary.path), null)
+          void activateHistory(restored.summary.path)
           setLifecycle('ready')
           sourceBridge.startWatching(() => {
             reloadSourceRef.current?.()
@@ -155,7 +196,7 @@ export function useApp(): AppState & AppActions {
       window.clearTimeout(restoreTimeout)
       sourceBridge.stopWatching()
     }
-  }, [applyParsed, applySourceSummary, clearSourceState])
+  }, [activateHistory, applyParsed, applySourceSummary, clearSourceState])
 
   const selectSourceFile = useCallback(async () => {
     setSelectingSource(true)
@@ -165,6 +206,7 @@ export function useApp(): AppState & AppActions {
       const selected = await sourceBridge.selectFile()
       applySourceSummary(selected.summary)
       applyParsed(parseQuickNoteFile(selected.content, selected.summary.path), null)
+      void activateHistory(selected.summary.path)
       setLifecycle('ready')
       sourceBridge.startWatching(() => {
         reloadSourceRef.current?.()
@@ -180,7 +222,7 @@ export function useApp(): AppState & AppActions {
     } finally {
       setSelectingSource(false)
     }
-  }, [applyParsed, applySourceSummary, clearSourceState])
+  }, [activateHistory, applyParsed, applySourceSummary, clearSourceState])
 
   const reloadSource = useCallback(async () => {
     setError(null)
@@ -235,10 +277,25 @@ export function useApp(): AppState & AppActions {
         }
         throw nextError
       }
+      const command = createSourceFileCommand({
+        before: parsed.content,
+        after: nextParsed.content,
+        kind: 'create-note',
+        label: `Create ${entry.title || 'note'}`,
+        noteId: entry.noteUid ?? entry.id,
+      })
+      if (command) {
+        const base = historyStateRef.current?.sourceKey === parsed.sourcePath
+          ? historyStateRef.current
+          : emptySourceFileHistory(parsed.sourcePath)
+        const nextHistory = appendSourceFileCommand(base, command)
+        setActiveHistory(nextHistory)
+        await persistSourceHistory(nextHistory)
+      }
       applyParsed(nextParsed, entry.id)
       return entry
     },
-    [applyParsed, clearSourceState, parsed],
+    [applyParsed, clearSourceState, parsed, setActiveHistory],
   )
 
   const updateNote = useCallback(
@@ -256,11 +313,50 @@ export function useApp(): AppState & AppActions {
         }
         throw nextError
       }
+      const command = createSourceFileCommand({
+        before: parsed.content,
+        after: nextParsed.content,
+        kind: 'update-note',
+        label: `Edit ${entry.title || 'note'}`,
+        noteId: entry.noteUid ?? entry.id,
+      })
+      if (command) {
+        const base = historyStateRef.current?.sourceKey === parsed.sourcePath
+          ? historyStateRef.current
+          : emptySourceFileHistory(parsed.sourcePath)
+        const nextHistory = appendSourceFileCommand(base, command)
+        setActiveHistory(nextHistory)
+        await persistSourceHistory(nextHistory)
+      }
       applyParsed(nextParsed, entry.id)
       return entry
     },
-    [applyParsed, clearSourceState, parsed],
+    [applyParsed, clearSourceState, parsed, setActiveHistory],
   )
+
+  const undoFile = useCallback(async (): Promise<boolean> => {
+    const currentHistory = historyStateRef.current
+    if (!parsed || !currentHistory || currentHistory.sourceKey !== parsed.sourcePath) return false
+    const step = undoSourceFileCommand(currentHistory, parsed.content)
+    if (!step) return false
+    await sourceBridge.write(step.content)
+    setActiveHistory(step.state)
+    await persistSourceHistory(step.state)
+    applyParsed(parseQuickNoteFile(step.content, parsed.sourcePath), null)
+    return true
+  }, [applyParsed, parsed, setActiveHistory])
+
+  const redoFile = useCallback(async (): Promise<boolean> => {
+    const currentHistory = historyStateRef.current
+    if (!parsed || !currentHistory || currentHistory.sourceKey !== parsed.sourcePath) return false
+    const step = redoSourceFileCommand(currentHistory, parsed.content)
+    if (!step) return false
+    await sourceBridge.write(step.content)
+    setActiveHistory(step.state)
+    await persistSourceHistory(step.state)
+    applyParsed(parseQuickNoteFile(step.content, parsed.sourcePath), null)
+    return true
+  }, [applyParsed, parsed, setActiveHistory])
 
   const activeNote = useMemo(
     () => (activeNoteId ? notes.find((note) => note.id === activeNoteId) ?? null : null),
@@ -273,6 +369,9 @@ export function useApp(): AppState & AppActions {
     },
     [setActiveSelection],
   )
+
+  const canUndoFile = Boolean(parsed && historyState && canUndoSourceFile(historyState, parsed.content))
+  const canRedoFile = Boolean(parsed && historyState && canRedoSourceFile(historyState, parsed.content))
 
   return {
     ready: lifecycle !== 'booting',
@@ -289,6 +388,8 @@ export function useApp(): AppState & AppActions {
     sourceWritable,
     sourceMode,
     selectingSource,
+    canUndoFile,
+    canRedoFile,
     selectNote,
     searchNotes,
     jumpToSearchHit,
@@ -296,11 +397,22 @@ export function useApp(): AppState & AppActions {
     updateNote,
     selectSourceFile,
     reloadSource,
+    undoFile,
+    redoFile,
   }
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+async function persistSourceHistory(state: SourceFileHistoryState): Promise<void> {
+  try {
+    await saveSourceFileHistory(state)
+  } catch {
+    // The source file is canonical. Keep the in-memory commands available for
+    // this session if durable browser storage is temporarily unavailable.
+  }
 }
 
 function isSelectionCancelled(error: unknown): boolean {
