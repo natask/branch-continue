@@ -264,6 +264,7 @@ function LoadedSourceApp({
   // Levels captured live, so WebViews that cannot decode the saved container
   // still have a real waveform to draw.
   const sessionPeaksRef = useRef(createSessionPeakAccumulator())
+  const liveVoicePeaks = useCallback(() => sessionPeaksRef.current.peaks(), [])
   const editorBodyMirrorRef = useRef<{ sessionKey: number | null; body: string }>({
     sessionKey: null,
     body: '',
@@ -1402,6 +1403,7 @@ function LoadedSourceApp({
           audioRecorder={audioRecorder}
           audioNoteMessage={audioNoteMessage}
           audioTranscriptRefreshKey={audioTranscriptRefreshKey}
+          liveVoicePeaks={liveVoicePeaks}
           voiceRecordingConfig={voiceRecordingConfig}
           voiceConfigOpen={voiceConfigOpen}
           sourcePath={sourcePath}

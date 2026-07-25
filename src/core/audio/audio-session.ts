@@ -174,6 +174,8 @@ export interface SessionPeakAccumulator {
   push: (frame: CanonicalPcmFrame) => void
   /** Envelope for one persisted segment, in session-absolute recorder time. */
   slice: (offsetMs: number, durationMs: number) => number[]
+  /** The whole session envelope so far, for live rendering while recording. */
+  peaks: () => number[]
   reset: () => void
 }
 
@@ -203,6 +205,9 @@ export function createSessionPeakAccumulator(peaksPerSecond = SESSION_PEAKS_PER_
       if (length === 0) return []
       const start = Math.max(0, Math.floor(Math.max(0, offsetMs) / msPerPeak))
       return Array.from({ length }, (_, index) => peaks[start + index] ?? 0)
+    },
+    peaks() {
+      return peaks
     },
     reset() {
       peaks = []

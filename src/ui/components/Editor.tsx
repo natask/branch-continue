@@ -26,6 +26,7 @@ interface EditorProps {
   audioRecorder: UseAudioNoteRecorderResult
   audioNoteMessage: string | null
   audioTranscriptRefreshKey: number
+  liveVoicePeaks: () => number[]
   voiceRecordingConfig: VoiceRecordingConfig
   voiceConfigOpen: boolean
   sourcePath: string
@@ -47,6 +48,7 @@ export function Editor({
   audioRecorder,
   audioNoteMessage,
   audioTranscriptRefreshKey,
+  liveVoicePeaks,
   voiceRecordingConfig,
   voiceConfigOpen,
   sourcePath,
@@ -484,6 +486,7 @@ export function Editor({
               body={editor.body}
               sourcePath={sourcePath}
               audioTranscriptRefreshKey={audioTranscriptRefreshKey}
+              liveVoicePeaks={liveVoicePeaks}
               onVoiceCapture={onVoiceCapture}
               onVoiceConfigOpenChange={onVoiceConfigOpenChange}
               onVoiceRecordingConfigChange={onVoiceRecordingConfigChange}

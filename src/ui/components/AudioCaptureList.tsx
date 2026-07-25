@@ -98,8 +98,10 @@ export function AudioCaptureList({ body, sourcePath, refreshKey = 0, showTitle =
     let cancelled = false
     const urls: string[] = []
 
+    // Keep the previous session (and its rendered waveform) on screen while a
+    // refresh loads; segment saves during recording must not flash the player
+    // out to a loading state.
     setWarning(null)
-    setSession(null)
     setTranscriptCues(inlineTranscriptCues)
 
     if (references.length === 0) return undefined
@@ -109,13 +111,24 @@ export function AudioCaptureList({ body, sourcePath, refreshKey = 0, showTitle =
         const records: AudioCaptureRecord[] = []
         const loadedUris = new Set<string>()
         for (const reference of references) {
-          const sessionRecords = await loadAudioCaptureSession(reference, sourcePath)
+          // A note references its recording from the moment capture starts;
+          // the file exists only after the first segment saves. Missing audio
+          // is a pending state, not an error surface.
+          const sessionRecords = await loadAudioCaptureSession(reference, sourcePath).catch((error) => {
+            if (isMissingAudioFileError(error)) return []
+            throw error
+          })
           for (const record of sessionRecords) {
             const uri = record.uri ?? record.relativePath ?? record.path ?? record.id
             if (loadedUris.has(uri)) continue
             loadedUris.add(uri)
             records.push(record)
           }
+        }
+
+        if (records.length === 0) {
+          if (!cancelled) setWarning('No audio on disk for this note yet. The waveform appears once the first recorded segment saves.')
+          return
         }
 
         const transcriptSegments = await loadAudioTranscriptSegments(records, sourcePath)
@@ -198,22 +211,12 @@ export function AudioCaptureList({ body, sourcePath, refreshKey = 0, showTitle =
           waveformUnavailable={session.waveformUnavailable}
           normalizeWaveform={!session.placeholderPeaks}
           waveformHeight={92}
-          markers={[
-            ...transcriptBlocks.map((block) => ({
-              timeMs: block.startMs,
-              durationMs: Math.max(240, block.endMs - block.startMs),
-              label: formatTimedTranscriptTime(block.startMs),
-            })),
-            ...session.segments
-              .filter((segment) => segment.segmentStartReason === 'language-switch' || segment.segmentStartReason === 'manual')
-              .map((segment) => ({
-              timeMs: segment.startMs,
-              durationMs: Math.min(segment.durationMs, 1_500),
-              label: segment.segmentStartReason === 'manual'
-                ? 'Resume'
-                : segment.languageCode ? `Switch ${segment.languageCode}` : 'Switch',
-              })),
-          ]}
+          markers={transcriptBlocks.map((block) => ({
+            timeMs: block.startMs,
+            durationMs: Math.max(240, block.endMs - block.startMs),
+            label: formatTimedTranscriptTime(block.startMs),
+            kind: 'span' as const,
+          }))}
           showDownload
         />
       )}
@@ -465,4 +468,9 @@ async function copyPlainText(text: string): Promise<void> {
   } finally {
     textarea.remove()
   }
+}
+
+export function isMissingAudioFileError(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase()
+  return message.includes('no such file') || message.includes('os error 2') || message.includes('not found')
 }

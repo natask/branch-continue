@@ -1,6 +1,7 @@
 import type { UseAudioNoteRecorderResult } from '../hooks/use-audio-note-recorder'
 import { type VoiceRecordingConfig } from '../lib/voice-recording-config'
 import { AudioCaptureList } from './AudioCaptureList'
+import { LiveRecordingWaveform } from './LiveRecordingWaveform'
 
 export interface VoiceRecordingsPanelProps {
   audioRecorder: UseAudioNoteRecorderResult
@@ -11,6 +12,7 @@ export interface VoiceRecordingsPanelProps {
   body: string
   sourcePath: string
   audioTranscriptRefreshKey: number
+  liveVoicePeaks: () => number[]
   onVoiceCapture: () => void
   onVoiceConfigOpenChange: (open: boolean) => void
   onVoiceRecordingConfigChange: (patch: Partial<VoiceRecordingConfig>) => void
@@ -27,6 +29,7 @@ export function VoiceRecordingsPanel({
   body,
   sourcePath,
   audioTranscriptRefreshKey,
+  liveVoicePeaks,
   onVoiceCapture,
   onVoiceConfigOpenChange,
   onVoiceRecordingConfigChange,
@@ -88,7 +91,12 @@ export function VoiceRecordingsPanel({
       {audioRecorder.error && audioRecorder.diagnostic && <p className="voice-recorder-muted">{audioRecorder.diagnostic}</p>}
       {audioNoteMessage && <p className="voice-recorder-muted">{audioNoteMessage}</p>}
 
-      {hasLinkedAudio && (
+      {audioRecorder.recording ? (
+        // While capturing, the seeker is the recording head: pinned while new
+        // audio lands at the cursor and history slides away behind it. The
+        // saved-session player (and its reload churn) takes over on stop.
+        <LiveRecordingWaveform getPeaks={liveVoicePeaks} />
+      ) : hasLinkedAudio && (
         <AudioCaptureList
           body={body}
           sourcePath={sourcePath}

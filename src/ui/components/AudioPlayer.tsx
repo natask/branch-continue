@@ -28,6 +28,11 @@ export interface AudioPlayerMarker {
   timeMs: number
   durationMs?: number
   label: string
+  /**
+   * `span` tints a time range without text (its extent is the information);
+   * `boundary` is a thin labeled tick. Defaults to boundary.
+   */
+  kind?: 'span' | 'boundary'
 }
 
 interface WaveformRegion {
@@ -35,7 +40,10 @@ interface WaveformRegion {
   startMs: number
   durationMs: number
   label: string
+  kind: 'span' | 'boundary'
 }
+
+const BOUNDARY_MARKER_DURATION_MS = 240
 
 const WAVEFORM_ZOOM_STEP = 24
 const WAVEFORM_ZOOM_MAX = 192
@@ -57,7 +65,7 @@ export function AudioPlayer({
   waveformHeight = 48,
   normalizeWaveform = true,
 }: AudioPlayerProps) {
-  const regions = useMemo(() => RegionsPlugin.create(), [src])
+  const regions = useMemo(() => RegionsPlugin.create(), [])
   const plugins = useMemo(() => [regions], [regions])
   const globalAudio = useGlobalAudioPlayer()
   const playerRef = useRef<HTMLDivElement | null>(null)
@@ -83,11 +91,12 @@ export function AudioPlayer({
   // learn the instance exists. useWavesurfer returns the instance as state,
   // which cannot be missed; events are subscribed below with a direct read as
   // backup for anything that already fired.
+  // Create options stay static so the instance survives data updates: segment
+  // saves during recording swap src/peaks several times, and a destroy/create
+  // cycle blanks the waveform for a frame each time. New data loads into the
+  // existing instance below instead.
   const { wavesurfer } = useWavesurfer({
     container: waveContainerRef,
-    url: src,
-    peaks: peaks.length > 0 ? peaks : undefined,
-    duration: displayDuration || undefined,
     height: waveformHeight,
     waveColor: 'rgba(232, 224, 214, 0.3)',
     progressColor: 'rgba(232, 168, 76, 0.78)',
@@ -96,17 +105,32 @@ export function AudioPlayer({
     barWidth: 2,
     barGap: 2,
     barRadius: 2,
-    normalize: normalizeWaveform,
     interact: false,
     dragToSeek: false,
     plugins,
   })
+  const displayDurationRef = useRef(displayDuration)
+  displayDurationRef.current = displayDuration
+
+  useEffect(() => {
+    if (!wavesurfer) return
+    wavesurfer.setOptions({ normalize: normalizeWaveform })
+    void wavesurfer
+      .load(src, peaks.length > 0 ? peaks : undefined, displayDurationRef.current || undefined)
+      .catch(() => {
+        // A superseded load or an undecodable source still renders the
+        // provided peaks; playback runs through the global audio element.
+      })
+  }, [normalizeWaveform, peaks, src, wavesurfer])
   const waveformRegions = useMemo<WaveformRegion[]>(
     () => markers.map((marker, index) => ({
       id: `marker-${index}-${marker.timeMs}`,
       startMs: marker.timeMs,
-      durationMs: marker.durationMs ?? 240,
+      durationMs: marker.kind === 'span'
+        ? marker.durationMs ?? BOUNDARY_MARKER_DURATION_MS
+        : BOUNDARY_MARKER_DURATION_MS,
       label: marker.label,
+      kind: marker.kind ?? 'boundary',
     })),
     [markers],
   )
@@ -186,8 +210,10 @@ export function AudioPlayer({
         id: region.id,
         start,
         end,
-        content: region.label,
-        color: 'rgba(232, 168, 76, 0.24)',
+        // Span extents are the information; text on every region collides
+        // into an unreadable stack when blocks sit close together.
+        content: region.kind === 'boundary' ? region.label : undefined,
+        color: region.kind === 'span' ? 'rgba(232, 168, 76, 0.14)' : 'rgba(232, 168, 76, 0.32)',
         drag: false,
         resize: false,
       })
@@ -203,7 +229,9 @@ export function AudioPlayer({
       unsubscribe()
       regions.clearRegions()
     }
-  }, [playAt, regions, waveformRegions, wavesurfer])
+    // displayDuration re-places regions once the real duration is known; the
+    // plugin positions them relative to the duration at add time.
+  }, [displayDuration, playAt, regions, waveformRegions, wavesurfer])
 
   useEffect(() => {
     if (!wavesurfer) return
