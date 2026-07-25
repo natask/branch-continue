@@ -139,7 +139,7 @@ export function SearchModal({ open, onClose, onSearch, onSelect, commandActions 
       pointerBehavior="split"
       mode={mode}
       onModeChange={setMode}
-      onKeyDown={(event) => {
+      onKeyDown={(event: React.KeyboardEvent) => {
         if (event.key !== 'Escape') return
         event.preventDefault()
         event.stopPropagation()
