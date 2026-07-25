@@ -12,7 +12,11 @@ import { AgenticMarkdownPage } from './ui/agentic-markdown/AgenticMarkdownPage'
 import { useAgentStation } from './ui/agent-station/use-agent-station'
 import { createAgentServiceRuntime } from './ui/agent-runtime/agent-service-runtime'
 import { createMasterOrchAgentRuntime } from './ui/agent-runtime/master-orch-runtime'
-import { useAudioNoteRecorder, type AudioRecordingComplete } from './ui/hooks/use-audio-note-recorder'
+import {
+  useAudioNoteRecorder,
+  type AudioRecordingComplete,
+  type AudioRecordingStart,
+} from './ui/hooks/use-audio-note-recorder'
 import { useFactoryWorkspace } from './ui/hooks/use-factory-workspace'
 import {
   formatNotePosition,
@@ -23,6 +27,7 @@ import {
 import {
   appendAudioCaptureReference,
   cleanVoiceTranscriptSegment,
+  upsertAudioCaptureReference,
 } from './ui/lib/voice-transcript'
 import {
   buildAgentResponseBody,
@@ -42,10 +47,12 @@ import {
   createAudioCaptureId,
   extractAudioCaptureReferences,
   loadAudioCaptureSession,
+  preallocateAudioCapture,
   resolveAudioCaptureResumeSession,
   registerAudioCaptureSessionSegment,
   saveAudioCapture,
   saveAudioTranscriptSegment,
+  type PreallocatedAudioCapture,
 } from './core/audio/audio-store'
 import { transcribeAudioWithChirp } from './core/audio/chirp-transcription'
 import type { QuickNoteSearchHit, SourceNote } from './core/quicknote/types'
@@ -247,6 +254,10 @@ function LoadedSourceApp({
   // chunk can be transcribed reliably, but the note always points at the
   // first capture and receives timestamped transcript cues beneath it.
   const audioSessionReferenceRef = useRef(new Map<string, string>())
+  // Reserved (id, uri) per new recording session so the note points at the
+  // recording from the moment capture starts; segment 0 saves under this id,
+  // keeping the early-inserted reference stable with no late body update.
+  const preallocatedAudioCaptureRef = useRef(new Map<string, Promise<PreallocatedAudioCapture | null>>())
   const editorBodyMirrorRef = useRef<{ sessionKey: number | null; body: string }>({
     sessionKey: null,
     body: '',
@@ -312,8 +323,29 @@ function LoadedSourceApp({
     }
   }, [updateVoiceRecordingConfig])
 
+  const reserveAudioCaptureReference = useCallback((start: AudioRecordingStart) => {
+    if (start.resumed) return
+    const pending = preallocateAudioCapture(sourcePath, start.mimeType).catch(() => null)
+    preallocatedAudioCaptureRef.current.set(start.sessionId, pending)
+    void pending.then((preallocated) => {
+      if (!preallocated) return
+      const current = editorSessionRef.current.editor
+      if (!current || current.sessionKey !== start.ownerSessionKey) return
+      const baseBody = editorBodyMirrorRef.current.sessionKey === current.sessionKey
+        ? editorBodyMirrorRef.current.body
+        : current.body
+      const nextBody = appendAudioCaptureReference(baseBody, preallocated.uri)
+      if (nextBody === baseBody) return
+      editorBodyMirrorRef.current = { sessionKey: current.sessionKey, body: nextBody }
+      editorSessionRef.current.updateBody(nextBody)
+    })
+  }, [sourcePath])
+
   const processCompletedAudioSegment = useCallback(async (capture: AudioRecordingComplete) => {
-    const id = createAudioCaptureId()
+    const preallocated = capture.segmentIndex === 0
+      ? await (preallocatedAudioCaptureRef.current.get(capture.sessionId) ?? Promise.resolve(null))
+      : null
+    const id = preallocated?.id ?? createAudioCaptureId()
     const setCaptureMessage = (message: string) => {
       if (editorSessionRef.current.editor?.sessionKey === capture.ownerSessionKey) {
         setAudioNoteMessage(message)
@@ -346,6 +378,7 @@ function LoadedSourceApp({
 
     const sessionReference = await registerAudioCaptureSessionSegment(saved, sourcePath)
     audioSessionReferenceRef.current.set(capture.sessionId, sessionReference)
+    preallocatedAudioCaptureRef.current.delete(capture.sessionId)
     setAudioTranscriptRefreshKey((current) => current + 1)
 
     const current = editorSessionRef.current.editor
@@ -353,9 +386,15 @@ function LoadedSourceApp({
       const baseBody = editorBodyMirrorRef.current.sessionKey === current.sessionKey
         ? editorBodyMirrorRef.current.body
         : current.body
-      const nextBody = appendAudioCaptureReference(baseBody, sessionReference)
-      editorBodyMirrorRef.current = { sessionKey: current.sessionKey, body: nextBody }
-      editorSessionRef.current.updateBody(nextBody)
+      // The reference normally already exists from recording start; replace it
+      // only if the persisted path diverged from the reserved one.
+      const nextBody = preallocated && preallocated.uri !== sessionReference
+        ? upsertAudioCaptureReference(baseBody, sessionReference)
+        : appendAudioCaptureReference(baseBody, sessionReference)
+      if (nextBody !== baseBody) {
+        editorBodyMirrorRef.current = { sessionKey: current.sessionKey, body: nextBody }
+        editorSessionRef.current.updateBody(nextBody)
+      }
       setCaptureMessage(`Audio segment ${capture.segmentIndex + 1} saved to ${saved.uri}.`)
     } else if (!current) {
       setCaptureMessage(`Audio saved as ${saved.uri}. Open a note to paste this reference.`)
@@ -419,6 +458,7 @@ function LoadedSourceApp({
   const audioRecorder = useAudioNoteRecorder({
     sessionKey: editorSession.editor?.sessionKey ?? null,
     livePreview: true,
+    onRecordingStart: reserveAudioCaptureReference,
     onRecordingComplete: attachCompletedAudioToCurrentEditor,
   })
 

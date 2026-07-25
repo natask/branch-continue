@@ -27,6 +27,14 @@ describe('voice transcript helpers', () => {
     expect(appendAudioCaptureReference(first, uri)).toBe(first)
   })
 
+  it('leaves a body with one existing reference byte-for-byte untouched', () => {
+    // The reference is inserted at recording start; the segment-save pass must
+    // not churn the body (not even trailing whitespace) or the editor flashes.
+    const body = 'Existing note\n\nAudio recording: [audio-123.webm](recordings/audio-123.webm)\n\nMore typing\n'
+
+    expect(appendAudioCaptureReference(body, 'recordings/audio-999.webm')).toBe(body)
+  })
+
   it('collapses legacy duplicate chunk references to one canonical recording', () => {
     const body = [
       'Existing note',

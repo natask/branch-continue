@@ -186,6 +186,29 @@ export function firstFileAudioReference(body: string): AudioCaptureReference | n
   return extractAudioCaptureReferences(body).find((reference) => reference.kind === 'file') ?? null
 }
 
+export interface PreallocatedAudioCapture {
+  id: string
+  uri: string
+}
+
+/**
+ * Decide a new recording session's canonical capture id and note reference
+ * before any audio bytes exist, so the note can point at the recording from
+ * the moment capture starts. Saving segment 0 with this id produces the same
+ * reference, keeping the early-inserted note line stable.
+ */
+export async function preallocateAudioCapture(
+  sourcePath: string | undefined,
+  mimeType: string,
+): Promise<PreallocatedAudioCapture> {
+  const id = createAudioCaptureId()
+  const usesFileStorage = typeof sourcePath === 'string'
+    && (isAndroidContentSourcePath(sourcePath) || canUseFileCaptureStorage(sourcePath))
+    && await isTauriRuntime()
+  if (!usesFileStorage) return { id, uri: audioCaptureUri(id) }
+  return { id, uri: `${RECORDINGS_DIR}/${id}.${audioExtension(mimeType)}` }
+}
+
 export async function saveAudioCapture(record: SaveAudioCaptureInput): Promise<SaveAudioCaptureResult> {
   if (record.sourcePath && isAndroidContentSourcePath(record.sourcePath) && await isTauriRuntime()) {
     try {

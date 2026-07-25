@@ -29,8 +29,12 @@ export function appendAudioCaptureReference(body: string, uri: string): string {
   // versions appended every MediaRecorder chunk; collapse those lines while
   // retaining the first (canonical) recording for backwards compatibility.
   const existingLines = body.trimEnd().split('\n')
-  const firstAudioIndex = existingLines.findIndex((line) => /^\s*Audio recording:\s+/i.test(line))
-  if (firstAudioIndex >= 0) {
+  const audioLineIndexes = existingLines
+    .map((line, index) => (/^\s*Audio recording:\s+/i.test(line) ? index : -1))
+    .filter((index) => index >= 0)
+  if (audioLineIndexes.length === 1) return body
+  if (audioLineIndexes.length > 1) {
+    const firstAudioIndex = audioLineIndexes[0]
     const withoutDuplicateAudioLines = existingLines.filter((line, index) => {
       if (!/^\s*Audio recording:\s+/i.test(line)) return true
       return index === firstAudioIndex

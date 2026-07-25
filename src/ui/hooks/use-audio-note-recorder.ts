@@ -26,6 +26,13 @@ export interface AudioRecordingComplete {
 
 export type AudioRecordingSegmentStartReason = 'start' | 'auto' | 'manual' | 'language-switch'
 
+export interface AudioRecordingStart {
+  sessionId: string
+  mimeType: string
+  resumed: boolean
+  ownerSessionKey: string | number | null
+}
+
 export interface AudioRecorderResumeSession {
   sessionId: string
   segmentIndex: number
@@ -50,6 +57,12 @@ interface UseAudioNoteRecorderOptions {
   sessionKey?: string | number | null
   languageCode?: string
   livePreview?: boolean
+  /**
+   * Fires as soon as capture is actually running (microphone granted and the
+   * recorder started), before any audio segment completes. Lets the owner
+   * reserve the recording's note reference with no visible late update.
+   */
+  onRecordingStart?: (start: AudioRecordingStart) => void
   onFinalTranscript?: (segment: string) => void
   onRecordingComplete?: (capture: AudioRecordingComplete) => void | Promise<void>
   /** Canonical 16 kHz PCM frames for a future streaming transcription consumer. */
@@ -81,6 +94,7 @@ export function useAudioNoteRecorder({
   sessionKey = null,
   languageCode,
   livePreview = false,
+  onRecordingStart,
   onFinalTranscript,
   onRecordingComplete,
   onPcmFrame,
@@ -117,6 +131,7 @@ export function useAudioNoteRecorder({
   const audioUrlRef = useRef<string | null>(null)
   const languageCodeRef = useRef(languageCode)
   const livePreviewRef = useRef(livePreview)
+  const onRecordingStartRef = useRef(onRecordingStart)
   const onFinalTranscriptRef = useRef(onFinalTranscript)
   const onRecordingCompleteRef = useRef(onRecordingComplete)
   const completionQueueRef = useRef<Promise<void>>(Promise.resolve())
@@ -142,6 +157,7 @@ export function useAudioNoteRecorder({
 
   languageCodeRef.current = languageCode
   livePreviewRef.current = livePreview
+  onRecordingStartRef.current = onRecordingStart
   onFinalTranscriptRef.current = onFinalTranscript
   onRecordingCompleteRef.current = onRecordingComplete
   onPcmFrameRef.current = onPcmFrame
@@ -467,6 +483,12 @@ export function useAudioNoteRecorder({
         }, MAX_TRANSCRIPTION_SEGMENT_MS)
       }
 
+      onRecordingStartRef.current?.({
+        sessionId: cursor.sessionId,
+        mimeType: preferredMimeType || 'audio/webm',
+        resumed: continueSession,
+        ownerSessionKey: sessionBoundaryKeyRef.current,
+      })
       startRecorderSegment()
       startSpeechRecognition()
       elapsedTimerRef.current = window.setInterval(() => {
