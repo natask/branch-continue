@@ -16,6 +16,12 @@ fn main() {
     }
     println!("cargo:rerun-if-changed={BUNDLED_GCP_KEY_PATH}");
 
+    // AVCaptureDevice is looked up through the Objective-C runtime, so nothing pulls
+    // AVFoundation in on its own.
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        println!("cargo:rustc-link-lib=framework=AVFoundation");
+    }
+
     // Dev-only escape hatch: embeds a local service-account key into the binary.
     // Remove this path before distributing the app outside this machine/account.
     if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
@@ -33,6 +39,7 @@ fn main() {
         tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(&[
             "transcribe_with_chirp",
             "android_request_microphone_permission",
+            "microphone_permission_state",
             "android_select_source_file",
             "android_read_source_file",
             "android_write_source_file",

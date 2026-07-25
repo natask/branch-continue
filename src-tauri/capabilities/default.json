@@ -8,6 +8,7 @@
   "permissions": [
     "core:default",
     "allow-android-request-microphone-permission",
+    "allow-microphone-permission-state",
     "allow-android-select-source-file",
     "allow-android-read-source-file",
     "allow-android-write-source-file",

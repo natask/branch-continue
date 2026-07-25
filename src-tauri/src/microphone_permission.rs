@@ -37,6 +37,25 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         .build()
 }
 
+/// Read-only view of the OS-level microphone grant, so the UI can tell "the user has to
+/// re-enable this in System Settings" apart from a generic capture failure.
+///
+/// Reports `granted`, `denied`, `prompt`, or `unknown`, matching the Permissions API
+/// vocabulary. Only macOS has a real answer here; Android goes through
+/// `android_request_microphone_permission` instead.
+#[tauri::command]
+pub fn microphone_permission_state() -> MicrophonePermissionState {
+    #[cfg(target_os = "macos")]
+    let state = crate::macos_microphone::authorization_state();
+
+    #[cfg(not(target_os = "macos"))]
+    let state = "unknown";
+
+    MicrophonePermissionState {
+        microphone: Some(serde_json::Value::String(state.to_string())),
+    }
+}
+
 #[tauri::command]
 pub async fn android_request_microphone_permission(
     microphone: State<'_, MicrophonePermissionMobile<Wry>>,
