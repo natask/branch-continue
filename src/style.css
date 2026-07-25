@@ -2319,6 +2319,23 @@ pre {
   color: var(--accent);
 }
 
+.recordings-stealth-toggle:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.recordings-stealth-toggle:disabled:hover {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.24);
+  color: var(--text-dim);
+}
+
+.recordings-stealth-icon {
+  width: 1.05em;
+  height: 1.05em;
+  flex: 0 0 auto;
+}
+
 .recordings-stealth-dot {
   width: 0.56em;
   height: 0.56em;

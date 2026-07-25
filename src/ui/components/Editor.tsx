@@ -3,6 +3,11 @@ import type React from 'react'
 import type { UseAudioNoteRecorderResult } from '../hooks/use-audio-note-recorder'
 import type { UseEditorSessionResult } from '../hooks/use-editor-session'
 import { type VoiceRecordingConfig } from '../lib/voice-recording-config'
+import {
+  resolveRecordingsPanelOpen,
+  resolveVoiceContinueControl,
+  type VoicePanelPreference,
+} from '../lib/voice-panel-state'
 import { parseVoiceTranscriptTime } from '../lib/voice-transcript'
 import { extractAudioCaptureReferences } from '../../core/audio/audio-store'
 import { formatElapsed, VoiceRecordingsPanel } from './VoiceRecordingsPanel'
@@ -57,7 +62,7 @@ export function Editor({
   const shellRef = useRef<HTMLDivElement | null>(null)
   const navRepeatTimerRef = useRef<number | null>(null)
   const ignorePointerClickRef = useRef(false)
-  const [recordingsPanelOpen, setRecordingsPanelOpen] = useState(false)
+  const [panelPreference, setPanelPreference] = useState<VoicePanelPreference>('auto')
   const navStateRef = useRef({
     older: onOpenOlderNote,
     newer: onOpenNewerNote,
@@ -79,24 +84,28 @@ export function Editor({
   )
   const hasLinkedAudio = editor ? extractAudioCaptureReferences(editor.body).length > 0 : false
   const hasRecorderAudio = Boolean(audioRecorder.audioUrl || audioRecorder.audioBlob) || audioRecorder.status === 'stopped'
-  const hasAudioActivity = hasLinkedAudio || audioRecorder.recording || hasRecorderAudio
-  const showRecordingsPanel = voiceConfigOpen || recordingsPanelOpen
-  const canStartRecording = audioRecorder.mediaRecorderAvailable
-    && audioRecorder.status !== 'requesting'
-    && audioRecorder.status !== 'stopping'
-  const stealthToggleLabel = audioRecorder.recording
-    ? formatElapsed(audioRecorder.elapsedMs)
-    : hasAudioActivity ? 'Continue' : 'Start'
+  const showRecordingsPanel = resolveRecordingsPanelOpen({
+    preference: panelPreference,
+    hasLinkedAudio,
+    recorderActive: audioRecorder.recording || hasRecorderAudio,
+    voiceConfigOpen,
+  })
+  const voiceControl = resolveVoiceContinueControl({
+    status: audioRecorder.status,
+    recording: audioRecorder.recording,
+    hasLinkedAudio,
+    mediaRecorderAvailable: audioRecorder.mediaRecorderAvailable,
+    elapsedLabel: formatElapsed(audioRecorder.elapsedMs),
+  })
 
-  function handleStealthToggleClick() {
-    if (audioRecorder.recording) {
-      setRecordingsPanelOpen((open) => !open)
+  function handleVoiceControlClick() {
+    // Toggling only reveals or hides an existing voice note; it never records.
+    if (voiceControl.action === 'toggle-panel') {
+      setPanelPreference(showRecordingsPanel ? 'closed' : 'open')
       return
     }
-    setRecordingsPanelOpen(true)
-    // When the recorder can't start (mic busy/unavailable), still open the
-    // panel so an existing voice note remains viewable without recording.
-    if (canStartRecording) onVoiceCapture()
+    setPanelPreference('open')
+    onVoiceCapture()
   }
 
   const handleBodyRef = useCallback(
@@ -163,9 +172,14 @@ export function Editor({
 
   useEffect(() => () => stopMobileNavRepeat(), [])
 
+  // Hiding the panel lasts for the note being read, not for every note after it.
+  useEffect(() => {
+    setPanelPreference('auto')
+  }, [editor?.sessionKey])
+
   useEffect(() => {
     if (voiceConfigOpen) {
-      setRecordingsPanelOpen(true)
+      setPanelPreference('open')
     }
   }, [voiceConfigOpen])
 
@@ -296,14 +310,32 @@ export function Editor({
             <div className="note-editor-branch-close">
               <button
                 className={`recordings-stealth-toggle${showRecordingsPanel ? ' recordings-stealth-toggle--active' : ''}`}
-                onClick={handleStealthToggleClick}
+                onClick={handleVoiceControlClick}
+                disabled={voiceControl.disabled}
                 type="button"
                 aria-expanded={showRecordingsPanel}
-                aria-label={audioRecorder.recording ? 'Open current voice note' : hasAudioActivity ? 'Continue voice note' : 'Start voice note'}
-                title={audioRecorder.recording ? 'Open audio and continue this voice note' : hasAudioActivity ? 'Continue this voice note' : 'Start a new voice note'}
+                aria-label={voiceControl.hint}
+                title={voiceControl.hint}
               >
-                <span className={`recordings-stealth-dot${audioRecorder.recording ? ' recordings-stealth-dot--active' : ''}`} />
-                <span>{stealthToggleLabel}</span>
+                {audioRecorder.recording ? (
+                  <span className="recordings-stealth-dot recordings-stealth-dot--active" />
+                ) : (
+                  <svg
+                    className="recordings-stealth-icon"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <rect x="9" y="2" width="6" height="11" rx="3" />
+                    <path d="M5 11a7 7 0 0 0 14 0" />
+                    <line x1="12" y1="18" x2="12" y2="22" />
+                  </svg>
+                )}
+                <span>{voiceControl.label}</span>
               </button>
               <button className="btn-secondary" onClick={onOpenSearch} type="button">
                 {isMobile ? 'Search' : 'Commands'}
@@ -457,7 +489,7 @@ export function Editor({
               onVoiceRecordingConfigChange={onVoiceRecordingConfigChange}
               onSelectVoiceCredentialFile={onSelectVoiceCredentialFile}
               onClose={() => {
-                setRecordingsPanelOpen(false)
+                setPanelPreference('closed')
                 onVoiceConfigOpenChange(false)
               }}
             />
