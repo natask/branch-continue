@@ -51,9 +51,11 @@ import {
   resolveAudioCaptureResumeSession,
   registerAudioCaptureSessionSegment,
   saveAudioCapture,
+  saveAudioCapturePeaks,
   saveAudioTranscriptSegment,
   type PreallocatedAudioCapture,
 } from './core/audio/audio-store'
+import { createSessionPeakAccumulator, SESSION_PEAKS_PER_SECOND } from './core/audio/audio-session'
 import { transcribeAudioWithChirp } from './core/audio/chirp-transcription'
 import type { QuickNoteSearchHit, SourceNote } from './core/quicknote/types'
 
@@ -258,6 +260,9 @@ function LoadedSourceApp({
   // recording from the moment capture starts; segment 0 saves under this id,
   // keeping the early-inserted reference stable with no late body update.
   const preallocatedAudioCaptureRef = useRef(new Map<string, Promise<PreallocatedAudioCapture | null>>())
+  // Levels captured live, so WebViews that cannot decode the saved container
+  // still have a real waveform to draw.
+  const sessionPeaksRef = useRef(createSessionPeakAccumulator())
   const editorBodyMirrorRef = useRef<{ sessionKey: number | null; body: string }>({
     sessionKey: null,
     body: '',
@@ -376,6 +381,18 @@ function LoadedSourceApp({
       return
     }
 
+    const segmentPeaks = sessionPeaksRef.current.slice(capture.offsetMs, capture.durationMs)
+    if (segmentPeaks.some((peak) => peak > 0)) {
+      await saveAudioCapturePeaks({
+        audio: saved,
+        sourcePath,
+        peaksPerSecond: SESSION_PEAKS_PER_SECOND,
+        durationMs: capture.durationMs,
+        peaks: segmentPeaks,
+      }).catch(() => null)
+    }
+    if (capture.final) sessionPeaksRef.current.reset()
+
     const sessionReference = await registerAudioCaptureSessionSegment(saved, sourcePath)
     audioSessionReferenceRef.current.set(capture.sessionId, sessionReference)
     preallocatedAudioCaptureRef.current.delete(capture.sessionId)
@@ -460,6 +477,7 @@ function LoadedSourceApp({
     livePreview: true,
     onRecordingStart: reserveAudioCaptureReference,
     onRecordingComplete: attachCompletedAudioToCurrentEditor,
+    onPcmFrame: (frame) => sessionPeaksRef.current.push(frame),
   })
 
   useEffect(() => {
