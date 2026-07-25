@@ -20,6 +20,8 @@ interface AudioPlayerProps {
   markers?: AudioPlayerMarker[]
   waveformUnavailable?: boolean
   waveformHeight?: number
+  /** Off for placeholder envelopes, which normalization would stretch to a solid block. */
+  normalizeWaveform?: boolean
 }
 
 export interface AudioPlayerMarker {
@@ -54,6 +56,7 @@ export function AudioPlayer({
   markers = [],
   waveformUnavailable = false,
   waveformHeight = 48,
+  normalizeWaveform = true,
 }: AudioPlayerProps) {
   const regions = useMemo(() => RegionsPlugin.create(), [src])
   const plugins = useMemo(() => [regions], [regions])
@@ -422,7 +425,7 @@ export function AudioPlayer({
               barWidth={2}
               barGap={2}
               barRadius={2}
-              normalize
+              normalize={normalizeWaveform}
               interact={false}
               dragToSeek={false}
               plugins={plugins}

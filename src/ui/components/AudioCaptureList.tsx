@@ -1,12 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   extractAudioCaptureReferences,
+  loadAudioCapturePeaks,
   loadAudioCaptureSession,
   loadAudioTranscriptSegments,
   type AudioCaptureRecord,
   type AudioTranscriptSegment,
 } from '../../core/audio/audio-store'
-import { buildAudioSessionBlob, remapRecorderTimeToAssembledTime, type AudioSessionSegment } from '../../core/audio/audio-session'
+import {
+  buildAudioSessionBlob,
+  buildFallbackAudioSession,
+  remapRecorderTimeToAssembledTime,
+  type AudioSessionBlob,
+  type AudioSessionSegment,
+} from '../../core/audio/audio-session'
 import { useGlobalAudioPlayer } from '../lib/global-audio-player'
 import { dispatchVoiceSeek } from '../lib/voice-seek'
 import {
@@ -34,6 +41,7 @@ interface LoadedAudioSession {
   peaks: number[][]
   url: string
   waveformUnavailable?: boolean
+  placeholderPeaks?: boolean
 }
 
 interface LoadedTranscriptCue {
@@ -112,21 +120,25 @@ export function AudioCaptureList({ body, sourcePath, refreshKey = 0, showTitle =
 
         const transcriptSegments = await loadAudioTranscriptSegments(records, sourcePath)
 
-        let sessionBlob = await buildAudioSessionBlob(records).catch((nextError) => {
-          const fallbackLabel = records.length > 1 ? 'first saved segment' : 'original recording'
-          if (!cancelled) setWarning(`Waveform unavailable; playing ${fallbackLabel}. ${errorMessage(nextError)}`)
-          return null
-        })
+        const decoded = await buildAudioSessionBlob(records)
+          .then((session) => ({ session, error: null as unknown }))
+          .catch((error: unknown) => ({ session: null, error }))
+
+        let sessionBlob: AudioSessionBlob | null = decoded.session
         let waveformUnavailable = false
-        if (!sessionBlob && records[0]) {
-          const record = records[0]
-          waveformUnavailable = true
-          sessionBlob = {
-            blob: record.blob,
-            mimeType: record.mimeType,
-            durationMs: record.durationMs,
-            peaks: [],
-            segments: fallbackSegments([record]),
+        let placeholderPeaks = false
+        if (!sessionBlob && records.length > 0) {
+          // Decoding is the only thing this WebView refuses; recorded levels and
+          // segment durations are enough to keep the full waveform UI.
+          const storedPeaks = await Promise.all(
+            records.map((record) => loadAudioCapturePeaks(record, sourcePath).catch(() => null)),
+          )
+          const fallback = await buildFallbackAudioSession(records, { storedPeaks })
+          if (fallback) {
+            sessionBlob = fallback
+            placeholderPeaks = fallback.placeholderPeaks
+            waveformUnavailable = fallback.durationMs <= 0
+            if (!cancelled) setWarning(fallbackWaveformWarning(records.length, fallback, decoded.error))
           }
         }
         if (!sessionBlob) return
@@ -152,6 +164,7 @@ export function AudioCaptureList({ body, sourcePath, refreshKey = 0, showTitle =
             peaks: sessionBlob.peaks,
             url,
             waveformUnavailable,
+            placeholderPeaks,
           })
         }
       } catch (nextError) {
@@ -183,6 +196,7 @@ export function AudioCaptureList({ body, sourcePath, refreshKey = 0, showTitle =
           fallbackDurationMs={session.durationMs}
           peaks={session.peaks}
           waveformUnavailable={session.waveformUnavailable}
+          normalizeWaveform={!session.placeholderPeaks}
           waveformHeight={92}
           markers={[
             ...transcriptBlocks.map((block) => ({
@@ -323,20 +337,19 @@ function TranscriptDetail({
   )
 }
 
-function fallbackSegments(records: AudioCaptureRecord[]): AudioSessionSegment[] {
-  let assembledStartMs = 0
-  return records.map((record, index) => {
-    const segment = {
-      index,
-      startMs: assembledStartMs,
-      durationMs: record.durationMs,
-      label: `Segment ${index + 1}`,
-      languageCode: record.metadata?.languageCode,
-      segmentStartReason: record.metadata?.segmentStartReason,
-    }
-    assembledStartMs += record.durationMs
-    return segment
-  })
+export function fallbackWaveformWarning(
+  recordCount: number,
+  session: { durationMs: number; placeholderPeaks: boolean },
+  decodeError: unknown,
+): string {
+  const playbackLabel = recordCount > 1 ? 'first saved segment' : 'original recording'
+  if (session.durationMs <= 0) {
+    return `Waveform unavailable; playing ${playbackLabel}. ${errorMessage(decodeError)}`
+  }
+  if (session.placeholderPeaks) {
+    return `This WebView cannot decode the recording, so the waveform is an outline. Playing the ${playbackLabel}.`
+  }
+  return `Waveform drawn from the levels saved while recording. Playing the ${playbackLabel}.`
 }
 
 function transcriptCueFromSegment(

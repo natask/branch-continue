@@ -1,9 +1,17 @@
-import type { AudioCaptureRecord, AudioCaptureSegmentStartReason } from './audio-store'
+import type { AudioCapturePeaks, AudioCaptureRecord, AudioCaptureSegmentStartReason } from './audio-store'
+import { CANONICAL_PCM_SAMPLE_RATE, type CanonicalPcmFrame } from './pcm-capture'
 
 interface AudioData {
   channelData: Float32Array[]
   sampleRate: number
 }
+
+/** Envelope resolution used by both record-time capture and placeholder peaks. */
+export const SESSION_PEAKS_PER_SECOND = 20
+const MS_PER_SESSION_PEAK = 1000 / SESSION_PEAKS_PER_SECOND
+const PLACEHOLDER_PEAK_AMPLITUDE = 0.35
+const MAX_SESSION_PEAKS = 20_000
+const DURATION_PROBE_TIMEOUT_MS = 4_000
 
 export interface AudioSessionSegment {
   index: number
@@ -65,6 +73,185 @@ export async function buildAudioSessionBlob(records: AudioCaptureRecord[]): Prom
     }
   } finally {
     await context.close().catch(() => undefined)
+  }
+}
+
+export interface FallbackAudioSession extends AudioSessionBlob {
+  /** True when no segment had recorded levels, so the wave is a neutral outline. */
+  placeholderPeaks: boolean
+}
+
+export interface BuildFallbackAudioSessionOptions {
+  /** Stored envelopes aligned with `records`, as loaded from the peaks sidecars. */
+  storedPeaks?: (AudioCapturePeaks | null | undefined)[]
+  probeDurationMs?: (record: AudioCaptureRecord) => Promise<number>
+}
+
+/**
+ * Assemble a playable session without decoding any audio. WKWebView cannot
+ * decode WebM/Opus, but wavesurfer only needs explicit peaks plus a duration to
+ * render the full waveform, ruler and playhead, so the original blob stays the
+ * playback source while the envelope comes from sidecars or a placeholder.
+ */
+export async function buildFallbackAudioSession(
+  records: AudioCaptureRecord[],
+  options: BuildFallbackAudioSessionOptions = {},
+): Promise<FallbackAudioSession | null> {
+  const first = records[0]
+  if (!first) return null
+
+  const probeDurationMs = options.probeDurationMs ?? probeRecordDurationMs
+  const durations: number[] = []
+  for (const [index, record] of records.entries()) {
+    const stored = options.storedPeaks?.[index] ?? null
+    const known = knownSegmentDurationMs(records, index, stored)
+    durations.push(known > 0 ? known : Math.max(0, Math.round(await probeDurationMs(record).catch(() => 0))))
+  }
+
+  const segments: AudioSessionSegment[] = []
+  let peaks: number[] = []
+  let offsetMs = 0
+  let placeholderPeaks = true
+
+  for (const [index, record] of records.entries()) {
+    const durationMs = durations[index] ?? 0
+    const stored = options.storedPeaks?.[index] ?? null
+    const length = peakCountForDurationMs(durationMs)
+    if (stored && stored.peaks.length > 0) {
+      placeholderPeaks = false
+      peaks = peaks.concat(resamplePeaks(stored.peaks, length))
+    } else {
+      peaks = peaks.concat(createPlaceholderPeaks(durationMs))
+    }
+    segments.push(segmentFromRecord(record, index, offsetMs, durationMs))
+    offsetMs += durationMs
+  }
+
+  return {
+    blob: first.blob,
+    mimeType: first.mimeType,
+    durationMs: offsetMs,
+    peaks: peaks.length > 0 ? [downsamplePeaks(peaks, MAX_SESSION_PEAKS)] : [],
+    segments,
+    placeholderPeaks,
+  }
+}
+
+/** A flat strip at a modest amplitude: readable as "audio here" without faking detail. */
+export function createPlaceholderPeaks(durationMs: number): number[] {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return []
+  return new Array(peakCountForDurationMs(durationMs)).fill(PLACEHOLDER_PEAK_AMPLITUDE)
+}
+
+export function peakCountForDurationMs(durationMs: number): number {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return 0
+  return Math.max(1, Math.round(durationMs / MS_PER_SESSION_PEAK))
+}
+
+export function resamplePeaks(peaks: number[], targetLength: number): number[] {
+  if (targetLength <= 0) return []
+  if (peaks.length === 0) return new Array(targetLength).fill(0)
+  if (peaks.length === targetLength) return [...peaks]
+
+  const ratio = peaks.length / targetLength
+  const resampled: number[] = []
+  for (let index = 0; index < targetLength; index += 1) {
+    const start = Math.min(peaks.length - 1, Math.floor(index * ratio))
+    const end = Math.min(peaks.length, Math.max(start + 1, Math.floor((index + 1) * ratio)))
+    let peak = 0
+    for (let source = start; source < end; source += 1) peak = Math.max(peak, peaks[source] ?? 0)
+    resampled.push(peak)
+  }
+  return resampled
+}
+
+export function downsamplePeaks(peaks: number[], maxLength: number): number[] {
+  if (maxLength <= 0 || peaks.length <= maxLength) return peaks
+  return resamplePeaks(peaks, maxLength)
+}
+
+export interface SessionPeakAccumulator {
+  push: (frame: CanonicalPcmFrame) => void
+  /** Envelope for one persisted segment, in session-absolute recorder time. */
+  slice: (offsetMs: number, durationMs: number) => number[]
+  reset: () => void
+}
+
+/**
+ * Collects the recording's amplitude envelope from the canonical PCM stream so
+ * it can be saved beside the audio. Frame sample indexes are session-absolute
+ * across pause/resume, so buckets line up with the recorder's segment offsets.
+ */
+export function createSessionPeakAccumulator(peaksPerSecond = SESSION_PEAKS_PER_SECOND): SessionPeakAccumulator {
+  const samplesPerPeak = Math.max(1, Math.round(CANONICAL_PCM_SAMPLE_RATE / peaksPerSecond))
+  const msPerPeak = 1000 / peaksPerSecond
+  let peaks: number[] = []
+
+  return {
+    push(frame) {
+      // A new recording session restarts sample indexing at zero; drop the
+      // previous session's envelope instead of merging the two.
+      if (frame.sequence === 0 && frame.startSample === 0) peaks = []
+      for (let index = 0; index < frame.pcm16.length; index += 1) {
+        const bucket = Math.floor((frame.startSample + index) / samplesPerPeak)
+        const value = Math.min(1, Math.abs(frame.pcm16[index] ?? 0) / 0x8000)
+        peaks[bucket] = Math.max(peaks[bucket] ?? 0, value)
+      }
+    },
+    slice(offsetMs, durationMs) {
+      const length = peakCountForDurationMs(durationMs)
+      if (length === 0) return []
+      const start = Math.max(0, Math.floor(Math.max(0, offsetMs) / msPerPeak))
+      return Array.from({ length }, (_, index) => peaks[start + index] ?? 0)
+    },
+    reset() {
+      peaks = []
+    },
+  }
+}
+
+function knownSegmentDurationMs(
+  records: AudioCaptureRecord[],
+  index: number,
+  stored: AudioCapturePeaks | null,
+): number {
+  const record = records[index]
+  if (record && record.durationMs > 0) return Math.round(record.durationMs)
+  if (stored && stored.durationMs > 0) return Math.round(stored.durationMs)
+
+  // File-backed records carry no duration, but consecutive segment offsets do:
+  // each segment starts where the previous one ended.
+  const offsetMs = record?.metadata?.offsetMs
+  const nextOffsetMs = records[index + 1]?.metadata?.offsetMs
+  if (typeof offsetMs === 'number' && typeof nextOffsetMs === 'number' && nextOffsetMs > offsetMs) {
+    return Math.round(nextOffsetMs - offsetMs)
+  }
+  return 0
+}
+
+/** Media elements report duration for containers their AudioContext cannot decode. */
+async function probeRecordDurationMs(record: AudioCaptureRecord): Promise<number> {
+  if (typeof document === 'undefined' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return 0
+
+  const element = document.createElement('audio')
+  const url = URL.createObjectURL(record.blob)
+  try {
+    return await new Promise<number>((resolve) => {
+      const finish = (durationMs: number) => {
+        window.clearTimeout(timeout)
+        element.removeAttribute('src')
+        resolve(durationMs)
+      }
+      const timeout = window.setTimeout(() => finish(0), DURATION_PROBE_TIMEOUT_MS)
+      element.addEventListener('loadedmetadata', () => {
+        finish(Number.isFinite(element.duration) ? Math.round(element.duration * 1000) : 0)
+      }, { once: true })
+      element.addEventListener('error', () => finish(0), { once: true })
+      element.preload = 'metadata'
+      element.src = url
+    })
+  } finally {
+    URL.revokeObjectURL(url)
   }
 }
 

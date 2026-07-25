@@ -2,10 +2,12 @@ const DB_NAME = 'branch-continue-audio'
 const STORE_NAME = 'captures'
 const TRANSCRIPT_STORE_NAME = 'transcripts'
 const SESSION_STORE_NAME = 'sessions'
-const DB_VERSION = 3
+const PEAKS_STORE_NAME = 'peaks'
+const DB_VERSION = 4
 const AUDIO_URI_PREFIX = 'branch-continue-audio://'
 const RECORDINGS_DIR = 'recordings'
 const TRANSCRIPT_FILE_SUFFIX = '.transcript.md'
+const PEAKS_FILE_SUFFIX = '.peaks.json'
 
 export type AudioCaptureStorage = 'file' | 'indexed-db'
 export type AudioCaptureSegmentStartReason = 'start' | 'auto' | 'manual' | 'language-switch'
@@ -96,6 +98,27 @@ export interface AudioTranscriptSegment {
   durationMs?: number
   storage?: AudioCaptureStorage
   words?: AudioTranscriptWord[]
+}
+
+/**
+ * Amplitude envelope captured while recording. WebViews that cannot decode the
+ * stored container (WKWebView with WebM/Opus) still need levels to draw a
+ * waveform, so the envelope is persisted next to the audio instead of being
+ * recomputed from the bytes at load time.
+ */
+export interface AudioCapturePeaks {
+  audioUri: string
+  peaksPerSecond: number
+  durationMs: number
+  peaks: number[]
+}
+
+export interface SaveAudioCapturePeaksInput {
+  audio: SaveAudioCaptureResult
+  sourcePath?: string
+  peaksPerSecond: number
+  durationMs: number
+  peaks: number[]
 }
 
 export interface AudioCaptureReference {
@@ -425,6 +448,148 @@ export async function loadAudioTranscriptSegments(
   })
 }
 
+export async function saveAudioCapturePeaks(input: SaveAudioCapturePeaksInput): Promise<AudioCapturePeaks | null> {
+  const peaks = normalizeAudioCapturePeaks({
+    audioUri: input.audio.uri,
+    peaksPerSecond: input.peaksPerSecond,
+    durationMs: input.durationMs,
+    peaks: input.peaks,
+  })
+  if (!peaks) return null
+
+  if (input.sourcePath && isAndroidContentSourcePath(input.sourcePath) && input.audio.relativePath && await isTauriRuntime()) {
+    try {
+      const core = await import('@tauri-apps/api/core')
+      await core.invoke<AndroidAudioCaptureFileResult>('android_save_audio_capture', {
+        payload: {
+          sourceUri: input.sourcePath,
+          relativePath: peaksPathForAudioPath(input.audio.relativePath),
+          mimeType: 'application/json',
+          base64: uint8ArrayToBase64(encodeAudioCapturePeaks(peaks)),
+          metadataJson: null,
+        },
+      })
+      return peaks
+    } catch {
+      return saveAudioCapturePeaksIndexedDb(peaks)
+    }
+  }
+
+  if (input.audio.storage === 'file' && input.audio.path && await isTauriRuntime()) {
+    try {
+      const fs = await import('@tauri-apps/plugin-fs')
+      await fs.writeFile(peaksPathForAudioPath(input.audio.path), encodeAudioCapturePeaks(peaks))
+      return peaks
+    } catch {
+      return saveAudioCapturePeaksIndexedDb(peaks)
+    }
+  }
+
+  return saveAudioCapturePeaksIndexedDb(peaks)
+}
+
+export async function loadAudioCapturePeaks(
+  record: AudioCaptureRecord,
+  sourcePath?: string,
+): Promise<AudioCapturePeaks | null> {
+  if (record.storage === 'file') {
+    const fromFile = await loadAudioCapturePeaksFile(record, sourcePath).catch(() => null)
+    if (fromFile) return fromFile
+  }
+
+  return loadAudioCapturePeaksIndexedDb(audioUriForRecord(record)).catch(() => null)
+}
+
+async function saveAudioCapturePeaksIndexedDb(peaks: AudioCapturePeaks): Promise<AudioCapturePeaks> {
+  const db = await openAudioDb()
+  await transactionRequest(
+    db.transaction(PEAKS_STORE_NAME, 'readwrite').objectStore(PEAKS_STORE_NAME).put({
+      ...peaks,
+      id: peaksIdForAudioUri(peaks.audioUri),
+    }),
+  )
+  return peaks
+}
+
+async function loadAudioCapturePeaksIndexedDb(audioUri: string): Promise<AudioCapturePeaks | null> {
+  const db = await openAudioDb()
+  const stored = await transactionRequest<unknown>(
+    db.transaction(PEAKS_STORE_NAME, 'readonly').objectStore(PEAKS_STORE_NAME).get(peaksIdForAudioUri(audioUri)),
+  )
+  return normalizeAudioCapturePeaks(stored)
+}
+
+async function loadAudioCapturePeaksFile(
+  record: AudioCaptureRecord,
+  sourcePath: string | undefined,
+): Promise<AudioCapturePeaks | null> {
+  if (sourcePath && isAndroidContentSourcePath(sourcePath) && record.relativePath && await isTauriRuntime()) {
+    const core = await import('@tauri-apps/api/core')
+    const loaded = await core.invoke<AndroidAudioCaptureContentResult>('android_read_audio_capture', {
+      payload: {
+        sourceUri: sourcePath,
+        relativePath: peaksPathForAudioPath(record.relativePath),
+      },
+    })
+    if (!loaded.base64) return null
+    return parseAudioCapturePeaks(uint8ArrayToText(base64ToUint8Array(loaded.base64)), audioUriForRecord(record))
+  }
+
+  if (!record.path || !await isTauriRuntime()) return null
+  const fs = await import('@tauri-apps/plugin-fs')
+  const bytes = await fs.readFile(peaksPathForAudioPath(record.path))
+  return parseAudioCapturePeaks(uint8ArrayToText(bytes), audioUriForRecord(record))
+}
+
+function encodeAudioCapturePeaks(peaks: AudioCapturePeaks): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify({
+    version: 1,
+    audioUri: peaks.audioUri,
+    peaksPerSecond: peaks.peaksPerSecond,
+    durationMs: peaks.durationMs,
+    peaks: peaks.peaks.map((peak) => Math.round(peak * 1000) / 1000),
+  }))
+}
+
+function parseAudioCapturePeaks(content: string, audioUri: string): AudioCapturePeaks | null {
+  try {
+    const parsed: unknown = JSON.parse(content)
+    if (!isRecord(parsed)) return null
+    return normalizeAudioCapturePeaks({ ...parsed, audioUri: parsed.audioUri || audioUri })
+  } catch {
+    return null
+  }
+}
+
+export function normalizeAudioCapturePeaks(value: unknown): AudioCapturePeaks | null {
+  if (!isRecord(value) || !Array.isArray(value.peaks)) return null
+  const durationMs = finiteMilliseconds(value.durationMs)
+  const peaksPerSecond = typeof value.peaksPerSecond === 'number' && Number.isFinite(value.peaksPerSecond) && value.peaksPerSecond >= 1
+    ? Math.round(value.peaksPerSecond)
+    : 0
+  if (!durationMs || !peaksPerSecond || typeof value.audioUri !== 'string' || !value.audioUri) return null
+
+  const peaks = value.peaks.map((peak) => (
+    typeof peak === 'number' && Number.isFinite(peak) ? Math.min(1, Math.abs(peak)) : 0
+  ))
+  if (peaks.length === 0) return null
+
+  return {
+    audioUri: value.audioUri,
+    peaksPerSecond,
+    durationMs,
+    peaks,
+  }
+}
+
+function peaksIdForAudioUri(audioUri: string): string {
+  return `peaks:${audioUri}`
+}
+
+function peaksPathForAudioPath(path: string): string {
+  return `${stripAudioExtension(path)}${PEAKS_FILE_SUFFIX}`
+}
+
 async function saveAudioCaptureFile(
   record: SaveAudioCaptureInput,
   sourcePath: string,
@@ -674,7 +839,7 @@ async function discoverAudioCaptureSessionMembers(
   const entries = await fs.readDir(directory)
   const members: AudioCaptureSessionMember[] = []
   for (const entry of entries) {
-    if (!entry.name?.endsWith('.json') || entry.name.endsWith('.session.json')) continue
+    if (!entry.name?.endsWith('.json') || entry.name.endsWith('.session.json') || entry.name.endsWith(PEAKS_FILE_SUFFIX)) continue
     const audioName = entry.name.slice(0, -'.json'.length)
     if (!isAudioFileHref(`${RECORDINGS_DIR}/${audioName}`)) continue
     const metadata = await readAudioCaptureMetadata(await pathApi.join(directory, audioName))
@@ -1261,6 +1426,9 @@ function openAudioDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(SESSION_STORE_NAME)) {
         db.createObjectStore(SESSION_STORE_NAME, { keyPath: 'id' })
+      }
+      if (!db.objectStoreNames.contains(PEAKS_STORE_NAME)) {
+        db.createObjectStore(PEAKS_STORE_NAME, { keyPath: 'id' })
       }
     }
 
