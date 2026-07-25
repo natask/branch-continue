@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
-import WavesurferPlayer from '@wavesurfer/react'
+import { useWavesurfer } from '@wavesurfer/react'
 import type WaveSurfer from 'wavesurfer.js'
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js'
 import TimelinePlugin from 'wavesurfer.js/dist/plugins/timeline.esm.js'
@@ -47,7 +47,6 @@ export function AudioPlayer({
   id,
   src,
   blob,
-  mimeType,
   label = 'Voice recording',
   downloadName = 'branch-continue-voice.webm',
   showDownload = false,
@@ -68,14 +67,40 @@ export function AudioPlayer({
   const pinchActiveRef = useRef(false)
   const suppressNextClickRef = useRef(false)
   const pendingWaveformSeekRef = useRef<number | null>(null)
-  const [wavesurfer, setWavesurfer] = useState<WaveSurfer | null>(null)
+  const waveContainerRef = useRef<HTMLDivElement | null>(null)
   const [duration, setDuration] = useState(0)
   const [currentTime, setCurrentTime] = useState(0)
   const [waveformZoom, setWaveformZoom] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const isActive = globalAudio.activeId === id
+  const isActiveRef = useRef(isActive)
+  isActiveRef.current = isActive
   const playing = isActive && globalAudio.playing
   const displayDuration = duration > 0 ? duration : fallbackDurationMs && fallbackDurationMs > 0 ? fallbackDurationMs / 1000 : 0
+  // The event-prop wrapper component races: an instance created with explicit
+  // peaks and duration finishes init/decode/ready before the wrapper's
+  // subscription effect runs, so a component listening via onReady may never
+  // learn the instance exists. useWavesurfer returns the instance as state,
+  // which cannot be missed; events are subscribed below with a direct read as
+  // backup for anything that already fired.
+  const { wavesurfer } = useWavesurfer({
+    container: waveContainerRef,
+    url: src,
+    peaks: peaks.length > 0 ? peaks : undefined,
+    duration: displayDuration || undefined,
+    height: waveformHeight,
+    waveColor: 'rgba(232, 224, 214, 0.3)',
+    progressColor: 'rgba(232, 168, 76, 0.78)',
+    cursorColor: 'rgba(232, 168, 76, 0.92)',
+    cursorWidth: 2,
+    barWidth: 2,
+    barGap: 2,
+    barRadius: 2,
+    normalize: normalizeWaveform,
+    interact: false,
+    dragToSeek: false,
+    plugins,
+  })
   const waveformRegions = useMemo<WaveformRegion[]>(
     () => markers.map((marker, index) => ({
       id: `marker-${index}-${marker.timeMs}`,
@@ -105,8 +130,33 @@ export function AudioPlayer({
     setDuration(0)
     setCurrentTime(0)
     setError(null)
-    setWavesurfer(null)
   }, [src])
+
+  useEffect(() => {
+    if (!wavesurfer) return undefined
+    const applyDuration = (nextDuration: number) => {
+      if (Number.isFinite(nextDuration) && nextDuration > 0) setDuration(nextDuration)
+    }
+    const unsubscribes = [
+      wavesurfer.on('decode', applyDuration),
+      wavesurfer.on('ready', applyDuration),
+      wavesurfer.on('timeupdate', (nextTime: number) => {
+        if (!isActiveRef.current) setCurrentTime(nextTime)
+      }),
+      // Playback belongs to the global audio element; never let the silent
+      // wavesurfer media play in parallel.
+      wavesurfer.on('play', () => wavesurfer.pause()),
+      wavesurfer.on('error', (nextError: Error) => {
+        if (peaks.length === 0) setError(nextError.message || 'Could not draw this waveform.')
+      }),
+    ]
+    applyDuration(wavesurfer.getDuration())
+    const pendingTime = pendingWaveformSeekRef.current
+    if (pendingTime !== null) wavesurfer.setTime(pendingTime)
+    return () => {
+      for (const unsubscribe of unsubscribes) unsubscribe()
+    }
+  }, [peaks.length, wavesurfer])
 
   useEffect(() => {
     if (!isActive) return
@@ -157,7 +207,11 @@ export function AudioPlayer({
 
   useEffect(() => {
     if (!wavesurfer) return
-    wavesurfer.zoom(waveformZoom)
+    try {
+      wavesurfer.zoom(waveformZoom)
+    } catch {
+      // Zoom requires decoded data; before decode the fit view stays.
+    }
   }, [waveformZoom, wavesurfer])
 
   useEffect(() => {
@@ -201,33 +255,6 @@ export function AudioPlayer({
     window.addEventListener(VOICE_SEEK_EVENT, handler)
     return () => window.removeEventListener(VOICE_SEEK_EVENT, handler)
   }, [id, seekTo])
-
-  const handleReady = useCallback((nextWavesurfer: WaveSurfer, nextDuration: number) => {
-    setWavesurfer(nextWavesurfer)
-    const pendingTime = pendingWaveformSeekRef.current
-    if (pendingTime !== null) nextWavesurfer.setTime(pendingTime)
-    if (Number.isFinite(nextDuration) && nextDuration > 0) {
-      setDuration(nextDuration)
-    }
-  }, [])
-
-  const handleDecode = useCallback((_wavesurfer: WaveSurfer, nextDuration: number) => {
-    if (Number.isFinite(nextDuration) && nextDuration > 0) {
-      setDuration(nextDuration)
-    }
-  }, [])
-
-  const handleTimeUpdate = useCallback((_wavesurfer: WaveSurfer, nextTime: number) => {
-    if (!isActive) setCurrentTime(nextTime)
-  }, [isActive])
-
-  const handleWaveformError = useCallback((_wavesurfer: WaveSurfer, nextError: Error) => {
-    if (peaks.length === 0) setError(nextError.message || 'Could not draw this waveform.')
-  }, [peaks.length])
-
-  const stopWaveformPlayback = useCallback((nextWavesurfer: WaveSurfer) => {
-    nextWavesurfer.pause()
-  }, [])
 
   const changeWaveformZoom = useCallback((delta: number) => {
     if (waveformUnavailable) return
@@ -410,31 +437,7 @@ export function AudioPlayer({
               />
             </div>
           ) : (
-            <WavesurferPlayer
-              key={src}
-              url={src}
-              blobMimeType={mimeType}
-              duration={displayDuration || undefined}
-              peaks={peaks.length > 0 ? peaks : undefined}
-              minPxPerSec={waveformZoom > 0 ? waveformZoom : undefined}
-              height={waveformHeight}
-              waveColor="rgba(232, 224, 214, 0.3)"
-              progressColor="rgba(232, 168, 76, 0.78)"
-              cursorColor="rgba(232, 168, 76, 0.92)"
-              cursorWidth={2}
-              barWidth={2}
-              barGap={2}
-              barRadius={2}
-              normalize={normalizeWaveform}
-              interact={false}
-              dragToSeek={false}
-              plugins={plugins}
-              onReady={handleReady}
-              onDecode={handleDecode}
-              onTimeupdate={handleTimeUpdate}
-              onPlay={stopWaveformPlayback}
-              onError={handleWaveformError}
-            />
+            <div ref={waveContainerRef} />
           )}
         </div>
         <div className="audio-player-foot">
