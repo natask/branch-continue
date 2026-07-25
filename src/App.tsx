@@ -43,6 +43,7 @@ import {
 } from './ui/lib/voice-recording-config'
 import { shouldOpenCommandPalette } from './ui/lib/keyboard-shortcuts'
 import { createVoiceNoteCommandActions } from './ui/lib/voice-note-command-actions'
+import { shouldResumeStoredVoiceSession } from './ui/lib/voice-panel-state'
 import {
   createAudioCaptureId,
   extractAudioCaptureReferences,
@@ -472,6 +473,9 @@ function LoadedSourceApp({
     return audioSegmentQueueRef.current
   }, [processCompletedAudioSegment])
 
+  const recorderNoteSessionKeyRef = useRef<number | null>(null)
+  const recorderWasRecordingRef = useRef(false)
+
   const audioRecorder = useAudioNoteRecorder({
     sessionKey: editorSession.editor?.sessionKey ?? null,
     livePreview: true,
@@ -486,6 +490,16 @@ function LoadedSourceApp({
     // completed successfully.
     setAudioNoteMessage(null)
   }, [editorSession.editor?.sessionKey])
+
+  useEffect(() => {
+    // The recorder keeps its paused cursor for whichever note it last recorded.
+    // Remembering that note is what lets a Continue elsewhere reload from disk
+    // instead of appending to the wrong session.
+    if (audioRecorder.recording && !recorderWasRecordingRef.current) {
+      recorderNoteSessionKeyRef.current = editorSessionRef.current.editor?.sessionKey ?? null
+    }
+    recorderWasRecordingRef.current = audioRecorder.recording
+  }, [audioRecorder.recording])
 
   beforeEditorBranchRef.current = async () => {
     pendingBranchAutoRecordRef.current = audioRecorder.recording
@@ -744,7 +758,13 @@ function LoadedSourceApp({
     const currentBody = editorSessionRef.current.editor?.body ?? ''
     const references = extractAudioCaptureReferences(currentBody)
     const reference = references.find((candidate) => candidate.kind === 'file') ?? references[0]
-    if (reference && audioRecorder.status === 'idle') {
+    const resumeFromStore = shouldResumeStoredVoiceSession({
+      hasReference: Boolean(reference),
+      status: audioRecorder.status,
+      recorderNoteSessionKey: recorderNoteSessionKeyRef.current,
+      editorNoteSessionKey: editorSessionRef.current.editor?.sessionKey ?? null,
+    })
+    if (reference && resumeFromStore) {
       try {
         const records = await loadAudioCaptureSession(reference, sourcePath)
         const resumeSession = resolveAudioCaptureResumeSession(records)
