@@ -702,7 +702,10 @@ function legacyGetUserMedia(): ((constraints: MediaStreamConstraints, success: (
 }
 
 async function requestNativeMicrophonePermission(): Promise<void> {
-  if (!isAndroidTauriRuntime()) return
+  if (!isAndroidTauriRuntime()) {
+    await assertMacosMicrophoneNotDenied()
+    return
+  }
 
   try {
     const core = await import('@tauri-apps/api/core')
@@ -716,6 +719,29 @@ async function requestNativeMicrophonePermission(): Promise<void> {
   } catch (nextError) {
     if (isMissingNativePermissionBridgeError(nextError)) return
     throw nextError
+  }
+}
+
+const MACOS_MICROPHONE_DENIED_MESSAGE =
+  'Microphone access is disabled for Branch Continue. Enable it in System Settings > Privacy & Security > Microphone, then try recording again.'
+
+/**
+ * On macOS the OS-level grant can be revoked (or invalidated by a re-signed
+ * build) while getUserMedia only reports a generic failure; ask the shell for
+ * the real TCC state so the user gets an actionable message.
+ */
+async function assertMacosMicrophoneNotDenied(): Promise<void> {
+  if (typeof navigator === 'undefined' || !/mac/i.test(navigator.userAgent)) return
+  try {
+    const core = await import('@tauri-apps/api/core')
+    if (!core.isTauri()) return
+    const result = await core.invoke<{ microphone?: unknown }>('microphone_permission_state')
+    if (normalizePermissionState(result?.microphone) === 'denied') {
+      throw new Error(MACOS_MICROPHONE_DENIED_MESSAGE)
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === MACOS_MICROPHONE_DENIED_MESSAGE) throw error
+    // Older shells lack the command; let getUserMedia surface its own error.
   }
 }
 
