@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent a
 import WavesurferPlayer from '@wavesurfer/react'
 import type WaveSurfer from 'wavesurfer.js'
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js'
+import TimelinePlugin from 'wavesurfer.js/dist/plugins/timeline.esm.js'
 import { getGlobalAudioSnapshot, pauseGlobalAudio, playGlobalAudio, useGlobalAudioPlayer } from '../lib/global-audio-player'
 import { VOICE_SEEK_EVENT, type VoiceSeekDetail } from '../lib/voice-seek'
+import { computeWaveformTickSpec, formatWaveformTickLabel } from '../lib/waveform-ticks'
 
 interface AudioPlayerProps {
   id: string
@@ -109,6 +111,9 @@ export function AudioPlayer({
     setCurrentTime(nextTime)
     if (wavesurfer && Math.abs(wavesurfer.getCurrentTime() - nextTime) > 0.01) {
       wavesurfer.setTime(nextTime)
+      // Playback runs through the global audio element, so wavesurfer's own
+      // auto-scroll never engages; keep the playhead on-screen ourselves.
+      keepPlayheadVisible(wavesurfer, nextTime)
     }
   }, [globalAudio.currentTime, isActive, wavesurfer])
 
@@ -152,10 +157,33 @@ export function AudioPlayer({
     wavesurfer.zoom(waveformZoom)
   }, [waveformZoom, wavesurfer])
 
+  useEffect(() => {
+    // The ruler's resolution follows the zoom: re-register the timeline with
+    // intervals computed for the current px-per-second, since the plugin only
+    // reads explicit intervals at creation.
+    if (!wavesurfer || displayDuration <= 0) return undefined
+    const pxPerSec = waveformZoom > 0
+      ? waveformZoom
+      : (wavesurfer.getWidth() || 1) / displayDuration
+    const spec = computeWaveformTickSpec(pxPerSec)
+    const timeline = wavesurfer.registerPlugin(TimelinePlugin.create({
+      height: 14,
+      timeInterval: spec.tickSec,
+      primaryLabelInterval: spec.labelSec,
+      secondaryLabelInterval: 0,
+      formatTimeCallback: (seconds) => formatWaveformTickLabel(seconds, spec.labelSec),
+      style: { color: 'rgba(232, 224, 214, 0.55)' },
+    }))
+    return () => timeline.destroy()
+  }, [displayDuration, waveformZoom, wavesurfer])
+
   const seekTo = useCallback((nextTimeMs: number) => {
     const seconds = Math.max(0, nextTimeMs / 1000)
     pendingWaveformSeekRef.current = seconds
-    wavesurfer?.setTime(seconds)
+    if (wavesurfer) {
+      wavesurfer.setTime(seconds)
+      keepPlayheadVisible(wavesurfer, seconds)
+    }
     setCurrentTime(seconds)
     playAt(nextTimeMs)
   }, [playAt, wavesurfer])
@@ -315,9 +343,9 @@ export function AudioPlayer({
       && Date.now() - start.startedAt <= TAP_MAX_DURATION_MS
     ) {
       suppressNextClickRef.current = true
-      seekFromClientX(event.currentTarget, event.clientX, displayDuration, seekTo)
+      seekFromClientX(event.currentTarget, event.clientX, displayDuration, seekTo, waveformViewport(wavesurfer))
     }
-  }, [displayDuration, seekTo])
+  }, [displayDuration, seekTo, wavesurfer])
 
   const handleWaveformClick = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
     if (suppressNextClickRef.current) {
@@ -326,8 +354,8 @@ export function AudioPlayer({
     }
 
     if (waveformUnavailable || pinchActiveRef.current || isInteractiveTarget(event.target)) return
-    seekFromClientX(event.currentTarget, event.clientX, displayDuration, seekTo)
-  }, [displayDuration, seekTo, waveformUnavailable])
+    seekFromClientX(event.currentTarget, event.clientX, displayDuration, seekTo, waveformViewport(wavesurfer))
+  }, [displayDuration, seekTo, waveformUnavailable, wavesurfer])
 
   return (
     <div
@@ -395,6 +423,7 @@ export function AudioPlayer({
               barGap={2}
               barRadius={2}
               normalize
+              interact={false}
               dragToSeek={false}
               plugins={plugins}
               onReady={handleReady}
@@ -434,17 +463,54 @@ function captureActivePointers(element: HTMLDivElement, points: Map<number, { x:
   }
 }
 
+export interface WaveformViewport {
+  /** Horizontal scroll offset of the waveform, in pixels. */
+  scrollPx: number
+  /** Full rendered width of the waveform (>= visible width when zoomed). */
+  renderedWidthPx: number
+}
+
 export function seekFromClientX(
   element: HTMLDivElement,
   clientX: number,
   durationSeconds: number,
   seekTo: (nextTimeMs: number) => void,
+  viewport?: WaveformViewport | null,
 ): void {
   if (!durationSeconds) return
   const rect = element.getBoundingClientRect()
-  const width = rect.width || 1
-  const fraction = Math.max(0, Math.min(1, (clientX - rect.left) / width))
+  const offsetX = clientX - rect.left
+  // A zoomed waveform is wider than the container and scrolled, so the click
+  // position must be mapped through the scroll offset, not the visible width.
+  const fraction = viewport && viewport.renderedWidthPx > 0
+    ? Math.max(0, Math.min(1, (viewport.scrollPx + offsetX) / viewport.renderedWidthPx))
+    : Math.max(0, Math.min(1, offsetX / (rect.width || 1)))
   seekTo(fraction * durationSeconds * 1000)
+}
+
+function waveformViewport(wavesurfer: WaveSurfer | null): WaveformViewport | null {
+  if (!wavesurfer) return null
+  try {
+    return {
+      scrollPx: wavesurfer.getScroll(),
+      renderedWidthPx: wavesurfer.getWrapper().scrollWidth,
+    }
+  } catch {
+    return null
+  }
+}
+
+function keepPlayheadVisible(wavesurfer: WaveSurfer, timeSeconds: number): void {
+  const duration = wavesurfer.getDuration()
+  if (!duration) return
+  const renderedWidth = wavesurfer.getWrapper().scrollWidth
+  const visibleWidth = wavesurfer.getWidth()
+  if (!visibleWidth || renderedWidth <= visibleWidth + 1) return
+  const playheadPx = (Math.min(timeSeconds, duration) / duration) * renderedWidth
+  const scroll = wavesurfer.getScroll()
+  const margin = Math.min(48, visibleWidth * 0.15)
+  if (playheadPx >= scroll + margin && playheadPx <= scroll + visibleWidth - margin) return
+  wavesurfer.setScroll(Math.max(0, playheadPx - visibleWidth / 2))
 }
 
 function isInteractiveTarget(target: EventTarget): boolean {

@@ -2888,6 +2888,15 @@ pre {
   font-weight: 700;
 }
 
+.audio-player-waveform ::part(timeline-notch) {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.audio-player-waveform ::part(timeline-notch-primary) {
+  color: rgba(232, 224, 214, 0.72);
+}
+
 .audio-player-foot {
   display: flex;
   justify-content: space-between;

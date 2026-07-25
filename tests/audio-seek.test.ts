@@ -28,6 +28,20 @@ describe('voice seek interactions', () => {
     expect(seek).toHaveBeenCalledWith(10_000)
   })
 
+  it('maps clicks through the scroll offset when the waveform is zoomed', () => {
+    const seek = vi.fn()
+    const element = {
+      getBoundingClientRect: () => ({ left: 100, width: 400 }),
+    } as HTMLDivElement
+
+    // 20s rendered at 4000px, scrolled 1800px in: a click 200px into the
+    // 400px-wide view sits at pixel 2000 = exactly half the recording.
+    seekFromClientX(element, 300, 20, seek, { scrollPx: 1_800, renderedWidthPx: 4_000 })
+
+    expect(seek).toHaveBeenCalledOnce()
+    expect(seek).toHaveBeenCalledWith(10_000)
+  })
+
   it('remaps recorder wall-clock gaps onto the assembled WAV timeline', () => {
     // The second chunk began at wall-clock 7s, but follows a 3s decoded first
     // chunk directly in the assembled file. A word 200ms into it seeks to 3.2s.
