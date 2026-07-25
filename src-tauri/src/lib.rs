@@ -1,4 +1,6 @@
 mod chirp;
+#[cfg(target_os = "macos")]
+mod macos_microphone;
 mod microphone_permission;
 mod source_file;
 
@@ -12,6 +14,7 @@ pub fn run() {
         .plugin(source_file::init())
         .invoke_handler(tauri::generate_handler![
             microphone_permission::android_request_microphone_permission,
+            microphone_permission::microphone_permission_state,
             chirp::transcribe_with_chirp,
             source_file::android_select_source_file,
             source_file::android_read_source_file,
@@ -30,6 +33,14 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            // Take the microphone grant at the app level so the system prompt lands at
+            // launch instead of interrupting the user's first recording. Deferred onto
+            // the event loop because setup runs before it starts.
+            #[cfg(target_os = "macos")]
+            app.handle()
+                .run_on_main_thread(macos_microphone::request_access_if_undetermined)?;
+
             Ok(())
         })
         .run(tauri::generate_context!())

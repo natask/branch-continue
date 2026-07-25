@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Unused until a macOS signing identity is configured. The bundler only signs when
+  bundle.macOS.signingIdentity (or APPLE_SIGNING_IDENTITY) is set, and it signs with the
+  hardened runtime, which is what makes these entitlements necessary:
+
+    - audio-input          the microphone grant this app depends on
+    - allow-jit and
+      unsigned-executable-memory   JavaScriptCore; WKWebView will not load without them
+
+  To use it, add to tauri.conf.json under "bundle":
+      "macOS": { "signingIdentity": "<identity>", "entitlements": "Entitlements.plist" }
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+</dict>
+</plist>
