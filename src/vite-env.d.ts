@@ -15,7 +15,6 @@ interface ImportMetaEnv {
   readonly VITE_MASTER_ORCH_AGENTATION?: string
   readonly VITE_GCP_PROJECT_ID?: string
   readonly VITE_GCP_LOCATION?: string
-  readonly VITE_CHIRP_MODEL?: string
   readonly VITE_BRANCH_CONTINUE_MOBILE_OTA_URL?: string
   readonly VITE_BRANCH_CONTINUE_MOBILE_OTA_RELEASE_ID?: string
 }

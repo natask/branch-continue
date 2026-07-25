@@ -32,14 +32,10 @@ export async function transcribeAudioWithChirp({
   const audioBase64 = uint8ToBase64(new Uint8Array(await blob.arrayBuffer()))
   const payload = {
     audioBase64,
-    languageCode: config.languageCode,
-    languageCodes: config.spokenLanguageCodes,
     customPrompt: config.transcriptionPrompt,
-    transcriptionEngine: config.model || 'chirp_3',
     mimeType,
     projectId: config.projectId || undefined,
     location: config.location || undefined,
-    model: config.model || 'chirp_3',
     serviceAccountKeyPath: config.serviceAccountKeyPath || undefined,
   }
 

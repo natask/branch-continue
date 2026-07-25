@@ -12,27 +12,22 @@ const TOKEN_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:jwt-bearer";
 const CLOUD_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform";
 const EMBEDDED_GCP_PROJECT_ID: Option<&str> = option_env!("BRANCH_CONTINUE_GCP_PROJECT_ID");
 const EMBEDDED_GCP_LOCATION: Option<&str> = option_env!("BRANCH_CONTINUE_GCP_LOCATION");
-const EMBEDDED_CHIRP_MODEL: Option<&str> = option_env!("BRANCH_CONTINUE_CHIRP_MODEL");
 const EMBEDDED_GCP_SERVICE_ACCOUNT_KEY: Option<&str> =
     option_env!("BRANCH_CONTINUE_GCP_SERVICE_ACCOUNT_KEY");
 const EMBEDDED_LEGACY_GCP_PROJECT_ID: Option<&str> = option_env!("GCP_PROJECT_ID");
 const EMBEDDED_LEGACY_GCP_LOCATION: Option<&str> = option_env!("GCP_LOCATION");
-const EMBEDDED_LEGACY_CHIRP_MODEL: Option<&str> = option_env!("CHIRP_MODEL");
 const EMBEDDED_LEGACY_GCP_SERVICE_ACCOUNT_KEY: Option<&str> =
     option_env!("GCP_SERVICE_ACCOUNT_KEY");
-const DEFAULT_CHIRP_MODEL: &str = "chirp_3";
+const CHIRP_MODEL: &str = "chirp_3";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChirpTranscribePayload {
     audio_base64: String,
-    language_code: String,
-    language_codes: Option<Vec<String>>,
     custom_prompt: Option<String>,
     mime_type: Option<String>,
     project_id: Option<String>,
     location: Option<String>,
-    model: Option<String>,
     service_account_key_path: Option<String>,
 }
 
@@ -122,7 +117,6 @@ pub async fn transcribe_with_chirp(
         return Err("Missing audio data.".to_string());
     }
 
-    let language_code = clean_required(&payload.language_code, "language code")?;
     let credentials_raw = load_google_credentials(payload.service_account_key_path.as_deref())?;
     let credentials = parse_google_credentials(&credentials_raw)?;
     let env_project_id =
@@ -132,8 +126,6 @@ pub async fn transcribe_with_chirp(
     let adc_project_id = env_value("GOOGLE_CLOUD_PROJECT").or_else(|| env_value("GCLOUD_PROJECT"));
     let env_location = env_or_embedded_value("BRANCH_CONTINUE_GCP_LOCATION", EMBEDDED_GCP_LOCATION);
     let env_location_fallback = env_or_embedded_value("GCP_LOCATION", EMBEDDED_LEGACY_GCP_LOCATION);
-    let env_model = env_or_embedded_value("BRANCH_CONTINUE_CHIRP_MODEL", EMBEDDED_CHIRP_MODEL);
-    let env_model_fallback = env_or_embedded_value("CHIRP_MODEL", EMBEDDED_LEGACY_CHIRP_MODEL);
     let project_id = first_non_empty([
         payload.project_id.as_deref(),
         env_project_id.as_deref(),
@@ -150,17 +142,7 @@ pub async fn transcribe_with_chirp(
         Some("us"),
     ])
     .unwrap_or_else(|| "us".to_string());
-    let model = normalize_chirp_model(
-        &first_non_empty([
-            payload.model.as_deref(),
-            env_model.as_deref(),
-            env_model_fallback.as_deref(),
-            Some(DEFAULT_CHIRP_MODEL),
-        ])
-        .unwrap_or_else(|| DEFAULT_CHIRP_MODEL.to_string()),
-    )?;
-    let language_codes =
-        resolve_language_codes(payload.language_codes.as_deref(), &language_code, &model);
+    let language_codes = ["auto"];
 
     let client = reqwest::Client::new();
     let access_token = get_access_token(&client, &credentials).await?;
@@ -177,19 +159,19 @@ pub async fn transcribe_with_chirp(
                     "audioChannelCount": 1
                 },
                 "languageCodes": language_codes,
-                "model": model,
+                "model": CHIRP_MODEL,
                 "features": features
             },
             "content": audio_base64
         }),
-        None => auto_decoding_body(audio_base64, &language_codes, &model, features.clone()),
+        None => auto_decoding_body(audio_base64, features.clone()),
     };
 
     let response_text =
         match post_recognize(&client, &endpoint, &access_token, quota_project_id, body).await {
             Ok(text) => text,
             Err(err) if err.status == 400 && explicit_encoding.is_some() => {
-                let fallback = auto_decoding_body(audio_base64, &language_codes, &model, features);
+                let fallback = auto_decoding_body(audio_base64, features);
                 post_recognize(
                     &client,
                     &endpoint,
@@ -337,17 +319,12 @@ async fn post_recognize(
     Ok(response_body)
 }
 
-fn auto_decoding_body(
-    audio_base64: &str,
-    language_codes: &[String],
-    model: &str,
-    features: Value,
-) -> Value {
+fn auto_decoding_body(audio_base64: &str, features: Value) -> Value {
     json!({
         "config": {
             "autoDecodingConfig": {},
-            "languageCodes": language_codes,
-            "model": model,
+            "languageCodes": ["auto"],
+            "model": CHIRP_MODEL,
             "features": features
         },
         "content": audio_base64
@@ -363,17 +340,6 @@ fn recognition_features(custom_prompt: Option<&str>) -> Value {
         features["customPromptConfig"] = json!({ "customPrompt": custom_prompt });
     }
     features
-}
-
-fn resolve_language_codes(
-    _configured: Option<&[String]>,
-    fallback: &str,
-    model: &str,
-) -> Vec<String> {
-    if model == DEFAULT_CHIRP_MODEL {
-        return vec!["auto".to_string()];
-    }
-    vec![fallback.to_string()]
 }
 
 fn parse_transcription(response_text: &str) -> Result<ChirpTranscribeResponse, String> {
@@ -587,20 +553,6 @@ fn clean_optional(value: &str) -> Option<String> {
     }
 }
 
-fn clean_required(value: &str, label: &str) -> Result<String, String> {
-    clean_optional(value).ok_or_else(|| format!("Missing {label}."))
-}
-
-fn normalize_chirp_model(value: &str) -> Result<String, String> {
-    match value.trim() {
-        "chirp_3" => Ok("chirp_3".to_string()),
-        "chirp_2" => Ok("chirp_2".to_string()),
-        other => Err(format!(
-            "Unsupported Speech-to-Text model '{other}'. Use chirp_3 or chirp_2."
-        )),
-    }
-}
-
 fn env_value(name: &str) -> Option<String> {
     env::var(name).ok().and_then(|value| clean_optional(&value))
 }
@@ -655,21 +607,6 @@ mod tests {
         assert_eq!(
             parse_gcloud_project(config).as_deref(),
             Some("speech-project")
-        );
-    }
-
-    #[test]
-    fn uses_chirp3_automatic_language_detection() {
-        let configured = vec![
-            "en-US".to_string(),
-            "am-ET".to_string(),
-            "en-US".to_string(),
-            "fr-FR".to_string(),
-            "es-ES".to_string(),
-        ];
-        assert_eq!(
-            resolve_language_codes(Some(&configured), "en-US", "chirp_3"),
-            vec!["auto"]
         );
     }
 

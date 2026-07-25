@@ -1,5 +1,6 @@
 export const CREATE_VOICE_NOTE_LABEL = 'Create VoiceNote'
 export const UPDATE_VOICE_NOTE_PROMPT_LABEL = 'Update VoiceNote Prompt'
+export const SPECIFY_VOICE_NOTE_LANGUAGE_LABEL = 'Specify Language for VoiceNote'
 
 export interface VoiceNoteCommandAction {
   id: string
@@ -37,6 +38,14 @@ export function createVoiceNoteCommandActions({
       id: 'update-voice-note-prompt',
       label: UPDATE_VOICE_NOTE_PROMPT_LABEL,
       keywords: ['voice', 'audio', 'transcription', 'prompt', 'chirp', 'settings'],
+      group: 'Actions',
+      disabled: !canUpdatePrompt,
+      run: onUpdatePrompt,
+    },
+    {
+      id: 'specify-voice-note-language',
+      label: SPECIFY_VOICE_NOTE_LANGUAGE_LABEL,
+      keywords: ['voice', 'audio', 'transcription', 'language', 'chirp', 'prompt'],
       group: 'Actions',
       disabled: !canUpdatePrompt,
       run: onUpdatePrompt,

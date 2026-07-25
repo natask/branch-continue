@@ -6,7 +6,6 @@ import { type VoiceRecordingConfig } from '../lib/voice-recording-config'
 import { parseVoiceTranscriptTime } from '../lib/voice-transcript'
 import { extractAudioCaptureReferences } from '../../core/audio/audio-store'
 import { formatElapsed, VoiceRecordingsPanel } from './VoiceRecordingsPanel'
-import { AudioCaptureList } from './AudioCaptureList'
 
 type MobileNavTarget = 'older' | 'newer'
 
@@ -27,7 +26,7 @@ interface EditorProps {
   sourcePath: string
   onVoiceConfigOpenChange: (open: boolean) => void
   onVoiceRecordingConfigChange: (patch: Partial<VoiceRecordingConfig>) => void
-  onVoiceLanguageCapture: (languageCode: string) => void
+  onVoiceCapture: () => void
   onSelectVoiceCredentialFile: () => Promise<void>
   onOpenSearch: () => void
   onOpenOlderNote: () => void
@@ -48,7 +47,7 @@ export function Editor({
   sourcePath,
   onVoiceConfigOpenChange,
   onVoiceRecordingConfigChange,
-  onVoiceLanguageCapture,
+  onVoiceCapture,
   onSelectVoiceCredentialFile,
   onOpenSearch,
   onOpenOlderNote,
@@ -82,6 +81,23 @@ export function Editor({
   const hasRecorderAudio = Boolean(audioRecorder.audioUrl || audioRecorder.audioBlob) || audioRecorder.status === 'stopped'
   const hasAudioActivity = hasLinkedAudio || audioRecorder.recording || hasRecorderAudio
   const showRecordingsPanel = voiceConfigOpen || recordingsPanelOpen
+  const canStartRecording = audioRecorder.mediaRecorderAvailable
+    && audioRecorder.status !== 'requesting'
+    && audioRecorder.status !== 'stopping'
+  const stealthToggleLabel = audioRecorder.recording
+    ? formatElapsed(audioRecorder.elapsedMs)
+    : hasAudioActivity ? 'Continue' : 'Start'
+
+  function handleStealthToggleClick() {
+    if (audioRecorder.recording) {
+      setRecordingsPanelOpen((open) => !open)
+      return
+    }
+    setRecordingsPanelOpen(true)
+    // When the recorder can't start (mic busy/unavailable), still open the
+    // panel so an existing voice note remains viewable without recording.
+    if (canStartRecording) onVoiceCapture()
+  }
 
   const handleBodyRef = useCallback(
     (element: HTMLTextAreaElement | null) => {
@@ -280,14 +296,14 @@ export function Editor({
             <div className="note-editor-branch-close">
               <button
                 className={`recordings-stealth-toggle${showRecordingsPanel ? ' recordings-stealth-toggle--active' : ''}`}
-                onClick={() => setRecordingsPanelOpen((open) => !open)}
+                onClick={handleStealthToggleClick}
                 type="button"
                 aria-expanded={showRecordingsPanel}
-                aria-label={hasAudioActivity ? 'Open current voice note' : 'Create new voice note'}
-                title={hasAudioActivity ? 'Open audio and continue this voice note' : 'Open audio and create a new voice note'}
+                aria-label={audioRecorder.recording ? 'Open current voice note' : hasAudioActivity ? 'Continue voice note' : 'Start voice note'}
+                title={audioRecorder.recording ? 'Open audio and continue this voice note' : hasAudioActivity ? 'Continue this voice note' : 'Start a new voice note'}
               >
                 <span className={`recordings-stealth-dot${audioRecorder.recording ? ' recordings-stealth-dot--active' : ''}`} />
-                <span>{audioRecorder.recording ? formatElapsed(audioRecorder.elapsedMs) : 'Audio'}</span>
+                <span>{stealthToggleLabel}</span>
               </button>
               <button className="btn-secondary" onClick={onOpenSearch} type="button">
                 {isMobile ? 'Search' : 'Commands'}
@@ -389,14 +405,6 @@ export function Editor({
               <ReadableNoteBody body={editor.body} sessionId={voiceSessionIdForBody(editor.body)} />
             )}
 
-            {hasLinkedAudio && (
-              <AudioCaptureList
-                body={editor.body}
-                sourcePath={sourcePath}
-                refreshKey={audioTranscriptRefreshKey}
-              />
-            )}
-
             {isMobile && (
               <div className="note-editor-mobile-nav" aria-label="Note navigation">
                 <button
@@ -441,7 +449,10 @@ export function Editor({
               voiceRecordingConfig={voiceRecordingConfig}
               voiceConfigOpen={voiceConfigOpen}
               hasLinkedAudio={hasLinkedAudio}
-              onVoiceLanguageCapture={onVoiceLanguageCapture}
+              body={editor.body}
+              sourcePath={sourcePath}
+              audioTranscriptRefreshKey={audioTranscriptRefreshKey}
+              onVoiceCapture={onVoiceCapture}
               onVoiceConfigOpenChange={onVoiceConfigOpenChange}
               onVoiceRecordingConfigChange={onVoiceRecordingConfigChange}
               onSelectVoiceCredentialFile={onSelectVoiceCredentialFile}

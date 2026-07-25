@@ -31,7 +31,6 @@ import {
   type AgentLaunchSummary,
 } from './ui/lib/agent-links'
 import {
-  PRIMARY_VOICE_LANGUAGE_OPTIONS,
   normalizeVoiceRecordingConfig,
   persistVoiceRecordingConfig,
   resolveInitialVoiceRecordingConfig,
@@ -227,12 +226,18 @@ function LoadedSourceApp({
   const wheelNavDirection = isMobile ? mobileWheelNavDirection : desktopWheelNavDirection
   const editorWheelAccumRef = useRef(0)
   const beforeEditorBranchRef = useRef<() => Promise<boolean | void>>(async () => true)
+  const afterEditorBranchRef = useRef<() => void>(() => {})
+  // Set right before a branch stops the parent's recording; consumed once the
+  // branch's new session key is live so the child branch can pick up recording
+  // where the parent left off instead of requiring another button press.
+  const pendingBranchAutoRecordRef = useRef(false)
 
   const editorSession = useEditorSession({
     sourceSelected: true,
     createNote,
     updateNote,
     beforeBranch: () => beforeEditorBranchRef.current(),
+    afterBranch: () => afterEditorBranchRef.current(),
   })
   const editorSessionRef = useRef(editorSession)
   editorSessionRef.current = editorSession
@@ -371,10 +376,7 @@ function LoadedSourceApp({
       const transcription = await transcribeAudioWithChirp({
         blob: capture.blob,
         mimeType: capture.mimeType,
-        config: {
-          ...voiceRecordingConfig,
-          languageCode: capture.languageCode || voiceRecordingConfig.languageCode,
-        },
+        config: voiceRecordingConfig,
       })
       const cleanTranscript = cleanVoiceTranscriptSegment(transcription.transcript)
       if (!cleanTranscript || cleanTranscript === '(no speech detected)') {
@@ -387,7 +389,7 @@ function LoadedSourceApp({
         audio: saved,
         text: cleanTranscript,
         offsetMs: capture.offsetMs,
-        languageCode: capture.languageCode || voiceRecordingConfig.languageCode,
+        languageCode: 'auto',
         sessionId: capture.sessionId,
         segmentIndex: capture.segmentIndex,
         createdAt: new Date().toISOString(),
@@ -416,7 +418,6 @@ function LoadedSourceApp({
 
   const audioRecorder = useAudioNoteRecorder({
     sessionKey: editorSession.editor?.sessionKey ?? null,
-    languageCode: voiceRecordingConfig.languageCode,
     livePreview: true,
     onRecordingComplete: attachCompletedAudioToCurrentEditor,
   })
@@ -429,8 +430,17 @@ function LoadedSourceApp({
   }, [editorSession.editor?.sessionKey])
 
   beforeEditorBranchRef.current = async () => {
+    pendingBranchAutoRecordRef.current = audioRecorder.recording
     await audioRecorder.stopAndWait()
     return true
+  }
+  afterEditorBranchRef.current = () => {
+    if (!pendingBranchAutoRecordRef.current) return
+    pendingBranchAutoRecordRef.current = false
+    // A macrotask delay matters here: the recorder's own sessionKey-boundary
+    // effect (use-audio-note-recorder.ts) clears presentation state for the
+    // new session via a microtask, and starting synchronously would race it.
+    window.setTimeout(() => void audioRecorder.start(undefined, { newSession: true }), 0)
   }
 
   const orderedNotes = useMemo(() => orderNotes(notes), [notes])
@@ -546,10 +556,15 @@ function LoadedSourceApp({
   }, [handleOpenRelativeEditorNote, isMobile])
 
   const handleBranch = useCallback(
-    (from: SourceNote) => {
-      editorSession.openBranchEditor(from)
+    async (from: SourceNote) => {
+      const canBranch = await beforeEditorBranchRef.current()
+      if (canBranch === false) return
+      const ok = await editorSessionRef.current.flushAutoSave()
+      if (!ok) return
+      editorSessionRef.current.openBranchEditor(from)
+      afterEditorBranchRef.current()
     },
-    [editorSession],
+    [],
   )
 
   const handleCreateNewNote = useCallback(async () => {
@@ -559,12 +574,12 @@ function LoadedSourceApp({
     editorSessionRef.current.openBranchEditor(null)
   }, [audioRecorder.stopAndWait])
 
-  const handleCreateVoiceNote = useCallback(async (languageCode?: string) => {
+  const handleCreateVoiceNote = useCallback(async () => {
     await audioRecorder.stopAndWait()
     const ok = await editorSessionRef.current.flushAutoSave()
     if (!ok) return
     editorSessionRef.current.openBranchEditor(currentContextNote ?? null)
-    window.setTimeout(() => void audioRecorder.start(languageCode, { newSession: true }), 0)
+    window.setTimeout(() => void audioRecorder.start(undefined, { newSession: true }), 0)
   }, [audioRecorder.start, audioRecorder.stopAndWait, currentContextNote])
 
   const handleUpdateVoiceNotePrompt = useCallback(() => {
@@ -666,15 +681,7 @@ function LoadedSourceApp({
     )
   }, [captureFactoryIntent, currentContextNote, setFactoryOpen])
 
-  const setVoiceLanguage = useCallback((languageCode: string) => {
-    updateVoiceRecordingConfig({ languageCode })
-    if (audioRecorder.recording && voiceRecordingConfig.languageCode !== languageCode) {
-      audioRecorder.switchLanguage(languageCode)
-    }
-  }, [audioRecorder.recording, audioRecorder.switchLanguage, updateVoiceRecordingConfig, voiceRecordingConfig.languageCode])
-
-  const handleVoiceLanguageCapture = useCallback(async (languageCode: string) => {
-    setVoiceLanguage(languageCode)
+  const handleVoiceCapture = useCallback(async () => {
     if (audioRecorder.recording) return
     const currentBody = editorSessionRef.current.editor?.body ?? ''
     const references = extractAudioCaptureReferences(currentBody)
@@ -687,21 +694,15 @@ function LoadedSourceApp({
           setAudioNoteMessage('This older voice note cannot be resumed yet, but it is still available to play.')
           return
         }
-        await audioRecorder.start(languageCode, { resumeSession })
+        await audioRecorder.start(undefined, { resumeSession })
         return
       } catch (error) {
         setAudioNoteMessage(`Could not resume this voice note: ${errorMessage(error)}`)
         return
       }
     }
-    await audioRecorder.start(languageCode)
-  }, [audioRecorder.recording, audioRecorder.start, audioRecorder.status, setVoiceLanguage, sourcePath])
-
-  const handleVoiceNoteLanguageCapture = useCallback((languageCode: string) => {
-    setVoiceLanguage(languageCode)
-    if (audioRecorder.recording) return
-    void handleCreateVoiceNote(languageCode)
-  }, [audioRecorder.recording, handleCreateVoiceNote, setVoiceLanguage])
+    await audioRecorder.start()
+  }, [audioRecorder.recording, audioRecorder.start, audioRecorder.status, sourcePath])
 
   const handleGoToBoundary = useCallback(() => {
     const boundary = resolveBoundaryNote(orderedNotes, sortMode)
@@ -1119,7 +1120,7 @@ function LoadedSourceApp({
       audioRecorder.mediaRecorderAvailable,
       audioRecorder.start,
       audioRecorder.stop,
-      handleVoiceNoteLanguageCapture,
+      handleVoiceCapture,
       handleCreateNewNote,
       handleCreateVoiceNote,
       handleUpdateVoiceNotePrompt,
@@ -1215,23 +1216,16 @@ function LoadedSourceApp({
             New Note
           </button>
           <div className="topbar-voice-actions" role="group" aria-label="Create voice note">
-            {PRIMARY_VOICE_LANGUAGE_OPTIONS.map((option) => {
-              const active = voiceRecordingConfig.languageCode === option.code
-              return (
-                <button
-                  key={option.code}
-                  className={`voice-language-btn voice-language-btn--compact${active ? ' voice-language-btn--active' : ''}${active && audioRecorder.recording ? ' voice-language-btn--recording' : ''}`}
-                  onClick={() => handleVoiceNoteLanguageCapture(option.code)}
-                  disabled={audioRecorder.status === 'requesting' || audioRecorder.status === 'stopping' || !audioRecorder.mediaRecorderAvailable}
-                  type="button"
-                  title={`${audioRecorder.recording ? 'Switch live preview to' : 'Create voice note with'} ${option.label} live preview`}
-                  aria-pressed={active}
-                >
-                  <span className="voice-language-flag" aria-hidden="true">{option.flag}</span>
-                  <span className="voice-language-label">{option.shortLabel}</span>
-                </button>
-              )
-            })}
+            {!audioRecorder.recording && (
+              <button
+                className="topbar-search"
+                onClick={() => void handleCreateVoiceNote()}
+                disabled={audioRecorder.status === 'requesting' || audioRecorder.status === 'stopping' || !audioRecorder.mediaRecorderAvailable}
+                type="button"
+              >
+                Voice Note
+              </button>
+            )}
             {audioRecorder.recording && (
               <button className="topbar-search" onClick={audioRecorder.stop} type="button">
                 Pause
@@ -1335,7 +1329,7 @@ function LoadedSourceApp({
           sourcePath={sourcePath}
           onVoiceConfigOpenChange={setVoiceConfigOpen}
           onVoiceRecordingConfigChange={updateVoiceRecordingConfig}
-          onVoiceLanguageCapture={handleVoiceLanguageCapture}
+          onVoiceCapture={handleVoiceCapture}
           onSelectVoiceCredentialFile={selectVoiceCredentialFile}
           onOpenSearch={() => setSearchOpen(true)}
           onOpenOlderNote={handleOpenOlderEditorNote}
@@ -1615,10 +1609,7 @@ function errorMessage(error: unknown): string {
 }
 
 function chirpConfigReady(config: VoiceRecordingConfig): boolean {
-  return Boolean(
-    config.location.trim() &&
-      config.model.trim(),
-  )
+  return Boolean(config.location.trim())
 }
 
 function resolveInitialSortMode(): NoteSortMode {

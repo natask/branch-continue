@@ -7,7 +7,6 @@ BILLING_ACCOUNT_ID="${BILLING_ACCOUNT_ID:-}"
 SERVICE_ACCOUNT_NAME="branch-continue-chirp"
 ENV_FILE=".env"
 LOCATION="${BRANCH_CONTINUE_GCP_LOCATION:-${GCP_LOCATION:-us}}"
-MODEL="${BRANCH_CONTINUE_CHIRP_MODEL:-${CHIRP_MODEL:-chirp_3}}"
 
 usage() {
   cat <<'EOF'
@@ -23,7 +22,6 @@ Options:
   --billing-account ID     Existing billing account ID. Auto-selected only if exactly one open account exists.
   --service-account NAME   Service account name. Default: branch-continue-chirp
   --location LOCATION      Speech-to-Text location. Default: us
-  --model MODEL            Speech model. Default: chirp_3. Allowed: chirp_3, chirp_2
   --env-file PATH          Env file to update. Default: .env
   -h, --help               Show this help.
 
@@ -60,10 +58,6 @@ while [[ $# -gt 0 ]]; do
       LOCATION="${2:?Missing value for --location}"
       shift 2
       ;;
-    --model)
-      MODEL="${2:?Missing value for --model}"
-      shift 2
-      ;;
     --env-file)
       ENV_FILE="${2:?Missing value for --env-file}"
       shift 2
@@ -93,12 +87,6 @@ fi
 if [[ ! "$SERVICE_ACCOUNT_NAME" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
   echo "Invalid service account name: $SERVICE_ACCOUNT_NAME" >&2
   echo "Use 6-30 lowercase letters, digits, and hyphens; start with a letter and end with a letter/digit." >&2
-  exit 1
-fi
-
-if [[ "$MODEL" != "chirp_3" && "$MODEL" != "chirp_2" ]]; then
-  echo "Unsupported model: $MODEL" >&2
-  echo "Use chirp_3 or chirp_2." >&2
   exit 1
 fi
 
@@ -139,7 +127,7 @@ fi
 
 echo "Using project: $PROJECT_ID"
 echo "Using billing account: $BILLING_ACCOUNT_ID"
-echo "Using Speech-to-Text model: $MODEL"
+echo "Using Speech-to-Text model: chirp_3"
 echo "Using Speech-to-Text location: $LOCATION"
 
 if gcloud projects describe "$PROJECT_ID" >/dev/null 2>&1; then
@@ -238,10 +226,8 @@ fi
 
 set_env_var "VITE_GCP_PROJECT_ID" "$PROJECT_ID" "$ENV_FILE"
 set_env_var "VITE_GCP_LOCATION" "$LOCATION" "$ENV_FILE"
-set_env_var "VITE_CHIRP_MODEL" "$MODEL" "$ENV_FILE"
 set_env_var "BRANCH_CONTINUE_GCP_PROJECT_ID" "$PROJECT_ID" "$ENV_FILE"
 set_env_var "BRANCH_CONTINUE_GCP_LOCATION" "$LOCATION" "$ENV_FILE"
-set_env_var "BRANCH_CONTINUE_CHIRP_MODEL" "$MODEL" "$ENV_FILE"
 set_env_var "BRANCH_CONTINUE_GCP_SERVICE_ACCOUNT_KEY" "$SERVICE_ACCOUNT_KEY_JSON" "$ENV_FILE"
 
 echo "Wrote Chirp build configuration to $ENV_FILE"

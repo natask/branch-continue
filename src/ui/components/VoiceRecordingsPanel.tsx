@@ -1,10 +1,6 @@
 import type { UseAudioNoteRecorderResult } from '../hooks/use-audio-note-recorder'
-import {
-  VOICE_LANGUAGE_OPTIONS,
-  VOICE_TRANSCRIPTION_MODEL_OPTIONS,
-  type VoiceRecordingConfig,
-} from '../lib/voice-recording-config'
-import { AudioPlayer } from './AudioPlayer'
+import { type VoiceRecordingConfig } from '../lib/voice-recording-config'
+import { AudioCaptureList } from './AudioCaptureList'
 
 export interface VoiceRecordingsPanelProps {
   audioRecorder: UseAudioNoteRecorderResult
@@ -12,7 +8,10 @@ export interface VoiceRecordingsPanelProps {
   voiceRecordingConfig: VoiceRecordingConfig
   voiceConfigOpen: boolean
   hasLinkedAudio: boolean
-  onVoiceLanguageCapture: (languageCode: string) => void
+  body: string
+  sourcePath: string
+  audioTranscriptRefreshKey: number
+  onVoiceCapture: () => void
   onVoiceConfigOpenChange: (open: boolean) => void
   onVoiceRecordingConfigChange: (patch: Partial<VoiceRecordingConfig>) => void
   onSelectVoiceCredentialFile: () => Promise<void>
@@ -25,7 +24,10 @@ export function VoiceRecordingsPanel({
   voiceRecordingConfig,
   voiceConfigOpen,
   hasLinkedAudio,
-  onVoiceLanguageCapture,
+  body,
+  sourcePath,
+  audioTranscriptRefreshKey,
+  onVoiceCapture,
   onVoiceConfigOpenChange,
   onVoiceRecordingConfigChange,
   onSelectVoiceCredentialFile,
@@ -40,7 +42,7 @@ export function VoiceRecordingsPanel({
       return
     }
 
-    onVoiceLanguageCapture(voiceRecordingConfig.languageCode)
+    onVoiceCapture()
   }
 
   return (
@@ -70,21 +72,6 @@ export function VoiceRecordingsPanel({
         </button>
       </div>
 
-      <label className="voice-recorder-field voice-recordings-language">
-        <span>Live preview language</span>
-        <select
-          value={voiceRecordingConfig.languageCode}
-          onChange={(event) => {
-            const nextLanguageCode = event.target.value
-            onVoiceRecordingConfigChange({ languageCode: nextLanguageCode })
-            audioRecorder.switchLanguage(nextLanguageCode)
-          }}
-        >
-          {VOICE_LANGUAGE_OPTIONS.map((option) => (
-            <option key={option.code} value={option.code}>{option.label}</option>
-          ))}
-        </select>
-      </label>
       {(audioRecorder.interimTranscript || audioRecorder.finalTranscript) && (
         <div className="voice-transcript-card">
           <p className="voice-recordings-kicker">Transcript</p>
@@ -101,22 +88,13 @@ export function VoiceRecordingsPanel({
       {audioRecorder.error && audioRecorder.diagnostic && <p className="voice-recorder-muted">{audioRecorder.diagnostic}</p>}
       {audioNoteMessage && <p className="voice-recorder-muted">{audioNoteMessage}</p>}
 
-      {audioRecorder.audioUrl && !hasLinkedAudio && (
-        <div className="voice-recorder-playback">
-          <AudioPlayer
-            id="latest-captured-segment"
-            src={audioRecorder.audioUrl}
-            blob={audioRecorder.audioBlob}
-            mimeType={audioRecorder.mimeType ?? undefined}
-            label="Latest segment"
-            downloadName={audioDownloadName(audioRecorder.mimeType)}
-            showDownload
-            fallbackDurationMs={audioRecorder.elapsedMs}
-          />
-          <button className="btn-secondary" onClick={audioRecorder.clear} type="button">
-            Clear
-          </button>
-        </div>
+      {hasLinkedAudio && (
+        <AudioCaptureList
+          body={body}
+          sourcePath={sourcePath}
+          refreshKey={audioTranscriptRefreshKey}
+          showTitle={false}
+        />
       )}
 
       <div className="voice-recordings-tools">
@@ -140,35 +118,8 @@ export function VoiceRecordingsPanel({
           </label>
           {voiceRecordingConfig.transcriptionMode === 'chirp3' && (
             <div className="voice-recorder-native-grid">
-              <fieldset className="voice-recorder-field voice-recorder-field--wide">
-                <legend>Languages I speak (choose up to 3)</legend>
-                <div className="voice-recorder-language-profile">
-                  {VOICE_LANGUAGE_OPTIONS.map((option) => {
-                    const selected = voiceRecordingConfig.spokenLanguageCodes.includes(option.code)
-                    const atLimit = voiceRecordingConfig.spokenLanguageCodes.length >= 3
-                    return (
-                      <label key={option.code}>
-                        <input
-                          type="checkbox"
-                          checked={selected}
-                          disabled={!selected && atLimit}
-                          onChange={() => {
-                            const nextCodes = selected
-                              ? voiceRecordingConfig.spokenLanguageCodes.filter((code) => code !== option.code)
-                              : [...voiceRecordingConfig.spokenLanguageCodes, option.code]
-                            if (nextCodes.length > 0) {
-                              onVoiceRecordingConfigChange({ spokenLanguageCodes: nextCodes })
-                            }
-                          }}
-                        />
-                        <span>{option.label}</span>
-                      </label>
-                    )
-                  })}
-                </div>
-              </fieldset>
               <label className="voice-recorder-field voice-recorder-field--wide">
-                <span>Transcription profile</span>
+                <span>Voice note transcription prompt</span>
                 <textarea
                   id="voice-transcription-prompt"
                   value={voiceRecordingConfig.transcriptionPrompt}
@@ -191,17 +142,6 @@ export function VoiceRecordingsPanel({
                   onChange={(event) => onVoiceRecordingConfigChange({ location: event.target.value })}
                   placeholder="us"
                 />
-              </label>
-              <label className="voice-recorder-field">
-                <span>Model</span>
-                <select
-                  value={voiceRecordingConfig.model}
-                  onChange={(event) => onVoiceRecordingConfigChange({ model: event.target.value })}
-                >
-                  {VOICE_TRANSCRIPTION_MODEL_OPTIONS.map((option) => (
-                    <option key={option.model} value={option.model}>{option.label}</option>
-                  ))}
-                </select>
               </label>
               <label className="voice-recorder-field voice-recorder-field--wide">
                 <span>Credential path</span>
@@ -248,9 +188,4 @@ export function voiceRecordButtonLabel(
   if (recorder.recording) return recorder.status === 'stopping' ? 'Pausing' : 'Pause'
   if (recorder.status === 'stopped' || hasLinkedAudio) return 'Continue voice note'
   return 'Create new voice note'
-}
-
-function audioDownloadName(mimeType: string | null): string {
-  if (mimeType?.includes('mp4') || mimeType?.includes('aac')) return 'branch-continue-voice.m4a'
-  return 'branch-continue-voice.webm'
 }

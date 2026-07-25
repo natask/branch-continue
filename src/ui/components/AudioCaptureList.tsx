@@ -50,9 +50,10 @@ interface AudioCaptureListProps {
   body: string
   sourcePath: string
   refreshKey?: number
+  showTitle?: boolean
 }
 
-export function AudioCaptureList({ body, sourcePath, refreshKey = 0 }: AudioCaptureListProps) {
+export function AudioCaptureList({ body, sourcePath, refreshKey = 0, showTitle = true }: AudioCaptureListProps) {
   const references = useMemo(() => {
     const all = extractAudioCaptureReferences(body)
     const fileReferences = all.filter((reference) => reference.kind === 'file')
@@ -168,7 +169,7 @@ export function AudioCaptureList({ body, sourcePath, refreshKey = 0 }: AudioCapt
 
   return (
     <div className="audio-capture-list" aria-label="Voice note">
-      <div className="audio-capture-list-title">Voice note</div>
+      {showTitle && <div className="audio-capture-list-title">Voice note</div>}
       {warning && <p className="audio-capture-muted">{warning}</p>}
       {!session && !warning && <p className="audio-capture-muted">Loading audio session...</p>}
       {session && (

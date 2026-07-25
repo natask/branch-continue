@@ -261,11 +261,9 @@ function safeVoiceFrontendEnv() {
   const env = {}
   const projectId = firstEnv(['VITE_GCP_PROJECT_ID', 'BRANCH_CONTINUE_GCP_PROJECT_ID', 'GCP_PROJECT_ID'])
   const location = firstEnv(['VITE_GCP_LOCATION', 'BRANCH_CONTINUE_GCP_LOCATION', 'GCP_LOCATION'])
-  const model = firstEnv(['VITE_CHIRP_MODEL', 'BRANCH_CONTINUE_CHIRP_MODEL', 'CHIRP_MODEL'])
 
   if (projectId) env.VITE_GCP_PROJECT_ID = projectId
   if (location) env.VITE_GCP_LOCATION = location
-  if (model) env.VITE_CHIRP_MODEL = model
   return env
 }
 

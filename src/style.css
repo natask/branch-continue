@@ -2285,67 +2285,6 @@ pre {
   font-size: var(--voice-menu-font, 12px);
 }
 
-.voice-language-controls {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4em;
-}
-
-.voice-language-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.48em;
-  min-height: 3em;
-  padding: 0.55em 0.75em;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.055);
-  color: var(--text-dim);
-  line-height: 1;
-  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
-  touch-action: manipulation;
-}
-
-.voice-language-btn:hover:not(:disabled) {
-  border-color: rgba(232, 168, 76, 0.34);
-  background: rgba(232, 168, 76, 0.12);
-  color: var(--text);
-}
-
-.voice-language-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.56;
-}
-
-.voice-language-btn--active {
-  border-color: rgba(232, 168, 76, 0.44);
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.voice-language-btn--recording {
-  border-color: rgba(229, 115, 115, 0.42);
-  background: rgba(229, 115, 115, 0.14);
-  color: #ffb8b8;
-  box-shadow: 0 0 0 0.34em rgba(229, 115, 115, 0.07);
-}
-
-.voice-language-btn--compact {
-  min-height: 3.08em;
-}
-
-.voice-language-flag {
-  font-size: 1.28em;
-  line-height: 1;
-}
-
-.voice-language-label {
-  font-size: 0.82em;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
-
 .voice-recorder-stop {
   min-height: 3em;
   padding: 0.55em 0.82em;
@@ -2407,10 +2346,6 @@ pre {
   box-shadow: none;
 }
 
-.voice-recordings-language {
-  max-width: 18em;
-}
-
 .voice-recorder-native-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2458,26 +2393,6 @@ pre {
   resize: vertical;
   font: inherit;
   line-height: 1.45;
-}
-
-.voice-recorder-language-profile {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5em;
-}
-
-.voice-recorder-language-profile label {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.42em;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 999px;
-  padding: 0.5em 0.7em;
-}
-
-.voice-recorder-language-profile input {
-  width: auto;
-  margin: 0;
 }
 
 .voice-recorder-file-row {
@@ -2866,23 +2781,6 @@ pre {
   color: var(--danger);
   font-size: 0.78rem;
   line-height: 1.55;
-}
-
-.voice-recorder-playback,
-.audio-capture-item {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.voice-recorder-playback {
-  width: 100%;
-}
-
-.voice-recorder-playback .audio-player {
-  flex: 1 1 28em;
 }
 
 .audio-capture-list-title {

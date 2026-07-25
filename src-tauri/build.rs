@@ -7,11 +7,9 @@ fn main() {
     for name in [
         "BRANCH_CONTINUE_GCP_PROJECT_ID",
         "BRANCH_CONTINUE_GCP_LOCATION",
-        "BRANCH_CONTINUE_CHIRP_MODEL",
         "BRANCH_CONTINUE_GCP_SERVICE_ACCOUNT_KEY",
         "GCP_PROJECT_ID",
         "GCP_LOCATION",
-        "CHIRP_MODEL",
         "GCP_SERVICE_ACCOUNT_KEY",
     ] {
         println!("cargo:rerun-if-env-changed={name}");

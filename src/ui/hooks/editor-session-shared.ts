@@ -24,6 +24,7 @@ export interface UseEditorSessionOptions {
   createNote: (request: QuickNoteCreateRequest) => Promise<SourceNote>
   updateNote: (noteId: string, request: QuickNoteCreateRequest) => Promise<SourceNote>
   beforeBranch?: () => Promise<boolean | void>
+  afterBranch?: () => void
 }
 
 export interface OpenEditorOptions {
