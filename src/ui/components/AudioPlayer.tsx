@@ -22,6 +22,8 @@ interface AudioPlayerProps {
   waveformHeight?: number
   /** Off for placeholder envelopes, which normalization would stretch to a solid block. */
   normalizeWaveform?: boolean
+  /** Rest the playhead at the end of the session, e.g. right after recording. */
+  restAtEnd?: boolean
 }
 
 export interface AudioPlayerMarker {
@@ -64,6 +66,7 @@ export function AudioPlayer({
   waveformUnavailable = false,
   waveformHeight = 48,
   normalizeWaveform = true,
+  restAtEnd = false,
 }: AudioPlayerProps) {
   const regions = useMemo(() => RegionsPlugin.create(), [])
   const plugins = useMemo(() => [regions], [regions])
@@ -155,6 +158,18 @@ export function AudioPlayer({
     setCurrentTime(0)
     setError(null)
   }, [src])
+
+  const restAppliedForSrcRef = useRef<string | null>(null)
+  useEffect(() => {
+    // Right after a recording, the seeker belongs at the point recording
+    // reached, not back at zero. One-shot per source so later seeks win.
+    if (!restAtEnd || !wavesurfer || displayDuration <= 0) return
+    if (restAppliedForSrcRef.current === src) return
+    restAppliedForSrcRef.current = src
+    wavesurfer.setTime(displayDuration)
+    keepPlayheadVisible(wavesurfer, displayDuration)
+    setCurrentTime(displayDuration)
+  }, [displayDuration, restAtEnd, src, wavesurfer])
 
   useEffect(() => {
     if (!wavesurfer) return undefined

@@ -102,6 +102,7 @@ export function VoiceRecordingsPanel({
           sourcePath={sourcePath}
           refreshKey={audioTranscriptRefreshKey}
           showTitle={false}
+          restAtSessionEnd={audioRecorder.status === 'stopped'}
         />
       )}
 
