@@ -124,6 +124,92 @@ describe('parseQuickNoteFile note ids', () => {
     expect(appended.entries[0]?.parentNoteId).toBe(original.entries[0]?.id)
   })
 
+  it('keeps child lineage attached when a newly created root timestamp changes', () => {
+    const original = parseQuickNoteFile('', SOURCE_PATH)
+    const { parsed: withRoot, entry: root } = appendQuickNoteEntry(original, {
+      title: 'Root',
+      timestamp: '[2026-04-11 Sat 10:00:01 +0000]',
+      body: 'root body',
+    })
+
+    expect(root.noteUid).toMatch(/^qnuid-/)
+    expect(root.parentNoteId).toBeNull()
+
+    const { parsed: withChild, entry: child } = appendQuickNoteEntry(withRoot, {
+      title: 'Child',
+      timestamp: '[2026-04-11 Sat 10:00:02 +0000]',
+      body: 'child body',
+      parentNoteId: root.noteUid,
+    })
+    const originalRootId = root.id
+
+    const { parsed: updated, entry: editedRoot } = updateQuickNoteEntry(
+      withChild,
+      originalRootId,
+      {
+        title: root.title,
+        timestamp: '[2026-04-11 Sat 11:30:00 +0000]',
+        tags: root.tags,
+        body: root.body,
+      },
+    )
+
+    expect(editedRoot.id).not.toBe(originalRootId)
+    expect(editedRoot.noteUid).toBe(root.noteUid)
+    expect(updated.entries.find((entry) => entry.id === child.id)?.parentNoteId).toBe(root.noteUid)
+    expect(updated.entries.some((entry) => entry.noteUid === child.parentNoteId)).toBe(true)
+  })
+
+  it('keeps legacy root notes without lineage metadata editable', () => {
+    const parsed = parseQuickNoteFile(
+      [
+        '* Legacy root [2026-04-11 Sat 10:00:01 +0000]',
+        'legacy body',
+        '',
+      ].join('\n'),
+      SOURCE_PATH,
+    )
+    const legacyRoot = parsed.entries[0]!
+
+    const { parsed: updated, entry } = updateQuickNoteEntry(parsed, legacyRoot.id, {
+      title: legacyRoot.title,
+      timestamp: '[2026-04-11 Sat 11:30:00 +0000]',
+      tags: legacyRoot.tags,
+      body: legacyRoot.body,
+    })
+
+    expect(entry.noteUid).toBeNull()
+    expect(entry.parentNoteId).toBeNull()
+    expect(updated.content).not.toContain(':PROPERTIES:')
+  })
+
+  it('backfills a stable UID when a legacy branch is saved for handoff', () => {
+    const parsed = parseQuickNoteFile(
+      [
+        '* Legacy branch [2026-04-11 Sat 10:00:02 +0000]',
+        ':PROPERTIES:',
+        ':BRANCH_CONTINUE_PARENT_NOTE_ID: qnuid-parent-1',
+        ':END:',
+        'legacy branch body',
+        '',
+      ].join('\n'),
+      SOURCE_PATH,
+    )
+    const legacyBranch = parsed.entries[0]!
+    expect(legacyBranch.noteUid).toBeNull()
+
+    const { entry } = updateQuickNoteEntry(parsed, legacyBranch.id, {
+      title: legacyBranch.title,
+      timestamp: legacyBranch.timestamp ?? undefined,
+      tags: legacyBranch.tags,
+      body: legacyBranch.body,
+      parentNoteId: legacyBranch.parentNoteId,
+    })
+
+    expect(entry.noteUid).toMatch(/^qnuid-/)
+    expect(entry.parentNoteId).toBe('qnuid-parent-1')
+  })
+
   it('preserves lineage metadata on update when request omits lineage fields', () => {
     const content = [
       '* Child [2026-04-11 Sat 10:00:02 +0000]',

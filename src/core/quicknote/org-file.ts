@@ -423,11 +423,7 @@ function parsePropertiesDrawer(
 
 function resolveLineageForCreate(request: QuickNoteCreateRequest): NoteLineageMetadata {
   const parentNoteId = normalizeLineageValue(request.parentNoteId)
-  let noteUid = normalizeLineageValue(request.noteUid)
-
-  if (parentNoteId && !noteUid) {
-    noteUid = createStableNoteUid()
-  }
+  const noteUid = normalizeLineageValue(request.noteUid) ?? createStableNoteUid()
 
   return {
     noteUid,
