@@ -30,6 +30,8 @@ export interface AudioRecordingStart {
   sessionId: string
   mimeType: string
   resumed: boolean
+  /** Session position where this recording run began. */
+  offsetMs: number
   ownerSessionKey: string | number | null
 }
 
@@ -294,6 +296,7 @@ export function useAudioNoteRecorder({
     const cursor = sessionCursorRef.current
     if (options.resumeSession && !options.newSession) {
       hydrateAudioRecorderSessionCursor(cursor, options.resumeSession)
+      pcmSessionNextSampleRef.current = Math.round(options.resumeSession.offsetMs / 1000 * 16_000)
     }
     const continueSession = cursor.hasSession
       && (status === 'stopped' || Boolean(options.resumeSession))
@@ -487,6 +490,7 @@ export function useAudioNoteRecorder({
         sessionId: cursor.sessionId,
         mimeType: preferredMimeType || 'audio/webm',
         resumed: continueSession,
+        offsetMs: cursor.offsetMs,
         ownerSessionKey: sessionBoundaryKeyRef.current,
       })
       startRecorderSegment()
