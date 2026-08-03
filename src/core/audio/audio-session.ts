@@ -30,6 +30,79 @@ export interface AudioSessionBlob {
   segments: AudioSessionSegment[]
 }
 
+/** Build the note's canonical mono WAV directly from capture PCM. */
+export async function buildCanonicalPcmWav(
+  frames: CanonicalPcmFrame[],
+  existingBlob?: Blob | null,
+): Promise<AudioSessionBlob | null> {
+  if (frames.length === 0 && !existingBlob) return null
+  const existing = existingBlob ? parseCanonicalPcmWav(await existingBlob.arrayBuffer()) : new Int16Array()
+  const frameEnd = frames.reduce((end, frame) => Math.max(end, frame.endSample), 0)
+  const samples = new Int16Array(Math.max(existing.length, frameEnd))
+  samples.set(existing.subarray(0, samples.length))
+  for (const frame of frames) {
+    if (frame.startSample >= samples.length) continue
+    samples.set(frame.pcm16.subarray(0, samples.length - frame.startSample), frame.startSample)
+  }
+  if (samples.length === 0) return null
+  const wav = encodeCanonicalPcmWav(samples)
+  return {
+    blob: new Blob([wav], { type: 'audio/wav' }),
+    mimeType: 'audio/wav',
+    durationMs: Math.round(samples.length / CANONICAL_PCM_SAMPLE_RATE * 1000),
+    peaks: [],
+    segments: [],
+  }
+}
+
+function encodeCanonicalPcmWav(samples: Int16Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(44 + samples.byteLength)
+  const view = new DataView(buffer)
+  writeAscii(view, 0, 'RIFF')
+  view.setUint32(4, 36 + samples.byteLength, true)
+  writeAscii(view, 8, 'WAVE')
+  writeAscii(view, 12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true)
+  view.setUint16(22, 1, true)
+  view.setUint32(24, CANONICAL_PCM_SAMPLE_RATE, true)
+  view.setUint32(28, CANONICAL_PCM_SAMPLE_RATE * 2, true)
+  view.setUint16(32, 2, true)
+  view.setUint16(34, 16, true)
+  writeAscii(view, 36, 'data')
+  view.setUint32(40, samples.byteLength, true)
+  for (let index = 0; index < samples.length; index += 1) view.setInt16(44 + index * 2, samples[index] ?? 0, true)
+  return buffer
+}
+
+function parseCanonicalPcmWav(buffer: ArrayBuffer): Int16Array {
+  const view = new DataView(buffer)
+  if (view.byteLength < 44 || readAscii(view, 0, 4) !== 'RIFF' || readAscii(view, 8, 4) !== 'WAVE') return new Int16Array()
+  let offset = 12
+  while (offset + 8 <= view.byteLength) {
+    const kind = readAscii(view, offset, 4)
+    const length = view.getUint32(offset + 4, true)
+    if (kind === 'data') {
+      const sampleCount = Math.max(0, Math.min(length, view.byteLength - offset - 8) >> 1)
+      const samples = new Int16Array(sampleCount)
+      for (let index = 0; index < sampleCount; index += 1) samples[index] = view.getInt16(offset + 8 + index * 2, true)
+      return samples
+    }
+    offset += 8 + length + (length % 2)
+  }
+  return new Int16Array()
+}
+
+function writeAscii(view: DataView, offset: number, value: string): void {
+  for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index))
+}
+
+function readAscii(view: DataView, offset: number, length: number): string {
+  let value = ''
+  for (let index = 0; index < length; index += 1) value += String.fromCharCode(view.getUint8(offset + index))
+  return value
+}
+
 /**
  * Translate a timestamp persisted against the recorder's wall-clock session
  * into the gap-free decoded WAV assembled for playback.

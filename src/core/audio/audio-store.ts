@@ -154,6 +154,14 @@ interface AndroidAudioCaptureContentResult {
   metadataJson?: string | null
 }
 
+interface AudioCaptureFileMetadata {
+  metadata?: AudioCaptureMetadata
+  durationMs?: number
+  createdAt?: string
+}
+
+const MAX_PERSISTED_AUDIO_DURATION_MS = 7 * 24 * 60 * 60 * 1000
+
 export function createAudioCaptureId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `audio-${crypto.randomUUID()}`
@@ -281,18 +289,18 @@ export async function loadAudioCaptureReference(
   const fs = await import('@tauri-apps/plugin-fs')
   const bytes = await fs.readFile(toLocalPathString(path))
   const mimeType = inferAudioMimeType(path)
-  const metadata = await readAudioCaptureMetadata(path)
+  const fileMetadata = await readAudioCaptureFileMetadata(path)
   return {
     id: reference.key,
     blob: new Blob([bytes], { type: mimeType }),
     mimeType,
-    createdAt: '',
-    durationMs: 0,
+    createdAt: fileMetadata.createdAt ?? '',
+    durationMs: resolveFileAudioDurationMs(bytes, mimeType, fileMetadata.durationMs),
     uri: reference.uri,
     path,
     relativePath: reference.href,
     storage: 'file',
-    metadata,
+    metadata: fileMetadata.metadata,
   }
 }
 
@@ -381,6 +389,58 @@ export async function registerAudioCaptureSessionSegment(
 
   await saveAudioCaptureSessionIndex(index, audio, sourcePath)
   return canonicalUri
+}
+
+/**
+ * Persist a session as one canonical audio file. Recognition may still consume
+ * short in-memory chunks, but pause/resume storage and the note reference both
+ * point only at this assembled file.
+ */
+export async function registerCanonicalAudioCaptureSession(
+  audio: SaveAudioCaptureResult,
+  sourcePath?: string,
+): Promise<string> {
+  const metadata = audio.metadata
+  if (!metadata?.sessionId) return audio.uri
+  const index: AudioCaptureSessionIndex = {
+    id: metadata.sessionId,
+    sessionId: metadata.sessionId,
+    canonicalUri: audio.uri,
+    members: [{ uri: audio.uri, segmentIndex: metadata.segmentIndex }],
+    updatedAt: new Date().toISOString(),
+  }
+  await saveAudioCaptureSessionIndex(index, audio, sourcePath)
+  return audio.uri
+}
+
+/** Remove obsolete chunk files after they have been folded into the canonical WAV. */
+export async function removeSupersededAudioCaptures(
+  records: AudioCaptureRecord[],
+  canonicalUri: string,
+  sourcePath?: string,
+): Promise<void> {
+  for (const record of records) {
+    const uri = audioUriForRecord(record)
+    if (uri === canonicalUri) continue
+    if (record.storage === 'indexed-db') {
+      const db = await openAudioDb()
+      await transactionRequest(db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME).delete(record.id)).catch(() => undefined)
+      await transactionRequest(db.transaction(TRANSCRIPT_STORE_NAME, 'readwrite').objectStore(TRANSCRIPT_STORE_NAME).delete(transcriptIdForAudioUri(uri))).catch(() => undefined)
+      await transactionRequest(db.transaction(PEAKS_STORE_NAME, 'readwrite').objectStore(PEAKS_STORE_NAME).delete(peaksIdForAudioUri(uri))).catch(() => undefined)
+      continue
+    }
+    // The Android document bridge currently has no delete operation. New
+    // Android sessions already write only the canonical file, so this affects
+    // desktop migration of recordings created by older app versions.
+    if (!record.path || (sourcePath && isAndroidContentSourcePath(sourcePath)) || !await isTauriRuntime()) continue
+    const fs = await import('@tauri-apps/plugin-fs')
+    await Promise.all([
+      record.path,
+      `${record.path}.json`,
+      peaksPathForAudioPath(record.path),
+      transcriptPathForAudioPath(record.path),
+    ].map((path) => fs.remove(path).catch(() => undefined)))
+  }
 }
 
 export async function saveAudioTranscriptSegment(
@@ -605,11 +665,8 @@ async function saveAudioCaptureFile(
 
   await fs.mkdir(recordingsDir, { recursive: true })
   await fs.writeFile(filePath, bytes)
-  if (record.metadata) {
-    const metadataPath = `${filePath}.json`
-    const metadataBytes = new TextEncoder().encode(JSON.stringify(record.metadata, null, 2))
-    await fs.writeFile(metadataPath, metadataBytes)
-  }
+  const metadataPath = `${filePath}.json`
+  await fs.writeFile(metadataPath, encodeAudioCaptureFileMetadata(record))
 
   return {
     id: record.id,
@@ -632,7 +689,7 @@ async function saveAndroidContentAudioCapture(
   const fileName = `${record.id}.${extension}`
   const relativePath = `${RECORDINGS_DIR}/${fileName}`
   const bytes = new Uint8Array(await record.blob.arrayBuffer())
-  const metadataJson = record.metadata ? JSON.stringify(record.metadata, null, 2) : null
+  const metadataJson = uint8ArrayToText(encodeAudioCaptureFileMetadata(record))
   const core = await import('@tauri-apps/api/core')
   const saved = await core.invoke<AndroidAudioCaptureFileResult>('android_save_audio_capture', {
     payload: {
@@ -676,17 +733,18 @@ async function loadAndroidContentAudioCapture(
 
   const bytes = base64ToUint8Array(loaded.base64)
   const mimeType = loaded.mimeType?.trim() || inferAudioMimeType(relativePath)
+  const fileMetadata = parseAudioCaptureFileMetadata(loaded.metadataJson)
   return {
     id: reference.key,
     blob: new Blob([bytes], { type: mimeType }),
     mimeType,
-    createdAt: '',
-    durationMs: 0,
+    createdAt: fileMetadata.createdAt ?? '',
+    durationMs: resolveFileAudioDurationMs(bytes, mimeType, fileMetadata.durationMs),
     uri: reference.uri,
     path: loaded.base64 ? relativePath : undefined,
     relativePath,
     storage: 'file',
-    metadata: normalizeAudioCaptureMetadataJson(loaded.metadataJson),
+    metadata: fileMetadata.metadata,
   }
 }
 
@@ -842,7 +900,7 @@ async function discoverAudioCaptureSessionMembers(
     if (!entry.name?.endsWith('.json') || entry.name.endsWith('.session.json') || entry.name.endsWith(PEAKS_FILE_SUFFIX)) continue
     const audioName = entry.name.slice(0, -'.json'.length)
     if (!isAudioFileHref(`${RECORDINGS_DIR}/${audioName}`)) continue
-    const metadata = await readAudioCaptureMetadata(await pathApi.join(directory, audioName))
+    const metadata = (await readAudioCaptureFileMetadata(await pathApi.join(directory, audioName))).metadata
     if (metadata?.sessionId !== sessionId) continue
     members.push({
       uri: `${RECORDINGS_DIR}/${audioName}`,
@@ -909,11 +967,15 @@ async function saveAudioTranscriptFile(
   const fs = await import('@tauri-apps/plugin-fs')
   const transcriptPath = transcriptPathForAudioPath(input.audio.path)
   const transcriptUri = transcriptPathForAudioRelativePath(input.audio.relativePath)
-  const bytes = new TextEncoder().encode(formatAudioTranscriptFile({ ...segment, transcriptUri }))
+  const existing = await fs.readFile(transcriptPath)
+    .then((bytes) => parseAudioTranscriptFile(uint8ArrayToText(bytes), segment, transcriptUri, 'file'))
+    .catch(() => null)
+  const combined = mergeAudioTranscriptSegment(existing, segment)
+  const bytes = new TextEncoder().encode(formatAudioTranscriptFile({ ...combined, transcriptUri }))
   await fs.writeFile(transcriptPath, bytes)
 
   return {
-    ...segment,
+    ...combined,
     transcriptUri,
     storage: 'file',
   }
@@ -928,8 +990,15 @@ async function saveAndroidContentAudioTranscriptSegment(
   }
 
   const relativePath = transcriptPathForAudioRelativePath(input.audio.relativePath)
-  const bytes = new TextEncoder().encode(formatAudioTranscriptFile({ ...segment, transcriptUri: relativePath }))
   const core = await import('@tauri-apps/api/core')
+  const existing = await core.invoke<AndroidAudioCaptureContentResult>('android_read_audio_capture', {
+    payload: { sourceUri: input.sourcePath, relativePath },
+  }).then((loaded) => loaded.base64
+    ? parseAudioTranscriptFile(uint8ArrayToText(base64ToUint8Array(loaded.base64)), segment, relativePath, 'file')
+    : null,
+  ).catch(() => null)
+  const combined = mergeAudioTranscriptSegment(existing, segment)
+  const bytes = new TextEncoder().encode(formatAudioTranscriptFile({ ...combined, transcriptUri: relativePath }))
   const saved = await core.invoke<AndroidAudioCaptureFileResult>('android_save_audio_capture', {
     payload: {
       sourceUri: input.sourcePath,
@@ -942,7 +1011,7 @@ async function saveAndroidContentAudioTranscriptSegment(
   const savedRelativePath = saved.relativePath?.trim() || relativePath
 
   return {
-    ...segment,
+    ...combined,
     transcriptUri: savedRelativePath,
     storage: 'file',
   }
@@ -950,8 +1019,11 @@ async function saveAndroidContentAudioTranscriptSegment(
 
 async function saveAudioTranscriptIndexedDb(segment: AudioTranscriptSegment): Promise<AudioTranscriptSegment> {
   const db = await openAudioDb()
+  const previous = await transactionRequest<AudioTranscriptSegment | undefined>(
+    db.transaction(TRANSCRIPT_STORE_NAME, 'readonly').objectStore(TRANSCRIPT_STORE_NAME).get(segment.id),
+  )
   const stored: AudioTranscriptSegment = {
-    ...segment,
+    ...mergeAudioTranscriptSegment(previous ?? null, segment),
     storage: 'indexed-db',
   }
 
@@ -960,6 +1032,26 @@ async function saveAudioTranscriptIndexedDb(segment: AudioTranscriptSegment): Pr
   )
 
   return stored
+}
+
+export function mergeAudioTranscriptSegment(
+  previous: AudioTranscriptSegment | null,
+  next: AudioTranscriptSegment,
+): AudioTranscriptSegment {
+  if (!previous || previous.sessionId !== next.sessionId || next.segmentIndex <= previous.segmentIndex) return next
+  const previousText = previous.text.trim()
+  const nextText = next.text.trim()
+  return {
+    ...next,
+    text: [previousText, nextText].filter(Boolean).join(' '),
+    offsetMs: Math.min(previous.offsetMs, next.offsetMs),
+    label: formatTranscriptTime(Math.min(previous.offsetMs, next.offsetMs)),
+    words: [...(previous.words ?? []), ...(next.words ?? [])],
+    durationMs: Math.max(
+      (previous.offsetMs + (previous.durationMs ?? 0)),
+      (next.offsetMs + (next.durationMs ?? 0)),
+    ),
+  }
 }
 
 async function loadAudioTranscriptIndexedDb(audioUri: string): Promise<AudioTranscriptSegment | null> {
@@ -1005,15 +1097,92 @@ async function loadAudioTranscriptFile(
   )
 }
 
-async function readAudioCaptureMetadata(path: string): Promise<AudioCaptureMetadata | undefined> {
+async function readAudioCaptureFileMetadata(path: string): Promise<AudioCaptureFileMetadata> {
   try {
     const fs = await import('@tauri-apps/plugin-fs')
     const bytes = await fs.readFile(`${path}.json`)
-    const parsed = JSON.parse(new TextDecoder().decode(bytes))
-    return normalizeAudioCaptureMetadata(parsed)
+    return parseAudioCaptureFileMetadata(uint8ArrayToText(bytes))
   } catch {
-    return undefined
+    return {}
   }
+}
+
+export function encodeAudioCaptureFileMetadata(record: SaveAudioCaptureInput): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify({
+    version: 1,
+    durationMs: boundedAudioDurationMs(record.durationMs),
+    createdAt: normalizeCreatedAt(record.createdAt),
+    metadata: record.metadata,
+  }, null, 2))
+}
+
+export function parseAudioCaptureFileMetadata(value: unknown): AudioCaptureFileMetadata {
+  try {
+    const parsed: unknown = typeof value === 'string' ? JSON.parse(value) : value
+    if (!isRecord(parsed)) return {}
+
+    // Version 1 wraps session metadata so file facts can evolve without
+    // changing AudioCaptureMetadata. The fallback keeps pre-version sidecars
+    // readable after an app restart.
+    const nestedMetadata = normalizeAudioCaptureMetadata(parsed.metadata)
+    const legacyMetadata = normalizeAudioCaptureMetadata(parsed)
+    return {
+      metadata: nestedMetadata ?? legacyMetadata,
+      durationMs: boundedAudioDurationMs(parsed.durationMs),
+      createdAt: normalizeCreatedAt(parsed.createdAt),
+    }
+  } catch {
+    return {}
+  }
+}
+
+export function resolveFileAudioDurationMs(
+  bytes: Uint8Array,
+  mimeType: string,
+  persistedDurationMs?: number,
+): number {
+  const wavDurationMs = canonicalWavDurationMs(bytes, mimeType)
+  return wavDurationMs ?? boundedAudioDurationMs(persistedDurationMs) ?? 0
+}
+
+function canonicalWavDurationMs(bytes: Uint8Array, mimeType: string): number | undefined {
+  if (!mimeType.toLowerCase().includes('wav') || bytes.byteLength < 44) return undefined
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  if (readByteAscii(view, 0, 4) !== 'RIFF' || readByteAscii(view, 8, 4) !== 'WAVE') return undefined
+
+  let byteRate = 0
+  let dataBytes = -1
+  let offset = 12
+  while (offset + 8 <= view.byteLength) {
+    const kind = readByteAscii(view, offset, 4)
+    const declaredLength = view.getUint32(offset + 4, true)
+    const availableLength = Math.min(declaredLength, view.byteLength - offset - 8)
+    if (kind === 'fmt ' && availableLength >= 16) byteRate = view.getUint32(offset + 16, true)
+    if (kind === 'data') {
+      dataBytes = availableLength
+      break
+    }
+    offset += 8 + declaredLength + (declaredLength % 2)
+  }
+
+  if (byteRate <= 0 || dataBytes < 0) return undefined
+  return boundedAudioDurationMs(dataBytes / byteRate * 1000)
+}
+
+function readByteAscii(view: DataView, offset: number, length: number): string {
+  let value = ''
+  for (let index = 0; index < length; index += 1) value += String.fromCharCode(view.getUint8(offset + index))
+  return value
+}
+
+function boundedAudioDurationMs(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  return Math.min(MAX_PERSISTED_AUDIO_DURATION_MS, Math.max(0, Math.round(value)))
+}
+
+function normalizeCreatedAt(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value || value.length > 64) return undefined
+  return Number.isNaN(Date.parse(value)) ? undefined : value
 }
 
 function normalizeAudioCaptureMetadata(value: unknown): AudioCaptureMetadata | undefined {
@@ -1037,15 +1206,6 @@ function normalizeAudioCaptureMetadata(value: unknown): AudioCaptureMetadata | u
     languageCode: value.languageCode,
     segmentStartReason,
     final: value.final,
-  }
-}
-
-function normalizeAudioCaptureMetadataJson(value: string | null | undefined): AudioCaptureMetadata | undefined {
-  if (!value?.trim()) return undefined
-  try {
-    return normalizeAudioCaptureMetadata(JSON.parse(value))
-  } catch {
-    return undefined
   }
 }
 
