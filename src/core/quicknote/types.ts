@@ -1,7 +1,10 @@
+export type BranchDisposition = 'retained' | 'discarded' | 'handed-off'
+
 export interface SourceNote {
   id: string
   noteUid?: string | null
   parentNoteId?: string | null
+  disposition?: BranchDisposition | null
   offset: number
   sourcePath: string
   startLine: number
@@ -30,6 +33,7 @@ export interface QuickNoteCreateRequest {
   body: string
   noteUid?: string | null
   parentNoteId?: string | null
+  disposition?: BranchDisposition | null
 }
 
 export interface QuickNoteCreateResponse {

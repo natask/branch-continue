@@ -1,4 +1,5 @@
 import type {
+  BranchDisposition,
   QuickNoteCreateRequest,
   QuickNoteSearchHit,
   SourceNote,
@@ -14,11 +15,14 @@ const ORG_PROPERTIES_END_RE = /^\s*:END:\s*$/i
 const ORG_PROPERTY_LINE_RE = /^\s*:([A-Za-z0-9_@#%.-]+):\s*(.*?)\s*$/
 const NOTE_UID_PROPERTY_KEY = 'BRANCH_CONTINUE_NOTE_UID'
 const PARENT_NOTE_ID_PROPERTY_KEY = 'BRANCH_CONTINUE_PARENT_NOTE_ID'
+const DISPOSITION_PROPERTY_KEY = 'BRANCH_CONTINUE_DISPOSITION'
 
 interface NoteLineageMetadata {
   noteUid: string | null
   parentNoteId: string | null
 }
+
+const BRANCH_DISPOSITIONS = new Set<BranchDisposition>(['retained', 'discarded', 'handed-off'])
 
 export interface ParsedQuickNoteFile {
   content: string
@@ -74,7 +78,8 @@ export function appendQuickNoteEntry(
   const tags = normalizeTags(request.tags ?? [])
   const timestamp = request.timestamp?.trim() || formatOrgTimestamp(new Date())
   const lineage = resolveLineageForCreate(request)
-  const entryLines = buildNoteLines({ title, timestamp, tags, body, lineage })
+  const disposition = normalizeDisposition(request.disposition)
+  const entryLines = buildNoteLines({ title, timestamp, tags, body, lineage, disposition })
   const nextContent = `${parsed.content.trimEnd()}\n\n${entryLines.join('\n')}\n`
   const nextParsed = parseQuickNoteFile(nextContent, parsed.sourcePath)
   const entry = nextParsed.entries[0]
@@ -104,10 +109,13 @@ export function updateQuickNoteEntry(
   const tags = normalizeTags(request.tags ?? existing.tags)
   const timestamp = request.timestamp?.trim() || existing.timestamp || formatOrgTimestamp(new Date())
   const lineage = resolveLineageForUpdate(existing, request)
+  const disposition = request.disposition === undefined
+    ? normalizeDisposition(existing.disposition)
+    : normalizeDisposition(request.disposition)
 
   const startIndex = existing.startLine - 1
   const endExclusiveIndex = existing.endLine
-  const entryLines = buildNoteLines({ title, timestamp, tags, body, lineage })
+  const entryLines = buildNoteLines({ title, timestamp, tags, body, lineage, disposition })
   const nextLines = [
     ...parsed.lines.slice(0, startIndex),
     ...entryLines,
@@ -206,6 +214,7 @@ function parseNote(
     id: buildNoteId(timestamp, startIndex, idUsage),
     noteUid: bodyPreamble.lineage.noteUid,
     parentNoteId: bodyPreamble.lineage.parentNoteId,
+    disposition: normalizeDisposition(bodyPreamble.properties.get(DISPOSITION_PROPERTY_KEY)),
     offset: headlineIndexes.length - 1 - headlineIndex,
     sourcePath,
     startLine: startIndex + 1,
@@ -250,6 +259,7 @@ function extractBodyPreamble(bodyLines: string[]): {
   tags: string[]
   indexes: Set<number>
   lineage: NoteLineageMetadata
+  properties: Map<string, string>
 } {
   const tags: string[] = []
   const indexes = new Set<number>()
@@ -290,6 +300,7 @@ function extractBodyPreamble(bodyLines: string[]): {
   return {
     tags,
     indexes,
+    properties: propertyDrawer?.properties ?? new Map(),
     lineage: {
       noteUid: normalizeLineageValue(propertyDrawer?.properties.get(NOTE_UID_PROPERTY_KEY)),
       parentNoteId: normalizeLineageValue(propertyDrawer?.properties.get(PARENT_NOTE_ID_PROPERTY_KEY)),
@@ -370,17 +381,21 @@ function buildNoteLines(input: {
   tags: string[]
   body: string
   lineage: NoteLineageMetadata
+  disposition: BranchDisposition | null
 }): string[] {
   const headline = input.title ? `* ${input.title} ${input.timestamp}` : `* ${input.timestamp}`
   const lines = [headline]
 
-  if (input.lineage.noteUid || input.lineage.parentNoteId) {
+  if (input.lineage.noteUid || input.lineage.parentNoteId || input.disposition) {
     lines.push(':PROPERTIES:')
     if (input.lineage.noteUid) {
       lines.push(`:${NOTE_UID_PROPERTY_KEY}: ${input.lineage.noteUid}`)
     }
     if (input.lineage.parentNoteId) {
       lines.push(`:${PARENT_NOTE_ID_PROPERTY_KEY}: ${input.lineage.parentNoteId}`)
+    }
+    if (input.disposition) {
+      lines.push(`:${DISPOSITION_PROPERTY_KEY}: ${input.disposition}`)
     }
     lines.push(':END:')
   }
@@ -452,6 +467,12 @@ function resolveLineageForUpdate(
     noteUid,
     parentNoteId,
   }
+}
+
+function normalizeDisposition(value: string | null | undefined): BranchDisposition | null {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim().toLowerCase() as BranchDisposition
+  return BRANCH_DISPOSITIONS.has(normalized) ? normalized : null
 }
 
 function normalizeLineageValue(value: string | null | undefined): string | null {

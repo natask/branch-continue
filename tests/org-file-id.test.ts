@@ -240,6 +240,33 @@ describe('parseQuickNoteFile note ids', () => {
     )
   })
 
+  it('persists a bounded branch disposition without placing it in note text', () => {
+    const original = parseQuickNoteFile('', SOURCE_PATH)
+    const { parsed: withBranch, entry: branch } = appendQuickNoteEntry(original, {
+      title: 'A side thought',
+      timestamp: '[2026-04-11 Sat 10:00:02 +0000]',
+      body: 'Keep this exact thought.',
+      parentNoteId: 'qnuid-parent-1',
+      disposition: 'retained',
+    })
+
+    expect(branch.disposition).toBe('retained')
+    expect(branch.body.trimEnd()).toBe('Keep this exact thought.')
+    expect(withBranch.content).toContain(':BRANCH_CONTINUE_DISPOSITION: retained')
+
+    const { parsed: handedOff, entry } = updateQuickNoteEntry(withBranch, branch.id, {
+      title: branch.title,
+      timestamp: branch.timestamp ?? undefined,
+      tags: branch.tags,
+      body: branch.body,
+      disposition: 'handed-off',
+    })
+
+    expect(entry.disposition).toBe('handed-off')
+    expect(handedOff.content).toContain(':BRANCH_CONTINUE_DISPOSITION: handed-off')
+    expect(handedOff.content).not.toContain(':BRANCH_CONTINUE_DISPOSITION: retained')
+  })
+
   it('finds typo-tolerant text matches inside note bodies', () => {
     const parsed = parseQuickNoteFile(
       [

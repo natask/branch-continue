@@ -3,6 +3,7 @@ mod chirp;
 mod macos_microphone;
 mod microphone_permission;
 mod source_file;
+mod switchboard;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -19,6 +20,7 @@ pub fn run() {
             source_file::android_select_source_file,
             source_file::android_read_source_file,
             source_file::android_write_source_file,
+            switchboard::submit_switchboard_intent,
         ]);
 
     #[cfg(desktop)]
