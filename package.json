@@ -15,6 +15,7 @@
     "desktop:ota:package": "node scripts/desktop-updater.mjs package",
     "desktop:ota:deploy": "node scripts/desktop-updater.mjs deploy",
     "voice:gcp:setup": "bash scripts/setup-chirp-gcp.sh",
+    "audio:merge": "node scripts/merge-note-audio.mjs",
     "mobile:ota:bundle": "node --env-file-if-exists=.env scripts/mobile-ota.mjs bundle",
     "mobile:ota:deploy": "node --env-file-if-exists=.env scripts/mobile-ota.mjs deploy",
     "mobile:shell:android": "node --env-file-if-exists=.env scripts/mobile-ota.mjs shell android",
