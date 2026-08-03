@@ -1,0 +1,40 @@
+.branch-controls {
+  display: contents;
+}
+
+.branch-control {
+  border: none;
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.branch-control-parent {
+  background: rgba(232, 168, 76, 0.16);
+  color: var(--accent);
+}
+
+.branch-control-continue {
+  background: var(--accent);
+  color: #17120a;
+  font-weight: 700;
+}
+
+.branch-control-handoff {
+  background: rgba(142, 197, 195, 0.18);
+}
+
+.branch-control-status {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+}
+
+.branch-control:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}

@@ -6,6 +6,7 @@ import { useEditorSession } from './ui/hooks/use-editor-session'
 import { SearchModal, type SearchCommandAction } from './ui/components/SearchModal'
 import { TimeMachine } from './ui/components/TimeMachine'
 import { Editor } from './ui/components/Editor'
+import { BranchControls } from './ui/components/BranchControls'
 import { FactoryPanel } from './ui/factory/FactoryPanel'
 import { AgentLinkExperiment } from './ui/experiments/AgentLinkExperiment'
 import { AgenticMarkdownPage } from './ui/agentic-markdown/AgenticMarkdownPage'
@@ -44,6 +45,8 @@ import {
 import { shouldOpenCommandPalette } from './ui/lib/keyboard-shortcuts'
 import { createVoiceNoteCommandActions } from './ui/lib/voice-note-command-actions'
 import { shouldResumeStoredVoiceSession } from './ui/lib/voice-panel-state'
+import { returnAndContinueParentVoice } from './ui/lib/return-and-continue'
+import { submitBranchForExecution } from './core/intents/switchboard-handoff'
 import {
   createAudioCaptureId,
   extractAudioCaptureReferences,
@@ -58,7 +61,7 @@ import {
 } from './core/audio/audio-store'
 import { createSessionPeakAccumulator, SESSION_PEAKS_PER_SECOND } from './core/audio/audio-session'
 import { transcribeAudioWithChirp } from './core/audio/chirp-transcription'
-import type { QuickNoteSearchHit, SourceNote } from './core/quicknote/types'
+import type { BranchDisposition, QuickNoteSearchHit, SourceNote } from './core/quicknote/types'
 
 const CARD_STACK_TUNER_KEY = 'branch-continue:show-card-stack-tuner'
 const MOBILE_PREVIEW_KEY = 'branch-continue:mobile-preview'
@@ -611,6 +614,85 @@ function LoadedSourceApp({
     },
     [editorSession, selectNote],
   )
+  const handleReturnAndContinue = useCallback(async () => {
+    if (!currentParentNote) return
+
+    const result = await returnAndContinueParentVoice({
+      parentBody: currentParentNote.body || currentParentNote.preview,
+      stopChildRecording: audioRecorder.stopAndWait,
+      saveChildNote: editorSessionRef.current.flushAutoSave,
+      openParent: () => {
+        selectNote(currentParentNote)
+        editorSessionRef.current.openNoteEditor(currentParentNote)
+      },
+      waitForParent: () => new Promise((resolve) => window.setTimeout(resolve, 0)),
+      loadParentAudio: (reference) => loadAudioCaptureSession(reference, sourcePath),
+      resumeParentRecording: async (resumeSession, reference) => {
+        audioSessionReferenceRef.current.set(resumeSession.sessionId, reference.uri)
+        await audioRecorder.start(undefined, { resumeSession })
+      },
+    })
+
+    if (result.kind === 'resumed') return
+    if (result.kind === 'save-blocked') {
+      setAudioNoteMessage('Could not save this branch, so the parent voice note was not opened.')
+      return
+    }
+    if (result.kind === 'no-parent-audio') {
+      setAudioNoteMessage('The parent note is open, but it has no persisted voice session to continue.')
+      return
+    }
+    if (result.kind === 'parent-audio-not-resumable') {
+      setAudioNoteMessage('The parent note is open. Its older voice recording is still playable, but cannot be continued yet.')
+      return
+    }
+    setAudioNoteMessage(`Could not continue the parent voice note: ${errorMessage(result.error)}`)
+  }, [audioRecorder.start, audioRecorder.stopAndWait, currentParentNote, selectNote, sourcePath])
+  const saveBranchDisposition = useCallback(async (disposition: BranchDisposition) => {
+    const saved = await editorSessionRef.current.flushAutoSave()
+    if (!saved) throw new Error('Could not save this branch first.')
+    const note = editorSessionRef.current.editor?.source
+    if (!note?.parentNoteId) throw new Error('Save this branch once before choosing its disposition.')
+    await updateNote(note.id, {
+      title: note.title,
+      timestamp: note.timestamp ?? undefined,
+      tags: note.tags,
+      body: note.body,
+      noteUid: note.noteUid,
+      parentNoteId: note.parentNoteId,
+      disposition,
+    })
+    return disposition === 'retained' ? 'Branch retained.' : 'Branch discarded locally.'
+  }, [updateNote])
+  const handleSwitchboardHandoff = useCallback(async () => {
+    const saved = await editorSessionRef.current.flushAutoSave()
+    if (!saved) throw new Error('Could not save this branch first.')
+    let note = editorSessionRef.current.editor?.source
+    if (!note) throw new Error('Save this branch once before handing it off.')
+    if (!note.noteUid) {
+      note = await updateNote(note.id, {
+        title: note.title,
+        timestamp: note.timestamp ?? undefined,
+        tags: note.tags,
+        body: note.body,
+        parentNoteId: note.parentNoteId,
+        disposition: note.disposition,
+      })
+    }
+    const result = await submitBranchForExecution(note, {
+      baseUrl: import.meta.env.VITE_AGENT_SWITCHBOARD_URL,
+    })
+    await updateNote(note.id, {
+      title: note.title,
+      timestamp: note.timestamp ?? undefined,
+      tags: note.tags,
+      body: note.body,
+      noteUid: note.noteUid,
+      parentNoteId: note.parentNoteId,
+      disposition: 'handed-off',
+    })
+    return `Handed off once (${result.admission.id}).`
+  }, [updateNote])
   const handleOpenRelativeEditorNote = useCallback(
     (direction: -1 | 1, focusBody = true) => {
       if (currentEditorNoteIndex < 0) return
@@ -1325,13 +1407,17 @@ function LoadedSourceApp({
         }
       >
         {currentParentNote && (
-          <button
-            className="lineage-pill lineage-pill-parent"
-            onClick={() => handleOpenLinkedNote(currentParentNote)}
-            type="button"
-          >
-            Back to source: {describeNote(currentParentNote)}
-          </button>
+          <BranchControls
+            branchId={currentContextNote?.id ?? 'unsaved-branch'}
+            parentLabel={describeNote(currentParentNote)}
+            disposition={currentContextNote?.disposition ?? null}
+            recording={audioRecorder.recording}
+            returnDisabled={audioRecorder.status === 'requesting' || audioRecorder.status === 'stopping'}
+            onBackToSource={() => handleOpenLinkedNote(currentParentNote)}
+            onReturnAndContinue={handleReturnAndContinue}
+            onSetDisposition={saveBranchDisposition}
+            onSendToSwitchboard={handleSwitchboardHandoff}
+          />
         )}
         {currentChildNotes.length > 0 && (
           <div className="lineage-children">
