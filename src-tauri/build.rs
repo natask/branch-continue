@@ -43,6 +43,8 @@ fn main() {
             "android_select_source_file",
             "android_read_source_file",
             "android_write_source_file",
+            "submit_switchboard_intent",
+            "fetch_switchboard_tasks",
         ]));
 
     tauri_build::try_build(attrs).expect("failed to run tauri build script")

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-submit-switchboard-intent"
+description = "Enables the submit_switchboard_intent command without any pre-configured scope."
+commands.allow = ["submit_switchboard_intent"]
+
+[[permission]]
+identifier = "deny-submit-switchboard-intent"
+description = "Denies the submit_switchboard_intent command without any pre-configured scope."
+commands.deny = ["submit_switchboard_intent"]

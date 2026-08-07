@@ -13,6 +13,8 @@
     "allow-android-read-source-file",
     "allow-android-write-source-file",
     "allow-transcribe-with-chirp",
+    "allow-submit-switchboard-intent",
+    "allow-fetch-switchboard-tasks",
     "fs:default",
     "dialog:default",
     {

@@ -21,6 +21,7 @@ pub fn run() {
             source_file::android_read_source_file,
             source_file::android_write_source_file,
             switchboard::submit_switchboard_intent,
+            switchboard::fetch_switchboard_tasks,
         ]);
 
     #[cfg(desktop)]

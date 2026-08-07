@@ -10,6 +10,7 @@ import {
 } from '../lib/voice-panel-state'
 import { parseVoiceTranscriptTime } from '../lib/voice-transcript'
 import { extractAudioCaptureReferences } from '../../core/audio/audio-store'
+import { stripSwitchboardTasks } from '../../core/intents/switchboard-task'
 import { formatElapsed, VoiceRecordingsPanel } from './VoiceRecordingsPanel'
 import {
   persistedAgentTaskProgress,
@@ -572,7 +573,7 @@ export function Editor({
 }
 
 function ReadableNoteBody({ body, sessionId }: { body: string; sessionId: string | null }) {
-  const readableBody = body
+  const readableBody = stripSwitchboardTasks(body)
     .split('\n')
     .filter((line) => (
       !/^\s*Audio recording:\s+/i.test(line)

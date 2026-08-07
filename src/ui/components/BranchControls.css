@@ -34,7 +34,249 @@
   letter-spacing: 0.04em;
 }
 
+.branch-control-action-status {
+  flex-basis: 100%;
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+}
+
+.branch-control-action-status:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .branch-control:disabled {
   cursor: wait;
   opacity: 0.55;
+}
+
+.switchboard-task {
+  display: grid;
+  flex: 1 0 100%;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid rgba(142, 197, 195, 0.2);
+  border-radius: 12px;
+  background: rgba(142, 197, 195, 0.045);
+  padding: 12px;
+  color: var(--text-dim);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.switchboard-task--completed {
+  border-color: rgba(129, 199, 132, 0.3);
+}
+
+.switchboard-task--blocked,
+.switchboard-task--failed {
+  border-color: rgba(229, 115, 115, 0.34);
+}
+
+.switchboard-task-header,
+.switchboard-projection-heading,
+.switchboard-intent-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.switchboard-intent-heading > * {
+  min-width: 0;
+}
+
+.switchboard-task-eyebrow,
+.switchboard-routing > strong,
+.switchboard-projection-heading > strong,
+.switchboard-intent-output > strong {
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.switchboard-task h3,
+.switchboard-task h4,
+.switchboard-task p,
+.switchboard-task dl,
+.switchboard-task dd,
+.switchboard-task pre {
+  margin: 0;
+}
+
+.switchboard-task h3 {
+  margin-top: 2px;
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 650;
+}
+
+.switchboard-task-refresh {
+  flex: 0 0 auto;
+  min-width: 9.5em;
+  background: rgba(142, 197, 195, 0.14);
+}
+
+.switchboard-task-identity {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 16px;
+}
+
+.switchboard-task-identity div,
+.switchboard-routing dl div,
+.switchboard-intent-states div,
+.switchboard-intent-copy div {
+  display: grid;
+  grid-template-columns: 7.5em minmax(0, 1fr);
+  gap: 8px;
+}
+
+.switchboard-task dt {
+  color: var(--text-muted);
+}
+
+.switchboard-task dd,
+.switchboard-task pre {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-dim);
+}
+
+.switchboard-task-identity dd {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.switchboard-routing {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  padding-top: 10px;
+}
+
+.switchboard-routing dl,
+.switchboard-intent-states,
+.switchboard-intent-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.switchboard-task code {
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.055);
+  padding: 1px 4px;
+  color: var(--text);
+  font-size: 0.7rem;
+}
+
+.switchboard-projection {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  padding-top: 10px;
+}
+
+.switchboard-projection-heading time {
+  color: var(--text-muted);
+}
+
+.switchboard-intent-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.switchboard-intent {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.12);
+  padding: 9px 10px;
+}
+
+.switchboard-intent-heading h4 {
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.switchboard-intent-heading span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  font-size: 0.66rem;
+}
+
+.switchboard-intent-copy {
+  border-top: 1px solid rgba(255, 255, 255, 0.055);
+  padding-top: 7px;
+}
+
+.switchboard-intent-output {
+  display: grid;
+  gap: 4px;
+  border-left: 2px solid rgba(129, 199, 132, 0.4);
+  padding-left: 8px;
+}
+
+.switchboard-intent-output--error {
+  border-left-color: rgba(229, 115, 115, 0.55);
+}
+
+.switchboard-intent-output pre {
+  max-height: 12em;
+  overflow: auto;
+  white-space: pre-wrap;
+  font: inherit;
+}
+
+.switchboard-task-empty,
+.switchboard-task-error {
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 8px 9px;
+}
+
+.switchboard-task-error {
+  border: 1px solid rgba(229, 115, 115, 0.22);
+  color: #e5a3a3;
+}
+
+@media (max-width: 680px) {
+  .switchboard-task-identity {
+    grid-template-columns: 1fr;
+  }
+
+  .switchboard-task-header,
+  .switchboard-projection-heading,
+  .switchboard-intent-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .switchboard-task-refresh {
+    align-self: flex-start;
+  }
+
+  .switchboard-task-identity div,
+  .switchboard-routing dl div,
+  .switchboard-intent-states div,
+  .switchboard-intent-copy div {
+    grid-template-columns: 6.5em minmax(0, 1fr);
+  }
 }

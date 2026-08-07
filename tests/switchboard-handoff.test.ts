@@ -2,9 +2,17 @@ import { describe, expect, it, vi } from 'vitest'
 import type { SourceNote } from '../src/core/quicknote/types'
 import {
   buildBranchExecuteEnvelope,
+  fetchSwitchboardTasks,
   submitBranchForExecution,
   type SwitchboardExternalIntentEnvelope,
+  type SwitchboardTasksResponse,
 } from '../src/core/intents/switchboard-handoff'
+import {
+  appendSwitchboardTask,
+  applySwitchboardTaskResponse,
+  createSwitchboardTaskFromAdmission,
+  updateSwitchboardTask,
+} from '../src/core/intents/switchboard-task'
 import { appendRecognizedVoiceContext } from '../src/ui/lib/voice-agent-context'
 
 function branch(overrides: Partial<SourceNote> = {}): SourceNote {
@@ -36,8 +44,43 @@ function acceptedAdmission(envelope: SwitchboardExternalIntentEnvelope) {
       sourceHash: envelope.source_hash,
       authority: envelope.authority,
       idempotencyKey: envelope.idempotency_key,
+      rawIntentId: 'raw-intent-1',
+      messageId: 'message-1',
       state: 'queued',
     },
+  }
+}
+
+function projectedTask(overrides: Record<string, unknown> = {}) {
+  return {
+    taskId: 'raw-intent-1',
+    messageId: 'message-1',
+    state: 'active',
+    inboxState: 'completed',
+    intents: [
+      {
+        relation: 'primary',
+        intentId: 'intent-1',
+        workstreamNumber: 1,
+        title: 'Build the explicit integration',
+        progress: {
+          state: 'active',
+          summary: 'Implementing the bounded status projection.',
+          nextAction: 'Run the focused tests.',
+          blockedReason: null,
+          evidence: [],
+        },
+        agent: {
+          id: 'agent-1',
+          name: 'Builder',
+          status: 'running',
+          executionId: 'execution-1',
+          executionState: 'running',
+        },
+        updates: [],
+      },
+    ],
+    ...overrides,
   }
 }
 
@@ -64,6 +107,32 @@ describe('Branch Continue to Switchboard handoff', () => {
 
     expect(edited.source_hash).not.toBe(first.source_hash)
     expect(edited.idempotency_key).not.toBe(first.idempotency_key)
+  })
+
+  it('keeps retry identity stable after persisting a receipt and its task projection', async () => {
+    const source = branch()
+    const original = await buildBranchExecuteEnvelope(source)
+    const record = createSwitchboardTaskFromAdmission(
+      acceptedAdmission(original).admission,
+      '2026-08-07T17:00:00.000Z',
+    )
+    const bodyWithReceipt = appendSwitchboardTask(source.body, record)
+    const receiptEnvelope = await buildBranchExecuteEnvelope(branch({ body: bodyWithReceipt }))
+    const projected = applySwitchboardTaskResponse(
+      record,
+      { tasks: [projectedTask()] },
+      '2026-08-07T17:01:00.000Z',
+    )
+    const bodyWithProjection = updateSwitchboardTask(bodyWithReceipt, projected)
+    const projectionEnvelope = await buildBranchExecuteEnvelope(branch({ body: bodyWithProjection }))
+
+    expect(bodyWithReceipt).not.toBe(source.body)
+    expect(bodyWithProjection).not.toBe(bodyWithReceipt)
+    for (const envelope of [receiptEnvelope, projectionEnvelope]) {
+      expect(envelope.exact_text).toBe(original.exact_text)
+      expect(envelope.source_hash).toBe(original.source_hash)
+      expect(envelope.idempotency_key).toBe(original.idempotency_key)
+    }
   })
 
   it('binds a recognized voice transcript and its opaque audio reference to the explicit handoff', async () => {
@@ -117,6 +186,121 @@ describe('Branch Continue to Switchboard handoff', () => {
     await expect(submitBranchForExecution(branch(), { transport })).rejects.toThrow(
       new RegExp(field, 'i'),
     )
+  })
+
+  it('rejects an admission without a durable message ID', async () => {
+    const transport = vi.fn(async (_endpoint: string, envelope: SwitchboardExternalIntentEnvelope) => {
+      const response = acceptedAdmission(envelope)
+      return {
+        admission: {
+          ...response.admission,
+          messageId: '',
+        },
+      }
+    })
+
+    await expect(submitBranchForExecution(branch(), { transport })).rejects.toThrow(/message ID/i)
+  })
+
+  it('rejects an admission without a durable raw intent ID', async () => {
+    const transport = vi.fn(async (_endpoint: string, envelope: SwitchboardExternalIntentEnvelope) => {
+      const response = acceptedAdmission(envelope)
+      return {
+        admission: {
+          ...response.admission,
+          rawIntentId: '',
+        },
+      }
+    })
+
+    await expect(submitBranchForExecution(branch(), { transport })).rejects.toThrow(/raw intent ID/i)
+  })
+
+  it('requests one bounded task projection by message ID and accepts a not-yet-projected admission', async () => {
+    const transport = vi.fn(async () => ({ tasks: [] }))
+
+    await expect(fetchSwitchboardTasks(' message-1 ', {
+      baseUrl: 'http://127.0.0.1:4317/',
+      rawIntentId: ' raw-intent-1 ',
+      timeoutMs: 2_500,
+      transport,
+    })).resolves.toEqual({ tasks: [] })
+
+    expect(transport).toHaveBeenCalledWith(
+      'http://127.0.0.1:4317/api/v1/tasks',
+      'message-1',
+      'raw-intent-1',
+      2_500,
+    )
+  })
+
+  it('accepts every intent in one durable multi-intent task projection', async () => {
+    const task = projectedTask({
+      intents: [
+        projectedTask().intents[0],
+        {
+          relation: 'follow-up',
+          intentId: 'intent-2',
+          workstreamNumber: 2,
+          title: 'Verify the integration',
+          progress: {
+            state: 'verifying',
+            summary: 'Checking the resulting handoff.',
+            nextAction: null,
+            blockedReason: null,
+            evidence: ['test:focused'],
+          },
+          agent: null,
+          updates: [],
+        },
+      ],
+    })
+    const transport = vi.fn(async () => ({ tasks: [task] }))
+
+    const response = await fetchSwitchboardTasks('message-1', {
+      rawIntentId: 'raw-intent-1',
+      transport,
+    })
+
+    expect(response.tasks[0]?.intents).toHaveLength(2)
+    expect(response.tasks[0]?.intents.map((intent) => intent.intentId)).toEqual([
+      'intent-1',
+      'intent-2',
+    ])
+  })
+
+  it.each([
+    ['messageId', projectedTask({ messageId: 'different-message' }), /messageId/i],
+    ['rawIntentId', projectedTask({ taskId: 'different-raw-intent' }), /rawIntentId/i],
+  ] as const)('rejects a task projection with mismatched %s', async (_field, task, error) => {
+    const transport = vi.fn(async () => ({ tasks: [task] }))
+
+    await expect(fetchSwitchboardTasks('message-1', {
+      rawIntentId: 'raw-intent-1',
+      transport,
+    })).rejects.toThrow(error)
+  })
+
+  it.each([
+    ['a non-array task collection', { tasks: null }],
+    ['a task without intents', { tasks: [{ ...projectedTask(), intents: null }] }],
+    ['more than one task', { tasks: [projectedTask(), projectedTask()] }],
+  ])('rejects %s', async (_label, value) => {
+    const transport = vi.fn(async () => value as unknown as SwitchboardTasksResponse)
+
+    await expect(fetchSwitchboardTasks('message-1', {
+      rawIntentId: 'raw-intent-1',
+      transport,
+    })).rejects.toThrow(/invalid task response|more than one task/i)
+  })
+
+  it('stops waiting for a task projection transport that never returns', async () => {
+    const transport = vi.fn(() => new Promise<never>(() => {}))
+
+    await expect(fetchSwitchboardTasks('message-1', {
+      transport,
+      timeoutMs: 5,
+    })).rejects.toThrow(/status lookup timed out/i)
   })
 
   it('stops waiting for a transport that never returns', async () => {

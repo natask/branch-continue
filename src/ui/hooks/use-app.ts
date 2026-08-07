@@ -55,6 +55,10 @@ interface AppActions {
   jumpToSearchHit: (hit: QuickNoteSearchHit) => void
   createNote: (request: QuickNoteCreateRequest) => Promise<SourceNote>
   updateNote: (noteId: string, request: QuickNoteCreateRequest) => Promise<SourceNote>
+  updateNoteByUid: (
+    noteUid: string,
+    buildRequest: (latest: SourceNote) => QuickNoteCreateRequest,
+  ) => Promise<SourceNote>
   selectSourceFile: () => Promise<void>
   reloadSource: () => Promise<void>
   undoFile: () => Promise<boolean>
@@ -320,10 +324,15 @@ export function useApp(): AppState & AppActions {
       }
 
       const stableUid = request.noteUid?.trim()
-      const target = currentParsed.entries.find((entry) => entry.id === noteId)
-        ?? (stableUid
-          ? currentParsed.entries.find((entry) => entry.noteUid === stableUid)
-          : undefined)
+      // Parser IDs can move when the Org file is reordered. Background task
+      // updates carry the durable UID, so resolve that identity first.
+      const target = (stableUid
+        ? currentParsed.entries.find((entry) => entry.noteUid === stableUid)
+        : undefined)
+        ?? currentParsed.entries.find((entry) => entry.id === noteId)
+      if (stableUid && target?.noteUid !== stableUid) {
+        throw new Error(`Could not find note with stable UID ${stableUid} in selected file.`)
+      }
       const resolvedNoteId = target?.id ?? noteId
       const activeEntry = currentParsed.entries.find((entry) => entry.id === activeNoteIdRef.current)
       const wasActive = activeNoteIdRef.current === resolvedNoteId
@@ -357,6 +366,48 @@ export function useApp(): AppState & AppActions {
       applyParsed(nextParsed, wasActive ? entry.id : undefined)
       return entry
     }),
+    [applyParsed, clearSourceState, runSourceMutation, setActiveHistory],
+  )
+
+  const updateNoteByUid = useCallback(
+    (noteUid: string, buildRequest: (latest: SourceNote) => QuickNoteCreateRequest) => (
+      runSourceMutation(async () => {
+        const currentParsed = parsedRef.current
+        if (!currentParsed) throw new Error('Select a source file first.')
+        const stableUid = noteUid.trim()
+        if (!stableUid) throw new Error('A stable note UID is required.')
+        const target = currentParsed.entries.find((entry) => entry.noteUid === stableUid)
+        if (!target) throw new Error(`Could not find note with stable UID ${stableUid} in selected file.`)
+
+        const request = { ...buildRequest(target), noteUid: stableUid }
+        const activeEntry = currentParsed.entries.find((entry) => entry.id === activeNoteIdRef.current)
+        const wasActive = activeEntry?.noteUid === stableUid
+        const { parsed: nextParsed, entry } = updateQuickNoteEntry(currentParsed, target.id, request)
+        try {
+          await sourceBridge.write(nextParsed.content)
+        } catch (nextError) {
+          if (isSourceUnavailable(nextError)) clearSourceState()
+          throw nextError
+        }
+        const command = createSourceFileCommand({
+          before: currentParsed.content,
+          after: nextParsed.content,
+          kind: 'update-note',
+          label: `Edit ${entry.title || 'note'}`,
+          noteId: stableUid,
+        })
+        if (command) {
+          const base = historyStateRef.current?.sourceKey === currentParsed.sourcePath
+            ? historyStateRef.current
+            : emptySourceFileHistory(currentParsed.sourcePath)
+          const nextHistory = appendSourceFileCommand(base, command)
+          setActiveHistory(nextHistory)
+          await persistSourceHistory(nextHistory)
+        }
+        applyParsed(nextParsed, wasActive ? entry.id : undefined)
+        return entry
+      })
+    ),
     [applyParsed, clearSourceState, runSourceMutation, setActiveHistory],
   )
 
@@ -423,6 +474,7 @@ export function useApp(): AppState & AppActions {
     jumpToSearchHit,
     createNote,
     updateNote,
+    updateNoteByUid,
     selectSourceFile,
     reloadSource,
     undoFile,

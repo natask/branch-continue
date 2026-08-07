@@ -20,6 +20,8 @@ export interface UseEditorSessionResult {
   editorOpen: boolean
   /** Returns the synchronous editor ref, including changes made during an awaited save. */
   getCurrentEditor: () => EditorState | null
+  /** Refreshes persisted source identity without replacing in-progress editor fields. */
+  syncSource: (source: SourceNote, sessionKey: number) => boolean
   saving: boolean
   saveError: string | null
   autoSaveEnabled: boolean
@@ -93,6 +95,13 @@ export function useEditorSession({
     },
     [setEditorState],
   )
+
+  const syncSource = useCallback((source: SourceNote, sessionKey: number): boolean => {
+    const current = editorRef.current
+    if (!current || current.sessionKey !== sessionKey) return false
+    setEditorState({ ...current, source })
+    return true
+  }, [setEditorState])
 
   const nextSessionKey = useCallback(() => {
     const key = editorSessionCounterRef.current
@@ -189,6 +198,7 @@ export function useEditorSession({
     editor,
     editorOpen,
     getCurrentEditor: () => editorRef.current,
+    syncSource,
     saving: draft.saving,
     saveError: draft.saveError,
     autoSaveEnabled: draft.autoSaveEnabled,

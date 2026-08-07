@@ -1,6 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useRef, useState } from 'react'
+import type { SwitchboardTaskRecord } from '../../core/intents/switchboard-task'
 import type { BranchDisposition } from '../../core/quicknote/types'
+import { SwitchboardTaskStatus } from './SwitchboardTaskStatus'
 import './BranchControls.css'
+
+type PendingAction = 'handoff' | 'refresh' | null
+
+interface ActionStatus {
+  branchId: string
+  message: string
+}
 
 interface BranchControlsProps {
   branchId: string
@@ -12,6 +21,8 @@ interface BranchControlsProps {
   onReturnAndContinue: () => Promise<void>
   onSetDisposition: (disposition: Exclude<BranchDisposition, 'handed-off'>) => Promise<string>
   onSendToSwitchboard: () => Promise<string>
+  switchboardTask: SwitchboardTaskRecord | null
+  onRefreshSwitchboard: () => Promise<string>
 }
 
 export function BranchControls({
@@ -24,41 +35,110 @@ export function BranchControls({
   onReturnAndContinue,
   onSetDisposition,
   onSendToSwitchboard,
+  switchboardTask,
+  onRefreshSwitchboard,
 }: BranchControlsProps) {
-  const [pending, setPending] = useState(false)
-  const [status, setStatus] = useState<string | null>(null)
+  const [pendingAction, setPendingAction] = useState<PendingAction>(null)
+  const [dispositionPending, setDispositionPending] = useState(false)
+  const [returnPending, setReturnPending] = useState(false)
+  const [status, setStatus] = useState<ActionStatus | null>(null)
+  const pendingRef = useRef(false)
+  const branchIdRef = useRef(branchId)
 
-  useEffect(() => setStatus(null), [branchId])
+  branchIdRef.current = branchId
 
-  const run = async (action: () => Promise<string>) => {
-    setPending(true)
-    setStatus(null)
+  const runDisposition = async (action: () => Promise<string>) => {
+    if (pendingRef.current) return
+    pendingRef.current = true
+    const actionBranchId = branchId
+    setDispositionPending(true)
+    setStatus({ branchId: actionBranchId, message: 'Saving branch disposition…' })
     try {
-      setStatus(await action())
+      const message = await action()
+      if (branchIdRef.current === actionBranchId) setStatus({ branchId: actionBranchId, message })
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error))
+      if (branchIdRef.current === actionBranchId) {
+        setStatus({
+          branchId: actionBranchId,
+          message: error instanceof Error ? error.message : String(error),
+        })
+      }
     } finally {
-      setPending(false)
+      pendingRef.current = false
+      setDispositionPending(false)
     }
   }
 
+  const runSwitchboardAction = async (
+    kind: Exclude<PendingAction, null>,
+    action: () => Promise<string>,
+  ) => {
+    if (pendingRef.current) return
+    pendingRef.current = true
+    const actionBranchId = branchId
+    setPendingAction(kind)
+    setStatus({
+      branchId: actionBranchId,
+      message: kind === 'handoff' ? 'Sending branch to Switchboard…' : 'Refreshing Switchboard status…',
+    })
+    try {
+      const message = await action()
+      if (branchIdRef.current === actionBranchId) setStatus({ branchId: actionBranchId, message })
+    } catch (error) {
+      if (branchIdRef.current === actionBranchId) {
+        setStatus({
+          branchId: actionBranchId,
+          message: error instanceof Error ? error.message : String(error),
+        })
+      }
+    } finally {
+      pendingRef.current = false
+      setPendingAction(null)
+    }
+  }
+
+  const runReturnAndContinue = async () => {
+    if (pendingRef.current) return
+    pendingRef.current = true
+    const actionBranchId = branchId
+    setReturnPending(true)
+    setStatus({ branchId: actionBranchId, message: 'Returning to the source note…' })
+    try {
+      await onReturnAndContinue()
+      if (branchIdRef.current === actionBranchId) setStatus(null)
+    } catch (error) {
+      if (branchIdRef.current === actionBranchId) {
+        setStatus({
+          branchId: actionBranchId,
+          message: error instanceof Error ? error.message : String(error),
+        })
+      }
+    } finally {
+      pendingRef.current = false
+      setReturnPending(false)
+    }
+  }
+
+  const pending = pendingAction !== null || dispositionPending || returnPending
+  const visibleStatus = status?.branchId === branchId ? status.message : null
+
   return (
-    <div className="branch-controls" aria-label="Current branch actions">
+    <div className="branch-controls" role="group" aria-label="Current branch actions">
       <button className="branch-control branch-control-parent" onClick={onBackToSource} type="button">
         Back to source: {parentLabel}
       </button>
       <button
         className="branch-control branch-control-continue"
-        onClick={() => void onReturnAndContinue()}
-        disabled={returnDisabled}
+        onClick={() => void runReturnAndContinue()}
+        disabled={returnDisabled || pending}
         type="button"
       >
-        Return &amp; continue
+        {returnPending ? 'Returning…' : 'Return & continue'}
       </button>
       <span className="branch-control-status">Disposition: {disposition ?? 'open'}</span>
       <button
         className="branch-control"
-        onClick={() => void run(() => onSetDisposition('retained'))}
+        onClick={() => void runDisposition(() => onSetDisposition('retained'))}
         disabled={pending || recording}
         type="button"
       >
@@ -66,7 +146,7 @@ export function BranchControls({
       </button>
       <button
         className="branch-control"
-        onClick={() => void run(() => onSetDisposition('discarded'))}
+        onClick={() => void runDisposition(() => onSetDisposition('discarded'))}
         disabled={pending || recording}
         type="button"
       >
@@ -74,13 +154,28 @@ export function BranchControls({
       </button>
       <button
         className="branch-control branch-control-handoff"
-        onClick={() => void run(onSendToSwitchboard)}
+        onClick={() => void runSwitchboardAction('handoff', onSendToSwitchboard)}
         disabled={pending || recording}
         type="button"
       >
-        Send to Switchboard
+        {pendingAction === 'handoff' ? 'Sending…' : 'Send to Switchboard'}
       </button>
-      {status && <span className="branch-control-status" role="status">{status}</span>}
+      <span
+        className="branch-control-action-status"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        {visibleStatus ?? ''}
+      </span>
+      {switchboardTask && (
+        <SwitchboardTaskStatus
+          task={switchboardTask}
+          refreshing={pendingAction === 'refresh'}
+          refreshDisabled={pending}
+          onRefresh={() => void runSwitchboardAction('refresh', onRefreshSwitchboard)}
+        />
+      )}
     </div>
   )
 }
