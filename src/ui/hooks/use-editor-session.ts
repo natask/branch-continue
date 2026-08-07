@@ -18,6 +18,8 @@ export type { EditorState } from './editor-session-shared'
 export interface UseEditorSessionResult {
   editor: EditorState | null
   editorOpen: boolean
+  /** Returns the synchronous editor ref, including changes made during an awaited save. */
+  getCurrentEditor: () => EditorState | null
   saving: boolean
   saveError: string | null
   autoSaveEnabled: boolean
@@ -186,6 +188,7 @@ export function useEditorSession({
   return {
     editor,
     editorOpen,
+    getCurrentEditor: () => editorRef.current,
     saving: draft.saving,
     saveError: draft.saveError,
     autoSaveEnabled: draft.autoSaveEnabled,

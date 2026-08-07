@@ -27,6 +27,16 @@ The service listens on:
 http://127.0.0.1:8765
 ```
 
+The app writes the request ID and `running` status into the source note before
+calling the service. Inspect the answering runtime directly with:
+
+```text
+GET http://127.0.0.1:8765/agent-runs/<request-id>
+```
+
+Submitting the same request ID while it is running joins the existing run; it
+does not start a second Codex process.
+
 Override with:
 
 ```bash
@@ -80,6 +90,7 @@ The future hosted path should implement the same HTTP shape:
 ```text
 GET  /health
 POST /agent-runs
+GET  /agent-runs/:requestId
 ```
 
 On Cloudflare, the natural mapping is:

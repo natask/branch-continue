@@ -61,9 +61,17 @@ interface AudioCaptureListProps {
   showTitle?: boolean
   /** Rest the playhead at the session end, e.g. right after recording stops. */
   restAtSessionEnd?: boolean
+  onTranscriptAvailabilityChange?: (available: boolean) => void
 }
 
-export function AudioCaptureList({ body, sourcePath, refreshKey = 0, showTitle = true, restAtSessionEnd = false }: AudioCaptureListProps) {
+export function AudioCaptureList({
+  body,
+  sourcePath,
+  refreshKey = 0,
+  showTitle = true,
+  restAtSessionEnd = false,
+  onTranscriptAvailabilityChange,
+}: AudioCaptureListProps) {
   const references = useMemo(() => {
     const all = extractAudioCaptureReferences(body)
     const fileReferences = all.filter((reference) => reference.kind === 'file')
@@ -107,6 +115,10 @@ export function AudioCaptureList({ body, sourcePath, refreshKey = 0, showTitle =
     endMs: typeof cue.durationMs === 'number' ? cue.timeMs + cue.durationMs : undefined,
     words: cue.words,
   }))), [cuesWithAudio])
+
+  useEffect(() => {
+    onTranscriptAvailabilityChange?.(transcriptBlocks.length > 0)
+  }, [onTranscriptAvailabilityChange, transcriptBlocks.length])
 
   useEffect(() => {
     let cancelled = false

@@ -1,13 +1,59 @@
 import { describe, expect, it } from 'vitest'
 import {
   createAudioRecorderSessionCursor,
+  hasRecognitionBeenInactive,
   hydrateAudioRecorderSessionCursor,
+  isSameAudioRecordingRun,
+  RECOGNITION_INACTIVITY_PAUSE_MS,
   resetAudioRecorderSessionCursor,
+  shouldPauseForRecognitionInactivity,
   transitionAudioRecorderSessionBoundary,
 } from '../src/ui/hooks/use-audio-note-recorder'
 import { resolveAudioCaptureResumeSession } from '../src/core/audio/audio-store'
 
 describe('audio recorder note session boundaries', () => {
+  it('distinguishes uninterrupted recording runs even when a durable session resumes', () => {
+    const active = { runId: 7, sessionId: 'voice-session-1', ownerSessionKey: 12 }
+
+    expect(isSameAudioRecordingRun(active, { ...active })).toBe(true)
+    expect(isSameAudioRecordingRun(active, { ...active, runId: 8 })).toBe(false)
+    expect(isSameAudioRecordingRun(active, { ...active, sessionId: 'voice-session-2' })).toBe(false)
+    expect(isSameAudioRecordingRun(active, { ...active, ownerSessionKey: '12' })).toBe(false)
+    expect(isSameAudioRecordingRun(active, null)).toBe(false)
+  })
+
+  it('pauses only a non-final inactive segment from the active run', () => {
+    const activeRun = { runId: 8, sessionId: 'voice-session-1', ownerSessionKey: 12 }
+    const decision = (patch: Partial<Parameters<typeof shouldPauseForRecognitionInactivity>[0]> = {}) =>
+      shouldPauseForRecognitionInactivity({
+        captureRun: activeRun,
+        activeRun,
+        final: false,
+        lastRecognitionMs: 0,
+        capturedThroughMs: 60_000,
+        ...patch,
+      })
+
+    expect(decision()).toBe(true)
+    expect(decision({ final: true })).toBe(false)
+    expect(decision({ capturedThroughMs: 59_999 })).toBe(false)
+    expect(decision({ captureRun: { ...activeRun, runId: 7 } })).toBe(false)
+    expect(decision({ captureRun: { ...activeRun, ownerSessionKey: 13 } })).toBe(false)
+  })
+
+  it('uses a one-minute transcription inactivity window', () => {
+    expect(RECOGNITION_INACTIVITY_PAUSE_MS).toBe(60_000)
+    expect(hasRecognitionBeenInactive(0, 59_999)).toBe(false)
+    expect(hasRecognitionBeenInactive(0, 60_000)).toBe(true)
+  })
+
+  it('starts a fresh inactivity window when an older session resumes', () => {
+    const resumedAtMs = 5 * 60_000
+
+    expect(hasRecognitionBeenInactive(resumedAtMs, resumedAtMs + 30_000)).toBe(false)
+    expect(hasRecognitionBeenInactive(resumedAtMs, resumedAtMs + 60_000)).toBe(true)
+  })
+
   it('continues after the last persisted chunk when a note is reopened', () => {
     const metadata = {
       sessionId: 'voice-session-persisted',

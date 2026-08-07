@@ -14,8 +14,11 @@ import { useAgentStation } from './ui/agent-station/use-agent-station'
 import { createAgentServiceRuntime } from './ui/agent-runtime/agent-service-runtime'
 import { createMasterOrchAgentRuntime } from './ui/agent-runtime/master-orch-runtime'
 import {
+  isSameAudioRecordingRun,
+  shouldPauseForRecognitionInactivity,
   useAudioNoteRecorder,
   type AudioRecordingComplete,
+  type AudioRecordingRunIdentity,
   type AudioRecordingStart,
 } from './ui/hooks/use-audio-note-recorder'
 import { useFactoryWorkspace } from './ui/hooks/use-factory-workspace'
@@ -31,11 +34,22 @@ import {
   upsertAudioCaptureReference,
 } from './ui/lib/voice-transcript'
 import {
-  buildAgentResponseBody,
+  agentChatSessionId,
+  agentTaskStatusMessage,
   extractLatestAgentPrompt,
-  shortAgentTitle,
+  extractAgentRuntimeSessionId,
+  parseAgentRequestInput,
+  updateAgentTask,
   type AgentLaunchSummary,
+  type AgentTaskProgress,
+  type AgentTaskRecord,
+  type AgentTaskStatus,
 } from './ui/lib/agent-links'
+import {
+  appendRecognizedVoiceContext,
+  DEFAULT_RECOGNIZED_VOICE_AGENT_PROMPT,
+  loadRecognizedVoiceAgentContext,
+} from './ui/lib/voice-agent-context'
 import {
   normalizeVoiceRecordingConfig,
   persistVoiceRecordingConfig,
@@ -255,6 +269,10 @@ function LoadedSourceApp({
   const editorSessionRef = useRef(editorSession)
   editorSessionRef.current = editorSession
   const audioSegmentQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const lastRecognizedSpeechMsByRunRef = useRef(new Map<number, number>())
+  const autoPausedVoiceRunsRef = useRef(new Set<number>())
+  const activeVoiceRunRef = useRef<AudioRecordingRunIdentity | null>(null)
+  const pauseVoiceForNoSpeechRef = useRef<(run: AudioRecordingRunIdentity) => boolean>(() => false)
   // A pause/resume session has one canonical audio reference in the note.
   // Individual MediaRecorder chunks remain independently persisted so each
   // chunk can be transcribed reliably, but the note always points at the
@@ -288,6 +306,9 @@ function LoadedSourceApp({
     [station],
   )
   const [audioNoteMessage, setAudioNoteMessage] = useState<string | null>(null)
+  const [agentRequestPending, setAgentRequestPending] = useState(false)
+  const [agentTaskProgress, setAgentTaskProgress] = useState<AgentTaskProgress | null>(null)
+  const agentRequestInFlightRef = useRef(false)
   const [audioTranscriptRefreshKey, setAudioTranscriptRefreshKey] = useState(0)
   const [voiceRecordingConfig, setVoiceRecordingConfig] = useState(resolveInitialVoiceRecordingConfig)
   const [voiceConfigOpen, setVoiceConfigOpen] = useState(false)
@@ -334,12 +355,22 @@ function LoadedSourceApp({
   }, [updateVoiceRecordingConfig])
 
   const reserveAudioCaptureReference = useCallback((start: AudioRecordingStart) => {
+    activeVoiceRunRef.current = {
+      runId: start.runId,
+      sessionId: start.sessionId,
+      ownerSessionKey: start.ownerSessionKey,
+    }
+    autoPausedVoiceRunsRef.current.clear()
+    lastRecognizedSpeechMsByRunRef.current.clear()
+    // A manual continue starts a fresh inactivity window. Without this
+    // baseline, the prior session duration would look like one long silent run.
+    lastRecognizedSpeechMsByRunRef.current.set(start.runId, start.offsetMs)
     if (start.resumed) return
     const pending = preallocateAudioCapture(sourcePath, start.mimeType).catch(() => null)
     preallocatedAudioCaptureRef.current.set(start.sessionId, pending)
     void pending.then((preallocated) => {
       if (!preallocated) return
-      const current = editorSessionRef.current.editor
+      const current = editorSessionRef.current.getCurrentEditor()
       if (!current || current.sessionKey !== start.ownerSessionKey) return
       const baseBody = editorBodyMirrorRef.current.sessionKey === current.sessionKey
         ? editorBodyMirrorRef.current.body
@@ -356,8 +387,16 @@ function LoadedSourceApp({
       ? await (preallocatedAudioCaptureRef.current.get(capture.sessionId) ?? Promise.resolve(null))
       : null
     const id = preallocated?.id ?? createAudioCaptureId()
+    const captureRun: AudioRecordingRunIdentity = {
+      runId: capture.runId,
+      sessionId: capture.sessionId,
+      ownerSessionKey: capture.ownerSessionKey,
+    }
     const setCaptureMessage = (message: string) => {
-      if (editorSessionRef.current.editor?.sessionKey === capture.ownerSessionKey) {
+      if (
+        editorSessionRef.current.getCurrentEditor()?.sessionKey === capture.ownerSessionKey
+        && isSameAudioRecordingRun(activeVoiceRunRef.current, captureRun)
+      ) {
         setAudioNoteMessage(message)
       }
     }
@@ -441,8 +480,39 @@ function LoadedSourceApp({
       })
       const cleanTranscript = cleanVoiceTranscriptSegment(transcription.transcript)
       if (!cleanTranscript || cleanTranscript === '(no speech detected)') {
+        const captureStillOwnsRecorder = isSameAudioRecordingRun(activeVoiceRunRef.current, captureRun)
+        if (captureStillOwnsRecorder && autoPausedVoiceRunsRef.current.has(capture.runId)) {
+          setCaptureMessage('Voice note paused after 1 minute without recognized speech. Your audio is saved; choose Continue voice note to resume.')
+          return
+        }
+        const capturedThroughMs = capture.offsetMs + capture.durationMs
+        const lastSpeechMs = lastRecognizedSpeechMsByRunRef.current.get(capture.runId) ?? capture.offsetMs
+        if (
+          shouldPauseForRecognitionInactivity({
+            captureRun,
+            activeRun: activeVoiceRunRef.current,
+            final: capture.final,
+            lastRecognitionMs: lastSpeechMs,
+            capturedThroughMs,
+          })
+          && pauseVoiceForNoSpeechRef.current(captureRun)
+        ) {
+          autoPausedVoiceRunsRef.current.add(capture.runId)
+          setCaptureMessage('Voice note paused after 1 minute without recognized speech. Your audio is saved; choose Continue voice note to resume.')
+          return
+        }
         setCaptureMessage(`Audio saved to ${saved.uri}. Chirp 3 did not detect speech.`)
         return
+      }
+      if (isSameAudioRecordingRun(activeVoiceRunRef.current, captureRun)) {
+        const lastWordEndMs = transcription.words.reduce(
+          (latest, word) => Math.max(latest, word.endMs),
+          0,
+        )
+        lastRecognizedSpeechMsByRunRef.current.set(
+          capture.runId,
+          capture.offsetMs + (lastWordEndMs || capture.durationMs),
+        )
       }
 
       const savedTranscript = await saveAudioTranscriptSegment({
@@ -483,10 +553,20 @@ function LoadedSourceApp({
   const audioRecorder = useAudioNoteRecorder({
     sessionKey: editorSession.editor?.sessionKey ?? null,
     livePreview: true,
+    // Chirp sidecars are the durable transcript when configured, so their
+    // run-scoped clock is the only inactivity authority in that mode.
+    pauseOnRecognitionInactivity:
+      voiceRecordingConfig.transcriptionMode !== 'chirp3' || !chirpConfigReady(voiceRecordingConfig),
     onRecordingStart: reserveAudioCaptureReference,
     onRecordingComplete: attachCompletedAudioToCurrentEditor,
     onPcmFrame: (frame) => sessionPeaksRef.current.push(frame),
+    onRecognitionInactivity: (run) => {
+      if (!isSameAudioRecordingRun(activeVoiceRunRef.current, run)) return
+      autoPausedVoiceRunsRef.current.add(run.runId)
+      setAudioNoteMessage('Voice note paused after 1 minute without recognized speech. Your audio is saved; choose Continue voice note to resume.')
+    },
   })
+  pauseVoiceForNoSpeechRef.current = audioRecorder.stopRun
 
   useEffect(() => {
     // Recorder messages describe one editor session. A branch or navigation
@@ -534,6 +614,59 @@ function LoadedSourceApp({
     }
     return map
   }, [notes])
+  const notesByIdRef = useRef(notesById)
+  const notesByUidRef = useRef(notesByUid)
+  const updateNoteRef = useRef(updateNote)
+  notesByIdRef.current = notesById
+  notesByUidRef.current = notesByUid
+  updateNoteRef.current = updateNote
+
+  const persistAgentTask = useCallback(async (
+    sourceNote: SourceNote,
+    fallbackBody: string,
+    task: AgentTaskRecord,
+  ): Promise<{ body: string; note: SourceNote }> => {
+    const taskMarker = `Agent task: ${task.taskId}`
+    const current = editorSessionRef.current.getCurrentEditor()
+    const currentOwnsTask = Boolean(current?.source) && (
+      current!.source!.id === sourceNote.id
+      || Boolean(sourceNote.noteUid && current!.source!.noteUid === sourceNote.noteUid)
+      || current!.body.includes(taskMarker)
+    )
+
+    if (current && currentOwnsTask) {
+      const ownerSessionKey = current.sessionKey
+      const nextBody = updateAgentTask(current.body, task)
+      editorBodyMirrorRef.current = { sessionKey: current.sessionKey, body: nextBody }
+      editorSessionRef.current.updateBody(nextBody)
+      const saved = await editorSessionRef.current.flushAutoSave()
+      if (!saved) throw new Error('Could not save the agent task to this note.')
+      const savedEditor = editorSessionRef.current.getCurrentEditor()
+      const savedSource = savedEditor?.sessionKey === ownerSessionKey
+        ? savedEditor.source
+        : null
+      return {
+        body: savedEditor?.sessionKey === ownerSessionKey ? savedEditor.body : nextBody,
+        note: savedSource ?? sourceNote,
+      }
+    }
+
+    const latest = (sourceNote.noteUid ? notesByUidRef.current.get(sourceNote.noteUid) : undefined)
+      ?? notesByIdRef.current.get(sourceNote.id)
+      ?? Array.from(notesByIdRef.current.values()).find((note) => note.body.includes(taskMarker))
+      ?? sourceNote
+    const nextBody = updateAgentTask(latest.body || fallbackBody, task)
+    const updated = await updateNoteRef.current(latest.id, {
+      title: latest.title,
+      timestamp: latest.timestamp ?? undefined,
+      tags: latest.tags,
+      body: nextBody,
+      noteUid: latest.noteUid,
+      parentNoteId: latest.parentNoteId,
+      disposition: latest.disposition,
+    })
+    return { body: updated.body, note: updated }
+  }, [])
   const childrenByParentRef = useMemo(() => {
     const map = new Map<string, SourceNote[]>()
     for (const note of notes) {
@@ -651,7 +784,7 @@ function LoadedSourceApp({
   const saveBranchDisposition = useCallback(async (disposition: BranchDisposition) => {
     const saved = await editorSessionRef.current.flushAutoSave()
     if (!saved) throw new Error('Could not save this branch first.')
-    const note = editorSessionRef.current.editor?.source
+    const note = editorSessionRef.current.getCurrentEditor()?.source
     if (!note?.parentNoteId) throw new Error('Save this branch once before choosing its disposition.')
     await updateNote(note.id, {
       title: note.title,
@@ -665,12 +798,57 @@ function LoadedSourceApp({
     return disposition === 'retained' ? 'Branch retained.' : 'Branch discarded locally.'
   }, [updateNote])
   const handleSwitchboardHandoff = useCallback(async () => {
-    const saved = await editorSessionRef.current.flushAutoSave()
-    if (!saved) throw new Error('Could not save this branch first.')
-    let note = editorSessionRef.current.editor?.source
-    if (!note) throw new Error('Save this branch once before handing it off.')
+    const clickedEditor = editorSessionRef.current.getCurrentEditor()
+    const clickedSource = clickedEditor?.source
+    if (!clickedEditor || !clickedSource?.parentNoteId) {
+      throw new Error('Save this branch once before handing it off.')
+    }
+    const clickedSessionKey = clickedEditor.sessionKey
+    let note: SourceNote = {
+      ...clickedSource,
+      title: clickedEditor.title,
+      timestamp: clickedEditor.timestamp,
+      tags: [...clickedEditor.tags],
+      body: clickedEditor.body,
+    }
+
+    const initialSaved = await editorSessionRef.current.flushAutoSave()
+    if (!initialSaved) throw new Error('Could not save this branch first.')
+    const initiallySavedEditor = editorSessionRef.current.getCurrentEditor()
+    if (initiallySavedEditor?.sessionKey === clickedSessionKey && initiallySavedEditor.source) {
+      note = {
+        ...initiallySavedEditor.source,
+        title: initiallySavedEditor.title,
+        timestamp: initiallySavedEditor.timestamp,
+        tags: [...initiallySavedEditor.tags],
+        body: initiallySavedEditor.body,
+      }
+    }
+
+    await audioRecorder.stopAndWait()
+    await audioSegmentQueueRef.current.catch(() => undefined)
+    const settledEditor = editorSessionRef.current.getCurrentEditor()
+    if (settledEditor?.sessionKey === clickedSessionKey) {
+      const settledSaved = await editorSessionRef.current.flushAutoSave()
+      if (!settledSaved) throw new Error('Could not save this branch first.')
+      const savedEditor = editorSessionRef.current.getCurrentEditor()
+      if (savedEditor?.sessionKey === clickedSessionKey && savedEditor.source) {
+        note = {
+          ...savedEditor.source,
+          title: savedEditor.title,
+          timestamp: savedEditor.timestamp,
+          tags: [...savedEditor.tags],
+          body: savedEditor.body,
+        }
+      }
+    } else {
+      note = (note.noteUid ? notesByUidRef.current.get(note.noteUid) : undefined)
+        ?? notesByIdRef.current.get(note.id)
+        ?? note
+    }
+
     if (!note.noteUid) {
-      note = await updateNote(note.id, {
+      note = await updateNoteRef.current(note.id, {
         title: note.title,
         timestamp: note.timestamp ?? undefined,
         tags: note.tags,
@@ -679,20 +857,53 @@ function LoadedSourceApp({
         disposition: note.disposition,
       })
     }
-    const result = await submitBranchForExecution(note, {
+    const voiceContext = await loadRecognizedVoiceAgentContext(
+      note.body,
+      sourcePath,
+    )
+    const executionNote = voiceContext.transcript
+      ? { ...note, body: appendRecognizedVoiceContext(note.body, voiceContext.transcript) }
+      : note
+    const result = await submitBranchForExecution(executionNote, {
       baseUrl: import.meta.env.VITE_AGENT_SWITCHBOARD_URL,
     })
-    await updateNote(note.id, {
-      title: note.title,
-      timestamp: note.timestamp ?? undefined,
-      tags: note.tags,
-      body: note.body,
-      noteUid: note.noteUid,
-      parentNoteId: note.parentNoteId,
+
+    let latest = (note.noteUid ? notesByUidRef.current.get(note.noteUid) : undefined)
+      ?? notesByIdRef.current.get(note.id)
+      ?? note
+    const currentAfterHandoff = editorSessionRef.current.getCurrentEditor()
+    const currentIsPinnedBranch = Boolean(currentAfterHandoff?.source) && (
+      currentAfterHandoff!.source!.id === latest.id
+      || Boolean(latest.noteUid && currentAfterHandoff!.source!.noteUid === latest.noteUid)
+    )
+    if (currentAfterHandoff && currentIsPinnedBranch) {
+      const latestSaved = await editorSessionRef.current.flushAutoSave()
+      if (!latestSaved) throw new Error(`Switchboard accepted ${result.admission.id}, but the latest branch edits could not be saved.`)
+      const savedEditor = editorSessionRef.current.getCurrentEditor()
+      if (savedEditor?.source && (
+        savedEditor.source.id === latest.id
+        || Boolean(latest.noteUid && savedEditor.source.noteUid === latest.noteUid)
+      )) {
+        latest = {
+          ...savedEditor.source,
+          title: savedEditor.title,
+          timestamp: savedEditor.timestamp,
+          tags: [...savedEditor.tags],
+          body: savedEditor.body,
+        }
+      }
+    }
+    await updateNoteRef.current(latest.id, {
+      title: latest.title,
+      timestamp: latest.timestamp ?? undefined,
+      tags: latest.tags,
+      body: latest.body,
+      noteUid: latest.noteUid,
+      parentNoteId: latest.parentNoteId,
       disposition: 'handed-off',
     })
     return `Handed off once (${result.admission.id}).`
-  }, [updateNote])
+  }, [audioRecorder.stopAndWait, sourcePath])
   const handleOpenRelativeEditorNote = useCallback(
     (direction: -1 | 1, focusBody = true) => {
       if (currentEditorNoteIndex < 0) return
@@ -756,68 +967,201 @@ function LoadedSourceApp({
     window.setTimeout(focusPrompt, 100)
   }, [currentContextNote, updateVoiceRecordingConfig, voiceRecordingConfig.transcriptionMode])
 
-  const handleRunLatestAgentPrompt = useCallback(async () => {
-    const current = editorSessionRef.current.editor
-    const sourceBody = current?.body ?? currentContextNote?.body ?? ''
-    const match = extractLatestAgentPrompt(sourceBody)
+  const handleRunLatestAgentPrompt = useCallback(async (
+    promptInput?: string,
+    options: { requireRecognizedVoiceTranscript?: boolean } = {},
+  ) => {
+    const launchEditor = editorSessionRef.current.getCurrentEditor()
+    let sourceNote = launchEditor ? launchEditor.source : currentContextNote
+    let sourceBody = launchEditor ? launchEditor.body : currentContextNote?.body ?? ''
+    const match = promptInput === undefined
+      ? extractLatestAgentPrompt(sourceBody)
+      : parseAgentRequestInput(promptInput, Math.max(0, sourceBody.split('\n').length - 1))
     if (!match) {
-      setAudioNoteMessage('No @agent request found in the current note.')
+      setAgentTaskProgress({
+        sourceNoteId: sourceNote?.id ?? null,
+        task: null,
+        phase: 'failed',
+        message: promptInput === undefined
+          ? 'No @agent request found in the current note.'
+          : 'Write a request after the agent name.',
+      })
       return
     }
 
-    const ok = await editorSessionRef.current.flushAutoSave()
-    if (!ok) return
-
-    const sourceNote = editorSessionRef.current.editor?.source ?? currentContextNote
-    if (!sourceNote) {
-      setAudioNoteMessage('Save or open a source note before running an @agent request.')
+    if (agentRequestInFlightRef.current) {
       return
     }
 
-    setAudioNoteMessage(`Running @${match.agent}: ${shortAgentTitle(match.prompt)}`)
-    const result = await agentRouter.route({
-      id: createAgentRequestId(),
-      agentId: match.agent,
-      prompt: match.prompt,
-      source: sourceNote.sourcePath,
-      context: {
-        pageId: sourceNote.noteUid ?? sourceNote.id,
-        anchorId: `note:${sourceNote.noteUid ?? sourceNote.id}:line:${match.lineIndex}`,
-        threadId: `note-agent:${sourceNote.noteUid ?? sourceNote.id}:${match.lineIndex}`,
-        quote: match.line.trim(),
-        localContext: sourceBody.trim() || sourceNote.preview,
-        documentText: sourceBody,
-      },
-      metadata: {
-        source: 'source-backed-note',
+    agentRequestInFlightRef.current = true
+    setAgentRequestPending(true)
+    let persistedTask: AgentTaskRecord | null = null
+    let taskNote: SourceNote | null = sourceNote
+    let taskBody = sourceBody
+    try {
+      if (options.requireRecognizedVoiceTranscript) {
+        // When the record button has just been paused, wait for its final save
+        // and Chirp sidecar before resolving the voice context.
+        await audioRecorder.stopAndWait()
+        await audioSegmentQueueRef.current.catch(() => undefined)
+      }
+
+      const ok = await editorSessionRef.current.flushAutoSave()
+      if (!ok) throw new Error('Could not save this note before launching an agent.')
+
+      const flushedEditor = editorSessionRef.current.getCurrentEditor()
+      if (flushedEditor && flushedEditor.sessionKey === launchEditor?.sessionKey) {
+        sourceNote = flushedEditor.source ?? sourceNote
+        sourceBody = flushedEditor.body
+      }
+      if (!sourceNote) throw new Error('Save or open a source note before launching an agent.')
+      taskNote = sourceNote
+      taskBody = sourceBody
+
+      setAgentTaskProgress({
         sourceNoteId: sourceNote.id,
-        sourceNoteUid: sourceNote.noteUid,
-        sourcePath: sourceNote.sourcePath,
-        lineIndex: match.lineIndex,
-      },
-    })
-    const launch = agentWorkResultToLaunchSummary(result, station.dashboardUrl)
-    const response = await createNote({
-      title: `@${match.agent}: ${shortAgentTitle(match.prompt)}`,
-      tags: ['agent', match.agent],
-      parentNoteId: sourceNote.noteUid ?? sourceNote.id,
-      body: buildAgentResponseBody({
+        task: null,
+        phase: 'preparing',
+        message: options.requireRecognizedVoiceTranscript
+          ? 'Loading the recognized voice transcript…'
+          : 'Preparing the note context…',
+      })
+
+      const liveTranscript = launchEditor?.source?.id === sourceNote.id
+        ? audioRecorder.finalTranscript
+        : ''
+      const voiceContext = await loadRecognizedVoiceAgentContext(sourceBody, sourcePath, liveTranscript)
+      if (options.requireRecognizedVoiceTranscript && !voiceContext.transcript.trim()) {
+        throw new Error('No recognized transcript is available yet. Check transcription settings or wait for transcription to finish.')
+      }
+
+      const requestId = createAgentRequestId()
+      const documentText = appendRecognizedVoiceContext(sourceBody, voiceContext.transcript)
+      const submittedAt = new Date().toISOString()
+      persistedTask = {
+        taskId: requestId,
+        sessionId: agentChatSessionId(sourceNote, sourceBody),
         agent: match.agent,
         prompt: match.prompt,
-        sourceNote,
-        sourceBody,
-        launch,
-      }),
-    })
+        status: 'running',
+        sourceKind: voiceContext.transcript ? 'recognized-voice-note' : 'note',
+        submittedAt,
+        recognizedTranscriptChars: voiceContext.transcript.length || undefined,
+      }
+      const pending = await persistAgentTask(sourceNote, sourceBody, persistedTask)
+      taskNote = pending.note
+      taskBody = pending.body
+      setAgentTaskProgress({
+        sourceNoteId: pending.note.id,
+        task: persistedTask,
+        phase: 'running',
+        message: agentTaskStatusMessage(persistedTask),
+      })
 
-    selectNote(response)
-    editorSessionRef.current.openNoteEditor(response)
-    setAudioNoteMessage(
-      launch.status === 'launched'
-        ? `@${match.agent} request launched and linked.`
-        : `@${match.agent} response note created; ${launch.reason ?? 'agent station is offline'}`,
-    )
-  }, [agentRouter, createNote, currentContextNote, selectNote, station.dashboardUrl])
+      const result = await agentRouter.route({
+        id: requestId,
+        agentId: match.agent,
+        prompt: match.prompt,
+        source: pending.note.sourcePath,
+        context: {
+          pageId: pending.note.noteUid ?? pending.note.id,
+          anchorId: `note:${pending.note.noteUid ?? pending.note.id}:line:${match.lineIndex}`,
+          threadId: persistedTask.sessionId,
+          quote: match.line.trim(),
+          localContext: documentText.trim() || pending.note.preview,
+          documentText,
+        },
+        metadata: {
+          source: 'source-backed-note',
+          sourceKind: persistedTask.sourceKind,
+          agentTaskId: requestId,
+          sourceNoteId: pending.note.id,
+          sourceNoteUid: pending.note.noteUid,
+          sourcePath: pending.note.sourcePath,
+          lineIndex: match.lineIndex,
+          codexSessionId: extractAgentRuntimeSessionId(sourceBody),
+          recognizedTranscriptChars: voiceContext.transcript.length,
+          recognizedTranscriptSegments: voiceContext.segmentCount,
+          audioReferences: voiceContext.audioReferences,
+          switchboardEligible: Boolean(pending.note.noteUid && pending.note.parentNoteId),
+        },
+      })
+      const launch = agentWorkResultToLaunchSummary(result, station.dashboardUrl)
+      const status: AgentTaskStatus = result.runtimeId === 'local'
+        ? 'blocked'
+        : result.status === 'launched'
+          ? 'launched'
+          : result.status === 'failed'
+            ? 'failed'
+            : 'completed'
+      const completedTask: AgentTaskRecord = {
+        ...persistedTask,
+        status,
+        updatedAt: new Date().toISOString(),
+        response: result.response,
+        runtimeId: result.runtimeId,
+        runtimeSessionId: result.runtimeId === 'local-codex' ? result.externalId : undefined,
+        launch,
+      }
+      const completed = await persistAgentTask(pending.note, pending.body, completedTask)
+      taskNote = completed.note
+      taskBody = completed.body
+      persistedTask = completedTask
+      setAgentTaskProgress({
+        sourceNoteId: completed.note.id,
+        task: completedTask,
+        phase: completedTask.status,
+        message: agentTaskStatusMessage(completedTask),
+      })
+    } catch (error) {
+      const message = errorMessage(error)
+      if (persistedTask && taskNote) {
+        const failedTask: AgentTaskRecord = {
+          ...persistedTask,
+          status: 'failed',
+          updatedAt: new Date().toISOString(),
+          response: `Agent request failed: ${message}`,
+          launch: {
+            status: 'failed',
+            dashboardUrl: station.dashboardUrl,
+            reason: message,
+          },
+        }
+        try {
+          const failed = await persistAgentTask(taskNote, taskBody, failedTask)
+          taskNote = failed.note
+          persistedTask = failedTask
+        } catch {
+          // Preserve the original failure. A previously persisted running task
+          // remains inspectable and can be recovered on the next launch.
+        }
+      }
+      setAgentTaskProgress({
+        sourceNoteId: taskNote?.id ?? sourceNote?.id ?? null,
+        task: persistedTask,
+        phase: 'failed',
+        message: `Agent request failed: ${message}`,
+      })
+    } finally {
+      agentRequestInFlightRef.current = false
+      setAgentRequestPending(false)
+    }
+  }, [
+    agentRouter,
+    audioRecorder.finalTranscript,
+    audioRecorder.stopAndWait,
+    currentContextNote,
+    persistAgentTask,
+    sourcePath,
+    station.dashboardUrl,
+  ])
+
+  const handleRunRecognizedVoiceNote = useCallback(
+    () => handleRunLatestAgentPrompt(DEFAULT_RECOGNIZED_VOICE_AGENT_PROMPT, {
+      requireRecognizedVoiceTranscript: true,
+    }),
+    [handleRunLatestAgentPrompt],
+  )
 
   const handleCaptureCurrentFactoryIntent = useCallback(() => {
     const current = editorSessionRef.current.editor
@@ -838,14 +1182,18 @@ function LoadedSourceApp({
 
   const handleVoiceCapture = useCallback(async () => {
     if (audioRecorder.recording) return
-    const currentBody = editorSessionRef.current.editor?.body ?? ''
+    // A paused run is not resumable until its final MediaRecorder/PCM save and
+    // transcript sidecar have settled. This keeps same-session frames from
+    // being assembled into the preceding segment.
+    await audioRecorder.stopAndWait()
+    const currentBody = editorSessionRef.current.getCurrentEditor()?.body ?? ''
     const references = extractAudioCaptureReferences(currentBody)
     const reference = references.find((candidate) => candidate.kind === 'file') ?? references[0]
     const resumeFromStore = shouldResumeStoredVoiceSession({
       hasReference: Boolean(reference),
       status: audioRecorder.status,
       recorderNoteSessionKey: recorderNoteSessionKeyRef.current,
-      editorNoteSessionKey: editorSessionRef.current.editor?.sessionKey ?? null,
+      editorNoteSessionKey: editorSessionRef.current.getCurrentEditor()?.sessionKey ?? null,
     })
     if (reference && resumeFromStore) {
       try {
@@ -863,7 +1211,7 @@ function LoadedSourceApp({
       }
     }
     await audioRecorder.start()
-  }, [audioRecorder.recording, audioRecorder.start, audioRecorder.status, sourcePath])
+  }, [audioRecorder.recording, audioRecorder.start, audioRecorder.status, audioRecorder.stopAndWait, sourcePath])
 
   const handleGoToBoundary = useCallback(() => {
     const boundary = resolveBoundaryNote(orderedNotes, sortMode)
@@ -1079,7 +1427,7 @@ function LoadedSourceApp({
         hint: 'current note',
         keywords: ['agent', 'run', 'request', 'mention', 'launch'],
         group: 'Actions',
-        disabled: !editorSession.editor && !currentContextNote,
+        disabled: agentRequestPending || (!editorSession.editor && !currentContextNote),
         run: () => void handleRunLatestAgentPrompt(),
       },
       {
@@ -1276,6 +1624,7 @@ function LoadedSourceApp({
       currentContextNote,
       currentParentNote,
       editorSession,
+      agentRequestPending,
       audioRecorder.recording,
       audioRecorder.status,
       audioRecorder.mediaRecorderAvailable,
@@ -1481,6 +1830,7 @@ function LoadedSourceApp({
 
       {editorSession.editor && (
         <Editor
+          key={editorSession.editor.sessionKey}
           session={editorSession}
           positionLabel={editorPositionLabel}
           isMobile={isMobile}
@@ -1489,6 +1839,8 @@ function LoadedSourceApp({
           audioRecorder={audioRecorder}
           audioNoteMessage={audioNoteMessage}
           audioTranscriptRefreshKey={audioTranscriptRefreshKey}
+          agentRequestPending={agentRequestPending}
+          agentTaskProgress={agentTaskProgress}
           liveVoicePeaks={liveVoicePeaks}
           voiceRecordingConfig={voiceRecordingConfig}
           voiceConfigOpen={voiceConfigOpen}
@@ -1496,6 +1848,8 @@ function LoadedSourceApp({
           onVoiceConfigOpenChange={setVoiceConfigOpen}
           onVoiceRecordingConfigChange={updateVoiceRecordingConfig}
           onVoiceCapture={handleVoiceCapture}
+          onRunAgent={handleRunLatestAgentPrompt}
+          onRunVoiceAgent={handleRunRecognizedVoiceNote}
           onSelectVoiceCredentialFile={selectVoiceCredentialFile}
           onOpenSearch={() => setSearchOpen(true)}
           onOpenOlderNote={handleOpenOlderEditorNote}

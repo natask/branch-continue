@@ -34,6 +34,27 @@ const server = createServer(async (request, response) => {
     return
   }
 
+  const runStatusMatch = request.url?.match(/^\/agent-runs\/([^/?]+)$/)
+  if (request.method === 'GET' && runStatusMatch) {
+    const id = decodeURIComponent(runStatusMatch[1])
+    const run = runs.get(id)
+    if (!run) {
+      writeJson(response, 404, { error: 'Agent run not found.' })
+      return
+    }
+    if (run.result) {
+      writeJson(response, 200, run.result)
+      return
+    }
+    writeJson(response, 200, {
+      runtimeId: 'local-codex',
+      status: 'running',
+      response: `Agent task ${id} is still running.`,
+      externalId: id,
+    })
+    return
+  }
+
   if (request.method === 'POST' && request.url === '/agent-runs') {
     try {
       const body = await readJson(request)
@@ -43,32 +64,52 @@ const server = createServer(async (request, response) => {
         writeJson(response, 200, existing.result)
         return
       }
+      if (existing?.status === 'running' && existing.promise) {
+        writeJson(response, 200, await existing.promise)
+        return
+      }
 
       const startedAt = new Date().toISOString()
+      const promise = executeCodex(input.request, input.agent)
+        .then((output) => ({
+          runtimeId: 'local-codex',
+          status: output.exitCode === 0 ? 'completed' : 'failed',
+          response: output.stdout || output.stderr || 'Codex completed without output.',
+          error: output.exitCode === 0 ? undefined : output.stderr || `Codex exited with ${output.exitCode}`,
+          externalId: input.request.id,
+          metadata: {
+            requestId: input.request.id,
+            agentId: input.agent.id,
+            startedAt,
+            completedAt: new Date().toISOString(),
+            exitCode: output.exitCode,
+            stderr: output.stderr,
+          },
+        }))
+        .catch((error) => ({
+          runtimeId: 'local-codex',
+          status: 'failed',
+          response: errorMessage(error),
+          error: errorMessage(error),
+          metadata: {
+            requestId: input.request.id,
+            agentId: input.agent.id,
+            startedAt,
+            completedAt: new Date().toISOString(),
+            exitCode: 1,
+            stderr: errorMessage(error),
+          },
+        }))
       runs.set(input.request.id, {
         id: input.request.id,
         status: 'running',
         request: input.request,
         agent: input.agent,
         startedAt,
+        promise,
       })
 
-      const output = await executeCodex(input.request, input.agent)
-      const result = {
-        runtimeId: 'local-codex',
-        status: output.exitCode === 0 ? 'completed' : 'failed',
-        response: output.stdout || output.stderr || 'Codex completed without output.',
-        error: output.exitCode === 0 ? undefined : output.stderr || `Codex exited with ${output.exitCode}`,
-        externalId: input.request.id,
-        metadata: {
-          requestId: input.request.id,
-          agentId: input.agent.id,
-          startedAt,
-          completedAt: new Date().toISOString(),
-          exitCode: output.exitCode,
-          stderr: output.stderr,
-        },
-      }
+      const result = await promise
       runs.set(input.request.id, {
         id: input.request.id,
         status: result.status,

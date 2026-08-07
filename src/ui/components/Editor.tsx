@@ -11,6 +11,11 @@ import {
 import { parseVoiceTranscriptTime } from '../lib/voice-transcript'
 import { extractAudioCaptureReferences } from '../../core/audio/audio-store'
 import { formatElapsed, VoiceRecordingsPanel } from './VoiceRecordingsPanel'
+import {
+  persistedAgentTaskProgress,
+  type AgentTaskProgress,
+} from '../lib/agent-links'
+import { AgentTaskStatus } from './AgentTaskStatus'
 
 type MobileNavTarget = 'older' | 'newer'
 
@@ -26,6 +31,8 @@ interface EditorProps {
   audioRecorder: UseAudioNoteRecorderResult
   audioNoteMessage: string | null
   audioTranscriptRefreshKey: number
+  agentRequestPending: boolean
+  agentTaskProgress: AgentTaskProgress | null
   liveVoicePeaks: () => number[]
   voiceRecordingConfig: VoiceRecordingConfig
   voiceConfigOpen: boolean
@@ -33,6 +40,8 @@ interface EditorProps {
   onVoiceConfigOpenChange: (open: boolean) => void
   onVoiceRecordingConfigChange: (patch: Partial<VoiceRecordingConfig>) => void
   onVoiceCapture: () => void
+  onRunAgent: (prompt: string) => Promise<void>
+  onRunVoiceAgent: () => Promise<void>
   onSelectVoiceCredentialFile: () => Promise<void>
   onOpenSearch: () => void
   onOpenOlderNote: () => void
@@ -48,6 +57,8 @@ export function Editor({
   audioRecorder,
   audioNoteMessage,
   audioTranscriptRefreshKey,
+  agentRequestPending,
+  agentTaskProgress,
   liveVoicePeaks,
   voiceRecordingConfig,
   voiceConfigOpen,
@@ -55,6 +66,8 @@ export function Editor({
   onVoiceConfigOpenChange,
   onVoiceRecordingConfigChange,
   onVoiceCapture,
+  onRunAgent,
+  onRunVoiceAgent,
   onSelectVoiceCredentialFile,
   onOpenSearch,
   onOpenOlderNote,
@@ -65,6 +78,20 @@ export function Editor({
   const navRepeatTimerRef = useRef<number | null>(null)
   const ignorePointerClickRef = useRef(false)
   const [panelPreference, setPanelPreference] = useState<VoicePanelPreference>('auto')
+  const [agentComposerOpen, setAgentComposerOpen] = useState(false)
+  const [agentPrompt, setAgentPrompt] = useState('')
+  const visibleAgentProgress = useMemo<AgentTaskProgress | null>(() => {
+    if (agentTaskProgress && (
+      agentTaskProgress.sourceNoteId === null
+      || agentTaskProgress.sourceNoteId === editor?.source?.id
+    )) return agentTaskProgress
+    if (!editor) return null
+    return persistedAgentTaskProgress(editor.body, editor.source?.id ?? null)
+  }, [agentTaskProgress, editor])
+  const agentRequestPendingForNote = agentRequestPending && (
+    !agentTaskProgress?.sourceNoteId
+    || agentTaskProgress.sourceNoteId === editor?.source?.id
+  )
   const navStateRef = useRef({
     older: onOpenOlderNote,
     newer: onOpenNewerNote,
@@ -177,6 +204,8 @@ export function Editor({
   // Hiding the panel lasts for the note being read, not for every note after it.
   useEffect(() => {
     setPanelPreference('auto')
+    setAgentComposerOpen(false)
+    setAgentPrompt('')
   }, [editor?.sessionKey])
 
   useEffect(() => {
@@ -342,6 +371,14 @@ export function Editor({
               <button className="btn-secondary" onClick={onOpenSearch} type="button">
                 {isMobile ? 'Search' : 'Commands'}
               </button>
+              <button
+                className={`btn-secondary${agentComposerOpen ? ' btn-secondary--active' : ''}`}
+                onClick={() => setAgentComposerOpen((open) => !open)}
+                type="button"
+                aria-expanded={agentComposerOpen}
+              >
+                Ask Agent
+              </button>
               <button className="btn-primary" onClick={() => void session.handleBranchFromEditor()} type="button">
                 Branch
               </button>
@@ -425,6 +462,32 @@ export function Editor({
         </div>
 
         {session.saveError && <p className="status-error">{session.saveError}</p>}
+        {agentComposerOpen && (
+          <form
+            className="note-agent-composer"
+            onSubmit={(event) => {
+              event.preventDefault()
+              if (!agentPrompt.trim() || agentRequestPending) return
+              void onRunAgent(agentPrompt)
+            }}
+          >
+            <label htmlFor="note-agent-prompt">Ask an agent about this note</label>
+            <div className="note-agent-composer-row">
+              <textarea
+                id="note-agent-prompt"
+                value={agentPrompt}
+                onChange={(event) => setAgentPrompt(event.target.value)}
+                placeholder="What should the agent do? Use @critic, @researcher, or @editor to choose a role."
+                rows={2}
+                autoFocus
+              />
+              <button className="btn-primary" disabled={!agentPrompt.trim() || agentRequestPending} type="submit">
+                {agentRequestPendingForNote ? 'Running…' : agentRequestPending ? 'Agent busy' : 'Run on note'}
+              </button>
+            </div>
+            <AgentTaskStatus progress={visibleAgentProgress} />
+          </form>
+        )}
         <div className={`note-editor-content${showRecordingsPanel ? ' note-editor-content--with-recordings' : ''}`}>
           <div className="note-editor-main">
             {editor.editing ? (
@@ -486,8 +549,13 @@ export function Editor({
               body={editor.body}
               sourcePath={sourcePath}
               audioTranscriptRefreshKey={audioTranscriptRefreshKey}
+              agentRequestPending={agentRequestPendingForNote}
+              agentRequestBusy={agentRequestPending}
+              agentTaskProgress={agentComposerOpen ? null : visibleAgentProgress}
+              agentTaskStatusLive={!agentComposerOpen}
               liveVoicePeaks={liveVoicePeaks}
               onVoiceCapture={onVoiceCapture}
+              onRunVoiceAgent={onRunVoiceAgent}
               onVoiceConfigOpenChange={onVoiceConfigOpenChange}
               onVoiceRecordingConfigChange={onVoiceRecordingConfigChange}
               onSelectVoiceCredentialFile={onSelectVoiceCredentialFile}
@@ -506,7 +574,10 @@ export function Editor({
 function ReadableNoteBody({ body, sessionId }: { body: string; sessionId: string | null }) {
   const readableBody = body
     .split('\n')
-    .filter((line) => !/^\s*Audio recording:\s+/i.test(line))
+    .filter((line) => (
+      !/^\s*Audio recording:\s+/i.test(line)
+      && !/^\s*<!-- branch-continue-agent-(?:turn|task):(start|end).*-->\s*$/.test(line)
+    ))
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trimEnd()

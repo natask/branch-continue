@@ -5,6 +5,7 @@ import {
   submitBranchForExecution,
   type SwitchboardExternalIntentEnvelope,
 } from '../src/core/intents/switchboard-handoff'
+import { appendRecognizedVoiceContext } from '../src/ui/lib/voice-agent-context'
 
 function branch(overrides: Partial<SourceNote> = {}): SourceNote {
   return {
@@ -63,6 +64,24 @@ describe('Branch Continue to Switchboard handoff', () => {
 
     expect(edited.source_hash).not.toBe(first.source_hash)
     expect(edited.idempotency_key).not.toBe(first.idempotency_key)
+  })
+
+  it('binds a recognized voice transcript and its opaque audio reference to the explicit handoff', async () => {
+    const original = await buildBranchExecuteEnvelope(branch())
+    const body = appendRecognizedVoiceContext(
+      'Audio recording: recordings/voice-note.wav',
+      'Ship the smallest reliable slice.',
+    )
+    const voice = await buildBranchExecuteEnvelope(branch({ body }))
+    const retry = await buildBranchExecuteEnvelope(branch({ body, disposition: 'handed-off' }))
+
+    expect(voice.source_hash).not.toBe(original.source_hash)
+    expect(retry).toEqual(voice)
+    expect(voice.exact_text).toContain('Recognized voice transcript:\n\nShip the smallest reliable slice.')
+    expect(voice.context_refs).toContainEqual({
+      type: 'branch-continue-audio',
+      uri: 'recordings/voice-note.wav',
+    })
   })
 
   it('requires a saved stable UID and branch lineage before transport', async () => {

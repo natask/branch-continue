@@ -69,6 +69,8 @@ export function useApp(): AppState & AppActions {
   const [lifecycle, setLifecycle] = useState<AppState['lifecycle']>('booting')
   const [error, setError] = useState<string | null>(null)
   const [parsed, setParsed] = useState<ParsedQuickNoteFile | null>(null)
+  const parsedRef = useRef<ParsedQuickNoteFile | null>(null)
+  const sourceMutationQueueRef = useRef<Promise<void>>(Promise.resolve())
   const [notes, setNotes] = useState<SourceNote[]>([])
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null)
   const [activeNoteOffset, setActiveNoteOffset] = useState(0)
@@ -112,6 +114,7 @@ export function useApp(): AppState & AppActions {
 
   const applyParsed = useCallback(
     (nextParsed: ParsedQuickNoteFile, preferredNoteId?: string | null) => {
+      parsedRef.current = nextParsed
       setParsed(nextParsed)
       setNotes(nextParsed.entries)
       setActiveSelection(
@@ -136,6 +139,7 @@ export function useApp(): AppState & AppActions {
   )
 
   const clearSourceState = useCallback(() => {
+    parsedRef.current = null
     setParsed(null)
     setNotes([])
     setActiveSelection(null)
@@ -150,6 +154,15 @@ export function useApp(): AppState & AppActions {
   }, [setActiveHistory, setActiveSelection])
 
   const reloadSourceRef = useRef<(() => Promise<void>) | null>(null)
+
+  const runSourceMutation = useCallback(<T,>(operation: () => Promise<T>): Promise<T> => {
+    const result = sourceMutationQueueRef.current.then(operation, operation)
+    sourceMutationQueueRef.current = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -263,12 +276,13 @@ export function useApp(): AppState & AppActions {
   )
 
   const createNote = useCallback(
-    async (request: QuickNoteCreateRequest) => {
-      if (!parsed) {
+    (request: QuickNoteCreateRequest) => runSourceMutation(async () => {
+      const currentParsed = parsedRef.current
+      if (!currentParsed) {
         throw new Error('Select a source file first.')
       }
 
-      const { parsed: nextParsed, entry } = appendQuickNoteEntry(parsed, request)
+      const { parsed: nextParsed, entry } = appendQuickNoteEntry(currentParsed, request)
       try {
         await sourceBridge.write(nextParsed.content)
       } catch (nextError) {
@@ -278,33 +292,43 @@ export function useApp(): AppState & AppActions {
         throw nextError
       }
       const command = createSourceFileCommand({
-        before: parsed.content,
+        before: currentParsed.content,
         after: nextParsed.content,
         kind: 'create-note',
         label: `Create ${entry.title || 'note'}`,
         noteId: entry.noteUid ?? entry.id,
       })
       if (command) {
-        const base = historyStateRef.current?.sourceKey === parsed.sourcePath
+        const base = historyStateRef.current?.sourceKey === currentParsed.sourcePath
           ? historyStateRef.current
-          : emptySourceFileHistory(parsed.sourcePath)
+          : emptySourceFileHistory(currentParsed.sourcePath)
         const nextHistory = appendSourceFileCommand(base, command)
         setActiveHistory(nextHistory)
         await persistSourceHistory(nextHistory)
       }
       applyParsed(nextParsed, entry.id)
       return entry
-    },
-    [applyParsed, clearSourceState, parsed, setActiveHistory],
+    }),
+    [applyParsed, clearSourceState, runSourceMutation, setActiveHistory],
   )
 
   const updateNote = useCallback(
-    async (noteId: string, request: QuickNoteCreateRequest) => {
-      if (!parsed) {
+    (noteId: string, request: QuickNoteCreateRequest) => runSourceMutation(async () => {
+      const currentParsed = parsedRef.current
+      if (!currentParsed) {
         throw new Error('Select a source file first.')
       }
 
-      const { parsed: nextParsed, entry } = updateQuickNoteEntry(parsed, noteId, request)
+      const stableUid = request.noteUid?.trim()
+      const target = currentParsed.entries.find((entry) => entry.id === noteId)
+        ?? (stableUid
+          ? currentParsed.entries.find((entry) => entry.noteUid === stableUid)
+          : undefined)
+      const resolvedNoteId = target?.id ?? noteId
+      const activeEntry = currentParsed.entries.find((entry) => entry.id === activeNoteIdRef.current)
+      const wasActive = activeNoteIdRef.current === resolvedNoteId
+        || Boolean(stableUid && activeEntry?.noteUid === stableUid)
+      const { parsed: nextParsed, entry } = updateQuickNoteEntry(currentParsed, resolvedNoteId, request)
       try {
         await sourceBridge.write(nextParsed.content)
       } catch (nextError) {
@@ -314,49 +338,53 @@ export function useApp(): AppState & AppActions {
         throw nextError
       }
       const command = createSourceFileCommand({
-        before: parsed.content,
+        before: currentParsed.content,
         after: nextParsed.content,
         kind: 'update-note',
         label: `Edit ${entry.title || 'note'}`,
         noteId: entry.noteUid ?? entry.id,
       })
       if (command) {
-        const base = historyStateRef.current?.sourceKey === parsed.sourcePath
+        const base = historyStateRef.current?.sourceKey === currentParsed.sourcePath
           ? historyStateRef.current
-          : emptySourceFileHistory(parsed.sourcePath)
+          : emptySourceFileHistory(currentParsed.sourcePath)
         const nextHistory = appendSourceFileCommand(base, command)
         setActiveHistory(nextHistory)
         await persistSourceHistory(nextHistory)
       }
-      applyParsed(nextParsed, entry.id)
+      // Background writes (for example a late agent result) must not steal the
+      // Time Machine selection from the note the user is currently viewing.
+      applyParsed(nextParsed, wasActive ? entry.id : undefined)
       return entry
-    },
-    [applyParsed, clearSourceState, parsed, setActiveHistory],
+    }),
+    [applyParsed, clearSourceState, runSourceMutation, setActiveHistory],
   )
 
-  const undoFile = useCallback(async (): Promise<boolean> => {
+  const undoFile = useCallback((): Promise<boolean> => runSourceMutation(async () => {
+    const currentParsed = parsedRef.current
     const currentHistory = historyStateRef.current
-    if (!parsed || !currentHistory || currentHistory.sourceKey !== parsed.sourcePath) return false
-    const step = undoSourceFileCommand(currentHistory, parsed.content)
+    if (!currentParsed || !currentHistory || currentHistory.sourceKey !== currentParsed.sourcePath) return false
+    const step = undoSourceFileCommand(currentHistory, currentParsed.content)
     if (!step) return false
     await sourceBridge.write(step.content)
     setActiveHistory(step.state)
     await persistSourceHistory(step.state)
-    applyParsed(parseQuickNoteFile(step.content, parsed.sourcePath), null)
+    applyParsed(parseQuickNoteFile(step.content, currentParsed.sourcePath), null)
     return true
-  }, [applyParsed, parsed, setActiveHistory])
+  }), [applyParsed, runSourceMutation, setActiveHistory])
 
-  const redoFile = useCallback(async (): Promise<boolean> => {
+  const redoFile = useCallback((): Promise<boolean> => runSourceMutation(async () => {
+    const currentParsed = parsedRef.current
     const currentHistory = historyStateRef.current
-    if (!parsed || !currentHistory || currentHistory.sourceKey !== parsed.sourcePath) return false
-    const step = redoSourceFileCommand(currentHistory, parsed.content)
+    if (!currentParsed || !currentHistory || currentHistory.sourceKey !== currentParsed.sourcePath) return false
+    const step = redoSourceFileCommand(currentHistory, currentParsed.content)
     if (!step) return false
     await sourceBridge.write(step.content)
     setActiveHistory(step.state)
     await persistSourceHistory(step.state)
-    applyParsed(parseQuickNoteFile(step.content, parsed.sourcePath), null)
+    applyParsed(parseQuickNoteFile(step.content, currentParsed.sourcePath), null)
     return true
-  }, [applyParsed, parsed, setActiveHistory])
+  }), [applyParsed, runSourceMutation, setActiveHistory])
 
   const activeNote = useMemo(
     () => (activeNoteId ? notes.find((note) => note.id === activeNoteId) ?? null : null),

@@ -1,4 +1,5 @@
 import type { SourceNote } from '../quicknote/types'
+import { extractAudioCaptureReferences } from '../audio/audio-store'
 
 export const SWITCHBOARD_EXTERNAL_INTENT_PATH = '/api/v1/external-intents'
 export const DEFAULT_SWITCHBOARD_URL = 'http://127.0.0.1:4317'
@@ -79,11 +80,17 @@ export async function buildBranchExecuteEnvelope(
     source_hash: sourceHash,
     exact_text: exactText,
     evidence_refs: [],
-    context_refs: [{
-      type: 'branch-continue-lineage',
-      source_path: note.sourcePath,
-      parent_note_id: note.parentNoteId,
-    }],
+    context_refs: [
+      {
+        type: 'branch-continue-lineage',
+        source_path: note.sourcePath,
+        parent_note_id: note.parentNoteId,
+      },
+      ...extractAudioCaptureReferences(note.body).map((reference) => ({
+        type: 'branch-continue-audio',
+        uri: reference.uri,
+      })),
+    ],
     ...(projectHint?.trim() ? { project_hint: projectHint.trim() } : {}),
     authority: 'execute',
     idempotency_key: `branch-continue:${noteUid}:${sourceHash}`,

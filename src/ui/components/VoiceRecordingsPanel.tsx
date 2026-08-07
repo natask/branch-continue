@@ -1,7 +1,10 @@
+import { useCallback, useEffect, useState } from 'react'
 import type { UseAudioNoteRecorderResult } from '../hooks/use-audio-note-recorder'
 import { type VoiceRecordingConfig } from '../lib/voice-recording-config'
 import { AudioCaptureList } from './AudioCaptureList'
 import { LiveRecordingWaveform } from './LiveRecordingWaveform'
+import type { AgentTaskProgress } from '../lib/agent-links'
+import { AgentTaskStatus } from './AgentTaskStatus'
 
 export interface VoiceRecordingsPanelProps {
   audioRecorder: UseAudioNoteRecorderResult
@@ -12,8 +15,13 @@ export interface VoiceRecordingsPanelProps {
   body: string
   sourcePath: string
   audioTranscriptRefreshKey: number
+  agentRequestPending: boolean
+  agentRequestBusy: boolean
+  agentTaskProgress: AgentTaskProgress | null
+  agentTaskStatusLive: boolean
   liveVoicePeaks: () => number[]
   onVoiceCapture: () => void
+  onRunVoiceAgent: () => Promise<void>
   onVoiceConfigOpenChange: (open: boolean) => void
   onVoiceRecordingConfigChange: (patch: Partial<VoiceRecordingConfig>) => void
   onSelectVoiceCredentialFile: () => Promise<void>
@@ -29,8 +37,13 @@ export function VoiceRecordingsPanel({
   body,
   sourcePath,
   audioTranscriptRefreshKey,
+  agentRequestPending,
+  agentRequestBusy,
+  agentTaskProgress,
+  agentTaskStatusLive,
   liveVoicePeaks,
   onVoiceCapture,
+  onRunVoiceAgent,
   onVoiceConfigOpenChange,
   onVoiceRecordingConfigChange,
   onSelectVoiceCredentialFile,
@@ -38,6 +51,16 @@ export function VoiceRecordingsPanel({
 }: VoiceRecordingsPanelProps) {
   const recordingBusy = audioRecorder.status === 'requesting' || audioRecorder.status === 'stopping'
   const recordButtonLabel = voiceRecordButtonLabel(audioRecorder, hasLinkedAudio)
+  const [recognizedTranscriptAvailable, setRecognizedTranscriptAvailable] = useState(
+    Boolean(audioRecorder.finalTranscript.trim()),
+  )
+
+  useEffect(() => {
+    setRecognizedTranscriptAvailable(Boolean(audioRecorder.finalTranscript.trim()))
+  }, [audioRecorder.finalTranscript])
+  const handleTranscriptAvailabilityChange = useCallback((available: boolean) => {
+    setRecognizedTranscriptAvailable(available || Boolean(audioRecorder.finalTranscript.trim()))
+  }, [audioRecorder.finalTranscript])
 
   function handlePrimaryRecordAction() {
     if (audioRecorder.recording) {
@@ -91,6 +114,31 @@ export function VoiceRecordingsPanel({
       {audioRecorder.error && audioRecorder.diagnostic && <p className="voice-recorder-muted">{audioRecorder.diagnostic}</p>}
       {audioNoteMessage && <p className="voice-recorder-muted">{audioNoteMessage}</p>}
 
+      {hasLinkedAudio && (
+        <div className="voice-agent-action">
+          <div>
+            <strong>Launch from this voice note</strong>
+            <span>The recognized transcript becomes the task context.</span>
+          </div>
+          <button
+            className="btn-primary"
+            onClick={() => void onRunVoiceAgent()}
+            disabled={audioRecorder.recording || agentRequestBusy || !recognizedTranscriptAvailable}
+            type="button"
+          >
+            {agentRequestPending
+              ? 'Running…'
+              : agentRequestBusy
+                ? 'Agent busy'
+                : recognizedTranscriptAvailable
+                  ? 'Run agent on transcript'
+                  : 'No transcript yet'}
+          </button>
+        </div>
+      )}
+
+      <AgentTaskStatus progress={agentTaskProgress} live={agentTaskStatusLive} />
+
       {audioRecorder.recording ? (
         // While capturing, the seeker is the recording head: pinned while new
         // audio lands at the cursor and history slides away behind it. The
@@ -103,6 +151,7 @@ export function VoiceRecordingsPanel({
           refreshKey={audioTranscriptRefreshKey}
           showTitle={false}
           restAtSessionEnd={audioRecorder.status === 'stopped'}
+          onTranscriptAvailabilityChange={handleTranscriptAvailabilityChange}
         />
       )}
 
