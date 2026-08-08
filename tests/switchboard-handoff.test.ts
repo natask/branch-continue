@@ -231,6 +231,7 @@ describe('Branch Continue to Switchboard handoff', () => {
       'message-1',
       'raw-intent-1',
       2_500,
+      expect.any(AbortSignal),
     )
   })
 
@@ -295,12 +296,116 @@ describe('Branch Continue to Switchboard handoff', () => {
   })
 
   it('stops waiting for a task projection transport that never returns', async () => {
+    vi.useFakeTimers()
+    try {
+      const transport = vi.fn(() => new Promise<never>(() => {}))
+      const lookup = fetchSwitchboardTasks('message-1', {
+        transport,
+        timeoutMs: 5,
+      })
+      const rejection = lookup.catch((error: unknown) => error)
+      const transportSignal = transport.mock.calls[0]?.[4] as AbortSignal | undefined
+
+      await vi.advanceTimersByTimeAsync(4)
+      expect(transportSignal?.aborted).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+
+      await expect(rejection).resolves.toMatchObject({
+        name: 'Error',
+        message: 'Switchboard status lookup timed out.',
+      })
+      expect(transportSignal?.aborted).toBe(true)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not start a task projection transport for an already-aborted lookup', async () => {
+    const controller = new AbortController()
     const transport = vi.fn(() => new Promise<never>(() => {}))
+    controller.abort()
 
     await expect(fetchSwitchboardTasks('message-1', {
+      signal: controller.signal,
       transport,
-      timeoutMs: 5,
-    })).rejects.toThrow(/status lookup timed out/i)
+    })).rejects.toMatchObject({
+      name: 'AbortError',
+      message: 'Switchboard status lookup was cancelled.',
+    })
+    expect(transport).not.toHaveBeenCalled()
+  })
+
+  it('cancels an in-flight lookup even when its injected transport ignores the signal', async () => {
+    vi.useFakeTimers()
+    try {
+      const controller = new AbortController()
+      const transport = vi.fn(() => new Promise<never>(() => {}))
+      const lookup = fetchSwitchboardTasks('message-1', {
+        signal: controller.signal,
+        timeoutMs: 30_000,
+        transport,
+      })
+      const transportSignal = transport.mock.calls[0]?.[4] as AbortSignal | undefined
+
+      expect(transportSignal).toBeInstanceOf(AbortSignal)
+      expect(transportSignal).not.toBe(controller.signal)
+      expect(transportSignal?.aborted).toBe(false)
+      controller.abort()
+
+      await expect(lookup).rejects.toMatchObject({
+        name: 'AbortError',
+        message: 'Switchboard status lookup was cancelled.',
+      })
+      expect(transportSignal?.aborted).toBe(true)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('composes caller cancellation into the browser GET request signal', async () => {
+    const controller = new AbortController()
+    let markStarted: ((signal: AbortSignal) => void) | undefined
+    const started = new Promise<AbortSignal>((resolve) => {
+      markStarted = resolve
+    })
+    const fetchMock = vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+      const signal = init?.signal as AbortSignal
+      markStarted?.(signal)
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {
+          once: true,
+        })
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    try {
+      const lookup = fetchSwitchboardTasks('message-1', {
+        signal: controller.signal,
+        timeoutMs: 30_000,
+      })
+      const requestSignal = await started
+
+      expect(requestSignal).not.toBe(controller.signal)
+      expect(requestSignal.aborted).toBe(false)
+      controller.abort()
+
+      await expect(lookup).rejects.toMatchObject({
+        name: 'AbortError',
+        message: 'Switchboard status lookup was cancelled.',
+      })
+      expect(requestSignal.aborted).toBe(true)
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          searchParams: expect.objectContaining({}),
+        }),
+        expect.objectContaining({ method: 'GET', signal: requestSignal }),
+      )
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('stops waiting for a transport that never returns', async () => {

@@ -43,6 +43,8 @@ export interface SwitchboardTaskIntentRow {
 
 export interface SwitchboardTaskProjection {
   phase: SwitchboardTaskPhase
+  /** True only when the full, untruncated fan-out no longer has pollable work. */
+  pollingTerminal: boolean
   checkedAt: string
   taskState: string
   rawIntentState: string
@@ -142,6 +144,9 @@ const BLOCKED_STATES = new Set(['blocked', 'waiting_input', 'waiting-input', 'ne
 const RUNNING_STATES = new Set(['active', 'processing', 'running', 'starting', 'in_progress', 'in-progress'])
 const VERIFYING_STATES = new Set(['verifying', 'reviewing', 'awaiting_verification', 'awaiting-verification'])
 const QUEUED_STATES = new Set(['accepted', 'admitted', 'assigned', 'pending', 'queued', 'ready', 'recorded', 'routing'])
+const POLLING_TERMINAL_INTENT_STATES = new Set(['completed', 'cancelled'])
+const POLLING_TERMINAL_EXECUTION_STATES = new Set(['succeeded', 'failed', 'lost', 'cancelled'])
+const POLLING_TERMINAL_INBOX_STATES = new Set(['completed', 'failed'])
 
 const RECEIPT_TEXT_LIMIT = 512
 const ROW_ID_LIMIT = 256
@@ -249,7 +254,7 @@ export function applySwitchboardTaskResponse(
     }
     return {
       ...normalized,
-      projection: { ...base, phase: deriveSwitchboardTaskPhase(base) },
+      projection: { ...base, phase: deriveSwitchboardTaskPhase(base), pollingTerminal: false },
       refreshError: undefined,
       refreshErrorAt: undefined,
     }
@@ -273,9 +278,11 @@ export function applySwitchboardTaskResponse(
     totalIntentCount: allIntents.length,
     intents,
   }
+  const phase = deriveSwitchboardTaskPhase({ ...base, intents: allIntents })
   const projection: SwitchboardTaskProjection = {
     ...base,
-    phase: deriveSwitchboardTaskPhase({ ...base, intents: allIntents }),
+    phase,
+    pollingTerminal: isPollingTerminalFanOut(allIntents, base.inboxState),
   }
   return {
     ...normalized,
@@ -297,6 +304,27 @@ export function recordSwitchboardRefreshError(
     refreshError: clippedText(errorMessage(error), ERROR_LIMIT) || 'Switchboard progress refresh failed.',
     refreshErrorAt: clippedText(failedAt, TIMESTAMP_LIMIT) || new Date().toISOString(),
   }
+}
+
+/**
+ * Returns the persisted terminal decision. Legacy records only infer terminal
+ * success from their aggregate completed phase, never from displayed rows.
+ */
+export function isSwitchboardPollingTerminal(record: SwitchboardTaskRecord): boolean {
+  return normalizeRecord(record).projection?.pollingTerminal === true
+}
+
+/**
+ * Compares durable observation content while ignoring refresh-only timestamps.
+ * This lets automatic polling avoid rewriting a note when only checkedAt or
+ * refreshErrorAt advanced.
+ */
+export function hasMeaningfulSwitchboardTaskChange(
+  previous: SwitchboardTaskRecord | null | undefined,
+  next: SwitchboardTaskRecord | null | undefined,
+): boolean {
+  if (!previous || !next) return previous !== next
+  return JSON.stringify(meaningfulObservation(previous)) !== JSON.stringify(meaningfulObservation(next))
 }
 
 export function deriveSwitchboardTaskPhase(
@@ -498,7 +526,13 @@ function normalizeProjection(projection: SwitchboardTaskProjection): Switchboard
   const phase = totalIntentCount > intents.length && isSwitchboardTaskPhase(projection.phase)
     ? projection.phase
     : deriveSwitchboardTaskPhase(base)
-  return { ...base, phase }
+  // Preserve the full-fan-out decision written by current clients. Legacy
+  // records can only infer success-terminal status from their stored phase;
+  // failed or blocked legacy projections remain live for a fresh observation.
+  const pollingTerminal = typeof projection.pollingTerminal === 'boolean'
+    ? projection.pollingTerminal
+    : projection.phase === 'completed'
+  return { ...base, phase, pollingTerminal }
 }
 
 function isRecordShape(value: unknown): value is SwitchboardTaskRecord {
@@ -584,6 +618,39 @@ function isCompletedIntentRow(row: SwitchboardTaskIntentRow): boolean {
   return COMPLETE_STATES.has(intentState)
     && !RUNNING_STATES.has(executionState)
     && !VERIFYING_STATES.has(executionState)
+}
+
+function isPollingTerminalFanOut(rows: SwitchboardTaskIntentRow[], inboxState: string): boolean {
+  // A real task can fail before routing creates any intents. This is distinct
+  // from the tasks:[] response above, which remains explicitly nonterminal.
+  if (rows.length === 0) return isState(inboxState, POLLING_TERMINAL_INBOX_STATES)
+  return rows.every((row) => {
+    if (!isState(row.intentState, POLLING_TERMINAL_INTENT_STATES)) return false
+    const executionState = normalizedState(row.executionState)
+    return !executionState || POLLING_TERMINAL_EXECUTION_STATES.has(executionState)
+  })
+}
+
+function meaningfulObservation(record: SwitchboardTaskRecord): object {
+  const normalized = normalizeRecord(record)
+  const projection = normalized.projection
+  const projectionContent = projection
+    ? {
+        phase: projection.phase,
+        pollingTerminal: projection.pollingTerminal,
+        taskState: projection.taskState,
+        rawIntentState: projection.rawIntentState,
+        inboxState: projection.inboxState,
+        totalIntentCount: projection.totalIntentCount,
+        intents: projection.intents,
+      }
+    : undefined
+  return {
+    taskId: normalized.taskId,
+    receipt: normalized.receipt,
+    projection: projectionContent,
+    refreshError: normalized.refreshError,
+  }
 }
 
 function errorMessage(error: unknown): string {

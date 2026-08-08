@@ -7,6 +7,8 @@ import {
   createSwitchboardTaskFromAdmission,
   deriveSwitchboardTaskPhase,
   extractLatestSwitchboardTask,
+  hasMeaningfulSwitchboardTaskChange,
+  isSwitchboardPollingTerminal,
   recordSwitchboardRefreshError,
   stripSwitchboardTasks,
   updateSwitchboardTask,
@@ -69,6 +71,25 @@ function response(overrides: Record<string, unknown> = {}) {
   }
 }
 
+function completedIntent(index: number) {
+  return {
+    intentId: `completed-${index}`,
+    title: `Completed ${index}`,
+    progress: { state: 'completed' },
+    agent: { executionState: 'succeeded' },
+  }
+}
+
+function removePersistedPollingTerminal(body: string): string {
+  const encoded = body.match(/^Switchboard task: ([A-Za-z0-9_-]+)$/m)?.[1]
+  if (!encoded) throw new Error('Expected an encoded Switchboard task.')
+  const padded = encoded.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(encoded.length / 4) * 4, '=')
+  const parsed = JSON.parse(atob(padded)) as { projection?: { pollingTerminal?: boolean } }
+  if (parsed.projection) delete parsed.projection.pollingTerminal
+  const legacy = btoa(JSON.stringify(parsed)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+  return body.replace(encoded, legacy)
+}
+
 describe('durable Switchboard task records', () => {
   it('round-trips a marker-safe receipt without changing the executable body', () => {
     const original = 'Ship this exact body.  \n\nTrailing evidence stays.\n  '
@@ -92,6 +113,7 @@ describe('durable Switchboard task records', () => {
     expect(stripSwitchboardTasks(updated)).toBe(original)
     expect(extracted?.projection).toMatchObject({
       phase: 'running',
+      pollingTerminal: false,
       checkedAt: CHECKED_AT,
       taskState: 'assigned',
       rawIntentState: 'assigned',
@@ -201,6 +223,7 @@ describe('durable Switchboard task records', () => {
     expect(observed.refreshError).toBeUndefined()
     expect(observed.projection).toEqual({
       phase: 'queued',
+      pollingTerminal: false,
       checkedAt: CHECKED_AT,
       taskState: 'not-projected',
       rawIntentState: 'not-projected',
@@ -280,12 +303,7 @@ describe('Switchboard aggregate phase', () => {
   })
 
   it('derives aggregate status from intents beyond the persisted row bound', () => {
-    const completed = Array.from({ length: MAX_SWITCHBOARD_TASK_INTENTS }, (_, index) => ({
-      intentId: `completed-${index}`,
-      title: `Completed ${index}`,
-      progress: { state: 'completed' },
-      agent: { executionState: 'succeeded' },
-    }))
+    const completed = Array.from({ length: MAX_SWITCHBOARD_TASK_INTENTS }, (_, index) => completedIntent(index))
     const projected = applySwitchboardTaskResponse(taskRecord(), response({
       intents: [
         ...completed,
@@ -302,7 +320,10 @@ describe('Switchboard aggregate phase', () => {
     expect(projected.projection?.intents).toHaveLength(MAX_SWITCHBOARD_TASK_INTENTS)
     expect(projected.projection?.totalIntentCount).toBe(MAX_SWITCHBOARD_TASK_INTENTS + 1)
     expect(projected.projection?.phase).toBe('running')
+    expect(projected.projection?.pollingTerminal).toBe(false)
+    expect(isSwitchboardPollingTerminal(projected)).toBe(false)
     expect(roundTripped?.projection?.phase).toBe('running')
+    expect(roundTripped?.projection?.pollingTerminal).toBe(false)
     expect(roundTripped?.projection?.totalIntentCount).toBe(MAX_SWITCHBOARD_TASK_INTENTS + 1)
   })
 
@@ -314,5 +335,213 @@ describe('Switchboard aggregate phase', () => {
       intentId: '1', title: 'Blocked', intentState: 'active', blockedReason: 'Owner input',
     }])).toBe('blocked')
     expect(phase([], { taskState: 'assigned', rawIntentState: 'assigned', inboxState: 'processing' })).toBe('running')
+  })
+})
+
+describe('Switchboard polling observations', () => {
+  it('stops a projected empty task after inbox failure but not an absent task projection', () => {
+    const failedBeforeRouting = applySwitchboardTaskResponse(taskRecord(), response({
+      state: 'assigned',
+      inboxState: 'failed',
+      intents: [],
+    }), CHECKED_AT)
+    const notProjected = applySwitchboardTaskResponse(taskRecord(), { tasks: [] }, CHECKED_AT)
+
+    expect(failedBeforeRouting.projection).toMatchObject({
+      phase: 'failed',
+      pollingTerminal: true,
+      totalIntentCount: 0,
+    })
+    expect(isSwitchboardPollingTerminal(failedBeforeRouting)).toBe(true)
+    expect(notProjected.projection).toMatchObject({
+      phase: 'queued',
+      pollingTerminal: false,
+      taskState: 'not-projected',
+    })
+  })
+
+  it('settles and round-trips only after the full fan-out completes', () => {
+    const projected = applySwitchboardTaskResponse(taskRecord(), response({
+      intents: Array.from({ length: MAX_SWITCHBOARD_TASK_INTENTS + 1 }, (_, index) => completedIntent(index)),
+    }), CHECKED_AT)
+    const roundTripped = extractLatestSwitchboardTask(appendSwitchboardTask('', projected))
+
+    expect(projected.projection).toMatchObject({
+      phase: 'completed',
+      pollingTerminal: true,
+      totalIntentCount: MAX_SWITCHBOARD_TASK_INTENTS + 1,
+    })
+    expect(isSwitchboardPollingTerminal(projected)).toBe(true)
+    expect(roundTripped?.projection?.pollingTerminal).toBe(true)
+    expect(roundTripped && isSwitchboardPollingTerminal(roundTripped)).toBe(true)
+  })
+
+  it.each([
+    ['active', { progress: { state: 'active' }, agent: { executionState: 'running' } }],
+    ['blocked', { progress: { state: 'blocked', blockedReason: 'Owner input' } }],
+    ['verifying', { progress: { state: 'verifying' }, agent: { executionState: 'succeeded' } }],
+  ])('keeps a completed fan-out live when a %s sibling remains', (_state, sibling) => {
+    const projected = applySwitchboardTaskResponse(taskRecord(), response({
+      intents: [completedIntent(1), {
+        intentId: 'unfinished-sibling',
+        title: 'Unfinished sibling',
+        ...sibling,
+      }],
+    }), CHECKED_AT)
+
+    expect(projected.projection?.pollingTerminal).toBe(false)
+    expect(isSwitchboardPollingTerminal(projected)).toBe(false)
+  })
+
+  it('stops after every sibling reaches a completed or cancelled terminal state', () => {
+    const projected = applySwitchboardTaskResponse(taskRecord(), response({
+      intents: [completedIntent(1), {
+        intentId: 'cancelled-sibling',
+        title: 'Cancelled sibling',
+        progress: { state: 'cancelled' },
+        agent: { executionState: 'cancelled' },
+      }],
+    }), CHECKED_AT)
+
+    expect(projected.projection).toMatchObject({ phase: 'failed', pollingTerminal: true })
+    expect(isSwitchboardPollingTerminal(projected)).toBe(true)
+  })
+
+  it('keeps polling when a cancelled sibling still has active work beside it', () => {
+    const projected = applySwitchboardTaskResponse(taskRecord(), response({
+      intents: [{
+        intentId: 'cancelled-sibling',
+        title: 'Cancelled sibling',
+        progress: { state: 'cancelled' },
+        agent: { executionState: 'cancelled' },
+      }, {
+        intentId: 'active-sibling',
+        title: 'Active sibling',
+        progress: { state: 'active' },
+        agent: { executionState: 'running' },
+      }],
+    }), CHECKED_AT)
+
+    expect(projected.projection?.phase).toBe('failed')
+    expect(projected.projection?.pollingTerminal).toBe(false)
+  })
+
+  it.each([
+    ['completed', 'succeeded'],
+    ['completed', 'failed'],
+    ['completed', 'lost'],
+    ['completed', 'cancelled'],
+    ['cancelled', 'succeeded'],
+    ['cancelled', 'failed'],
+    ['cancelled', 'lost'],
+    ['cancelled', 'cancelled'],
+  ])('accepts contract terminal intent %s with terminal execution %s', (intentState, executionState) => {
+    const projected = applySwitchboardTaskResponse(taskRecord(), response({
+      intents: [{
+        intentId: `${intentState}-${executionState}`,
+        title: 'Terminal contract row',
+        progress: { state: intentState },
+        agent: { executionState },
+      }],
+    }), CHECKED_AT)
+
+    expect(projected.projection?.pollingTerminal).toBe(true)
+  })
+
+  it.each(['completed', 'cancelled'])('accepts terminal intent %s without an execution', (intentState) => {
+    const projected = applySwitchboardTaskResponse(taskRecord(), response({
+      intents: [{
+        intentId: `${intentState}-without-execution`,
+        title: 'Terminal manual intent',
+        progress: { state: intentState },
+      }],
+    }), CHECKED_AT)
+
+    expect(projected.projection?.pollingTerminal).toBe(true)
+  })
+
+  it.each(['draft', 'ready', 'active', 'blocked', 'verifying'])(
+    'keeps contract live intent %s nonterminal even after an execution succeeds',
+    (intentState) => {
+      const projected = applySwitchboardTaskResponse(taskRecord(), response({
+        intents: [{
+          intentId: `${intentState}-intent`,
+          title: 'Live contract row',
+          progress: { state: intentState },
+          agent: { executionState: 'succeeded' },
+        }],
+      }), CHECKED_AT)
+
+      expect(projected.projection?.pollingTerminal).toBe(false)
+    },
+  )
+
+  it('keeps a terminal intent live while its execution is live or unrecognized', () => {
+    for (const executionState of ['queued', 'starting', 'waiting_input', 'running', 'unknown']) {
+      const projected = applySwitchboardTaskResponse(taskRecord(), response({
+        intents: [{
+          ...completedIntent(1),
+          agent: { executionState },
+        }],
+      }), CHECKED_AT)
+      expect(projected.projection?.pollingTerminal, executionState).toBe(false)
+    }
+  })
+
+  it('infers terminal success for a truncated legacy completed projection without the flag', () => {
+    const projected = applySwitchboardTaskResponse(taskRecord(), response({
+      intents: Array.from({ length: MAX_SWITCHBOARD_TASK_INTENTS + 1 }, (_, index) => completedIntent(index)),
+    }), CHECKED_AT)
+    const legacyBody = removePersistedPollingTerminal(appendSwitchboardTask('', projected))
+    const legacy = extractLatestSwitchboardTask(legacyBody)
+
+    expect(legacy?.projection).toMatchObject({
+      phase: 'completed',
+      pollingTerminal: true,
+      totalIntentCount: MAX_SWITCHBOARD_TASK_INTENTS + 1,
+    })
+    expect(legacy && isSwitchboardPollingTerminal(legacy)).toBe(true)
+  })
+
+  it('keeps a legacy failed-phase projection without the terminal flag live', () => {
+    const projected = applySwitchboardTaskResponse(taskRecord(), response({
+      intents: [{
+        intentId: 'cancelled-intent',
+        title: 'Cancelled intent',
+        progress: { state: 'cancelled' },
+        agent: { executionState: 'cancelled' },
+      }],
+    }), CHECKED_AT)
+    const legacy = extractLatestSwitchboardTask(
+      removePersistedPollingTerminal(appendSwitchboardTask('', projected)),
+    )
+
+    expect(projected.projection).toMatchObject({ phase: 'failed', pollingTerminal: true })
+    expect(legacy?.projection).toMatchObject({ phase: 'failed', pollingTerminal: false })
+    expect(legacy && isSwitchboardPollingTerminal(legacy)).toBe(false)
+  })
+
+  it('ignores observation timestamps while detecting content and error changes', () => {
+    const first = applySwitchboardTaskResponse(taskRecord(), response(), CHECKED_AT)
+    const checkedAgain = applySwitchboardTaskResponse(first, response(), '2026-08-07T17:02:00.000Z')
+    const firstError = recordSwitchboardRefreshError(first, new Error('offline'), '2026-08-07T17:03:00.000Z')
+    const repeatedError = recordSwitchboardRefreshError(firstError, new Error('offline'), '2026-08-07T17:04:00.000Z')
+    const differentError = recordSwitchboardRefreshError(firstError, new Error('timeout'), '2026-08-07T17:04:00.000Z')
+    const changedContent = applySwitchboardTaskResponse(first, response({
+      intents: [{
+        intentId: 'intent-1',
+        title: 'Ship the durable projection',
+        progress: { state: 'active', summary: 'New observable progress.' },
+        agent: { executionState: 'running' },
+      }],
+    }), '2026-08-07T17:02:00.000Z')
+
+    expect(hasMeaningfulSwitchboardTaskChange(first, checkedAgain)).toBe(false)
+    expect(hasMeaningfulSwitchboardTaskChange(firstError, repeatedError)).toBe(false)
+    expect(hasMeaningfulSwitchboardTaskChange(first, firstError)).toBe(true)
+    expect(hasMeaningfulSwitchboardTaskChange(firstError, differentError)).toBe(true)
+    expect(hasMeaningfulSwitchboardTaskChange(first, changedContent)).toBe(true)
+    expect(hasMeaningfulSwitchboardTaskChange(taskRecord(), first)).toBe(true)
+    expect(hasMeaningfulSwitchboardTaskChange(null, first)).toBe(true)
   })
 })

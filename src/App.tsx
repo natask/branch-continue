@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createAgentRouter } from './core/agents/router'
 import { createLocalAgentRuntime } from './core/agents/local-runtime'
 import { useApp } from './ui/hooks/use-app'
@@ -57,6 +57,13 @@ import {
   type VoiceRecordingConfig,
 } from './ui/lib/voice-recording-config'
 import { shouldOpenCommandPalette } from './ui/lib/keyboard-shortcuts'
+import {
+  createSwitchboardObservationCoordinator,
+  isSameSwitchboardReceipt,
+  selectSwitchboardTaskObservation,
+  type SwitchboardObservationToken,
+} from './ui/lib/switchboard-observation'
+import { SwitchboardPollingSupersededError } from './ui/lib/switchboard-polling'
 import { createVoiceNoteCommandActions } from './ui/lib/voice-note-command-actions'
 import { shouldResumeStoredVoiceSession } from './ui/lib/voice-panel-state'
 import { returnAndContinueParentVoice } from './ui/lib/return-and-continue'
@@ -68,6 +75,7 @@ import {
   applySwitchboardTaskResponse,
   createSwitchboardTaskFromAdmission,
   extractLatestSwitchboardTask,
+  hasMeaningfulSwitchboardTaskChange,
   recordSwitchboardRefreshError,
   updateSwitchboardTask,
   type SwitchboardTaskRecord,
@@ -97,6 +105,13 @@ type SwipeUpNavTarget = 'previous' | 'next'
 type WheelNavDirection = 'natural' | 'reverse'
 type ScrollDirectionViewport = 'desktop' | 'mobile'
 type WheelNavDirectionByViewport = Partial<Record<ScrollDirectionViewport, WheelNavDirection>>
+
+interface SwitchboardAutoObservation {
+  sourcePath: string
+  noteUid: string
+  taskId: string
+  task: SwitchboardTaskRecord
+}
 
 export default function App() {
   if (isAgenticMarkdownRoute()) {
@@ -321,7 +336,15 @@ function LoadedSourceApp({
   const [agentRequestPending, setAgentRequestPending] = useState(false)
   const [agentTaskProgress, setAgentTaskProgress] = useState<AgentTaskProgress | null>(null)
   const agentRequestInFlightRef = useRef(false)
-  const switchboardObservationGenerationRef = useRef(new Map<string, number>())
+  const switchboardObservationCoordinator = useMemo(createSwitchboardObservationCoordinator, [])
+  const [switchboardExplicitObservationKeys, setSwitchboardExplicitObservationKeys] =
+    useState<ReadonlySet<string>>(() => new Set())
+  const [switchboardAutoObservation, setSwitchboardAutoObservation] =
+    useState<SwitchboardAutoObservation | null>(null)
+  const sourcePathRef = useRef(sourcePath)
+  useLayoutEffect(() => {
+    sourcePathRef.current = sourcePath
+  }, [sourcePath])
   const [audioTranscriptRefreshKey, setAudioTranscriptRefreshKey] = useState(0)
   const [voiceRecordingConfig, setVoiceRecordingConfig] = useState(resolveInitialVoiceRecordingConfig)
   const [voiceConfigOpen, setVoiceConfigOpen] = useState(false)
@@ -724,14 +747,22 @@ function LoadedSourceApp({
     }))
     return { body: updated.body, note: updated }
   }, [updateNoteByUid])
-  const beginSwitchboardObservation = useCallback((taskId: string): number => {
-    const generation = (switchboardObservationGenerationRef.current.get(taskId) ?? 0) + 1
-    switchboardObservationGenerationRef.current.set(taskId, generation)
-    return generation
-  }, [])
-  const isCurrentSwitchboardObservation = useCallback((taskId: string, generation: number): boolean => (
-    switchboardObservationGenerationRef.current.get(taskId) === generation
-  ), [])
+  const beginExplicitSwitchboardObservation = useCallback((
+    observationKey: string,
+  ): SwitchboardObservationToken | null => {
+    const token = switchboardObservationCoordinator.beginExplicit(observationKey)
+    if (!token) return null
+    setSwitchboardExplicitObservationKeys(
+      new Set(switchboardObservationCoordinator.explicitKeys()),
+    )
+    return token
+  }, [switchboardObservationCoordinator])
+  const finishExplicitSwitchboardObservation = useCallback((token: SwitchboardObservationToken): void => {
+    if (!switchboardObservationCoordinator.finishExplicit(token)) return
+    setSwitchboardExplicitObservationKeys(
+      new Set(switchboardObservationCoordinator.explicitKeys()),
+    )
+  }, [switchboardObservationCoordinator])
   const childrenByParentRef = useMemo(() => {
     const map = new Map<string, SourceNote[]>()
     for (const note of notes) {
@@ -749,10 +780,57 @@ function LoadedSourceApp({
     [currentEditorNoteId, orderedNotes, totalCount],
   )
   const currentContextNote = editorSession.editor?.source ?? activeNote
-  const currentSwitchboardTask = useMemo(() => {
+  const currentContextNoteRef = useRef(currentContextNote)
+  useLayoutEffect(() => {
+    currentContextNoteRef.current = currentContextNote
+  }, [currentContextNote])
+  useEffect(() => {
+    setSwitchboardAutoObservation((current) => (
+      current
+      && (
+        current.sourcePath !== sourcePath
+        || current.noteUid !== currentContextNote?.noteUid
+      )
+        ? null
+        : current
+    ))
+  }, [currentContextNote?.noteUid, sourcePath])
+  const persistedSwitchboardTask = useMemo(() => {
     const task = extractLatestSwitchboardTask(editorSession.editor?.body ?? currentContextNote?.body ?? '')
     return task?.receipt.sourceRecordId === currentContextNote?.noteUid ? task : null
   }, [currentContextNote?.body, currentContextNote?.noteUid, editorSession.editor?.body])
+  useEffect(() => {
+    setSwitchboardAutoObservation((current) => {
+      if (!current || current.taskId !== persistedSwitchboardTask?.taskId) return null
+      return selectSwitchboardTaskObservation(persistedSwitchboardTask, current.task) === persistedSwitchboardTask
+        ? null
+        : current
+    })
+  }, [persistedSwitchboardTask])
+  const currentSwitchboardTask = useMemo(() => {
+    const transientTask = (
+      switchboardAutoObservation
+      && persistedSwitchboardTask
+      && switchboardAutoObservation.sourcePath === sourcePath
+      && switchboardAutoObservation.noteUid === currentContextNote?.noteUid
+      && switchboardAutoObservation.taskId === persistedSwitchboardTask.taskId
+    ) ? switchboardAutoObservation.task : null
+    return selectSwitchboardTaskObservation(persistedSwitchboardTask, transientTask)
+  }, [
+    currentContextNote?.noteUid,
+    persistedSwitchboardTask,
+    sourcePath,
+    switchboardAutoObservation,
+  ])
+  const currentSwitchboardTaskRef = useRef(currentSwitchboardTask)
+  useLayoutEffect(() => {
+    currentSwitchboardTaskRef.current = currentSwitchboardTask
+  }, [currentSwitchboardTask])
+  const currentSwitchboardObservationKey = currentSwitchboardTask
+    ? switchboardObservationKey(sourcePath, currentSwitchboardTask.taskId)
+    : null
+  const switchboardAutoRefreshEnabled = currentSwitchboardObservationKey === null
+    || !switchboardExplicitObservationKeys.has(currentSwitchboardObservationKey)
   const unsavedBranchSource = editorSession.editor?.source ? null : editorSession.editor?.branchFrom ?? null
   const currentParentNote = useMemo(
     () =>
@@ -952,72 +1030,86 @@ function LoadedSourceApp({
       rawIntentId,
       sourceHash,
     }, undefined, handoffStartedAt)
-    let persistedReceipt: { body: string; note: SourceNote }
-    try {
-      persistedReceipt = await persistSwitchboardTask(
-        note,
-        note.body,
-        receiptTask,
-        'handed-off',
-      )
-    } catch (error) {
+    setSwitchboardAutoObservation((current) => (
+      current?.noteUid === receiptTask.receipt.sourceRecordId ? null : current
+    ))
+    const observationKey = switchboardObservationKey(sourcePath, receiptTask.taskId)
+    const observationToken = beginExplicitSwitchboardObservation(observationKey)
+    if (!observationToken) {
       throw new Error(
-        `Switchboard accepted ${result.admission.id}, but its receipt could not be saved: ${errorMessage(error)}`,
+        `Switchboard accepted ${result.admission.id}, but another explicit status update for this receipt is still in progress.`,
       )
     }
-
-    const observationGeneration = beginSwitchboardObservation(receiptTask.taskId)
-    let refreshedTask: SwitchboardTaskRecord
     try {
-      const response = await fetchSwitchboardTasks(receiptTask.receipt.messageId, {
-        baseUrl: import.meta.env.VITE_AGENT_SWITCHBOARD_URL,
-        rawIntentId: receiptTask.receipt.rawIntentId,
-      })
-      refreshedTask = applySwitchboardTaskResponse(receiptTask, response)
-    } catch (error) {
-      if (!isCurrentSwitchboardObservation(receiptTask.taskId, observationGeneration)) {
+      let persistedReceipt: { body: string; note: SourceNote }
+      try {
+        persistedReceipt = await persistSwitchboardTask(
+          note,
+          note.body,
+          receiptTask,
+          'handed-off',
+        )
+      } catch (error) {
+        throw new Error(
+          `Switchboard accepted ${result.admission.id}, but its receipt could not be saved: ${errorMessage(error)}`,
+        )
+      }
+
+      let refreshedTask: SwitchboardTaskRecord
+      try {
+        const response = await fetchSwitchboardTasks(receiptTask.receipt.messageId, {
+          baseUrl: import.meta.env.VITE_AGENT_SWITCHBOARD_URL,
+          rawIntentId: receiptTask.receipt.rawIntentId,
+        })
+        refreshedTask = applySwitchboardTaskResponse(receiptTask, response)
+      } catch (error) {
+        if (!switchboardObservationCoordinator.isCurrent(observationToken)) {
+          return `Handed off once (${result.admission.id}). A newer status refresh superseded this lookup.`
+        }
+        const failedTask = recordSwitchboardRefreshError(receiptTask, error)
+        try {
+          await persistSwitchboardTask(
+            persistedReceipt.note,
+            persistedReceipt.body,
+            failedTask,
+            'handed-off',
+          )
+        } catch (saveError) {
+          throw new Error(
+            `Switchboard accepted ${result.admission.id} and its receipt is saved, but status failed (${errorMessage(error)}) and that error could not be saved (${errorMessage(saveError)}).`,
+          )
+        }
+        return `Handed off once (${result.admission.id}). Status is not available yet: ${errorMessage(error)}`
+      }
+
+      if (!switchboardObservationCoordinator.isCurrent(observationToken)) {
         return `Handed off once (${result.admission.id}). A newer status refresh superseded this lookup.`
       }
-      const failedTask = recordSwitchboardRefreshError(receiptTask, error)
       try {
         await persistSwitchboardTask(
           persistedReceipt.note,
           persistedReceipt.body,
-          failedTask,
+          refreshedTask,
           'handed-off',
         )
-      } catch (saveError) {
+      } catch (error) {
         throw new Error(
-          `Switchboard accepted ${result.admission.id} and its receipt is saved, but status failed (${errorMessage(error)}) and that error could not be saved (${errorMessage(saveError)}).`,
+          `Switchboard accepted ${result.admission.id} and its receipt is saved, but its latest status could not be saved: ${errorMessage(error)}`,
         )
       }
-      return `Handed off once (${result.admission.id}). Status is not available yet: ${errorMessage(error)}`
+      return refreshedTask.projection?.taskState === 'not-projected'
+        ? `Handed off once (${result.admission.id}). Switchboard has not projected execution yet.`
+        : `Handed off once (${result.admission.id}). Switchboard status saved.`
+    } finally {
+      finishExplicitSwitchboardObservation(observationToken)
     }
-
-    if (!isCurrentSwitchboardObservation(receiptTask.taskId, observationGeneration)) {
-      return `Handed off once (${result.admission.id}). A newer status refresh superseded this lookup.`
-    }
-    try {
-      await persistSwitchboardTask(
-        persistedReceipt.note,
-        persistedReceipt.body,
-        refreshedTask,
-        'handed-off',
-      )
-    } catch (error) {
-      throw new Error(
-        `Switchboard accepted ${result.admission.id} and its receipt is saved, but its latest status could not be saved: ${errorMessage(error)}`,
-      )
-    }
-    return refreshedTask.projection?.taskState === 'not-projected'
-      ? `Handed off once (${result.admission.id}). Switchboard has not projected execution yet.`
-      : `Handed off once (${result.admission.id}). Switchboard status saved.`
   }, [
     audioRecorder.stopAndWait,
-    beginSwitchboardObservation,
-    isCurrentSwitchboardObservation,
+    beginExplicitSwitchboardObservation,
+    finishExplicitSwitchboardObservation,
     persistSwitchboardTask,
     sourcePath,
+    switchboardObservationCoordinator,
   ])
   const handleRefreshSwitchboard = useCallback(async () => {
     const clickedEditor = editorSessionRef.current.getCurrentEditor()
@@ -1034,76 +1126,154 @@ function LoadedSourceApp({
           body: clickedEditor.body,
         }
       : clickedSource
-    if (clickedEditor?.source) {
-      const saved = await editorSessionRef.current.flushAutoSave()
-      if (!saved) throw new Error('Could not save the latest branch edits before refreshing status.')
-      const savedEditor = editorSessionRef.current.getCurrentEditor()
-      if (savedEditor && savedEditor.sessionKey === clickedSessionKey && savedEditor.source) {
-        pinnedNote = {
-          ...savedEditor.source,
-          title: savedEditor.title,
-          timestamp: savedEditor.timestamp,
-          tags: [...savedEditor.tags],
-          body: savedEditor.body,
-        }
-      }
-    }
-    const pinnedTask = extractLatestSwitchboardTask(pinnedNote.body)
+    let pinnedTask = extractLatestSwitchboardTask(pinnedNote.body)
     if (!pinnedTask) throw new Error('This branch has no saved Switchboard receipt yet.')
     if (pinnedNote.noteUid !== pinnedTask.receipt.sourceRecordId) {
       throw new Error('This Switchboard receipt does not belong to the open branch.')
     }
 
-    const observationGeneration = beginSwitchboardObservation(pinnedTask.taskId)
-    let refreshedTask: SwitchboardTaskRecord
+    const pinnedTaskId = pinnedTask.taskId
+    const observationKey = switchboardObservationKey(sourcePath, pinnedTaskId)
+    const observationToken = beginExplicitSwitchboardObservation(observationKey)
+    if (!observationToken) return 'A Switchboard status refresh is already in progress.'
     try {
-      const response = await fetchSwitchboardTasks(pinnedTask.receipt.messageId, {
-        baseUrl: import.meta.env.VITE_AGENT_SWITCHBOARD_URL,
-        rawIntentId: pinnedTask.receipt.rawIntentId,
-      })
-      refreshedTask = applySwitchboardTaskResponse(pinnedTask, response)
-    } catch (error) {
-      if (!isCurrentSwitchboardObservation(pinnedTask.taskId, observationGeneration)) {
+      if (clickedEditor?.source) {
+        const saved = await editorSessionRef.current.flushAutoSave()
+        if (!saved) throw new Error('Could not save the latest branch edits before refreshing status.')
+        const savedEditor = editorSessionRef.current.getCurrentEditor()
+        if (savedEditor && savedEditor.sessionKey === clickedSessionKey && savedEditor.source) {
+          pinnedNote = {
+            ...savedEditor.source,
+            title: savedEditor.title,
+            timestamp: savedEditor.timestamp,
+            tags: [...savedEditor.tags],
+            body: savedEditor.body,
+          }
+        }
+        const savedTask = extractLatestSwitchboardTask(pinnedNote.body)
+        if (!savedTask || !isSameSwitchboardReceipt(pinnedTask, savedTask)) {
+          throw new Error('The Switchboard receipt changed while saving. Refresh the current branch again.')
+        }
+        pinnedTask = savedTask
+      }
+      setSwitchboardAutoObservation((current) => (
+        current?.taskId === pinnedTaskId ? null : current
+      ))
+      let refreshedTask: SwitchboardTaskRecord
+      try {
+        const response = await fetchSwitchboardTasks(pinnedTask.receipt.messageId, {
+          baseUrl: import.meta.env.VITE_AGENT_SWITCHBOARD_URL,
+          rawIntentId: pinnedTask.receipt.rawIntentId,
+        })
+        refreshedTask = applySwitchboardTaskResponse(pinnedTask, response)
+      } catch (error) {
+        if (!switchboardObservationCoordinator.isCurrent(observationToken)) {
+          return 'A newer Switchboard status refresh superseded this lookup.'
+        }
+        const failedTask = recordSwitchboardRefreshError(pinnedTask, error)
+        try {
+          await persistSwitchboardTask(
+            pinnedNote,
+            pinnedNote.body,
+            failedTask,
+            undefined,
+          )
+        } catch (saveError) {
+          throw new Error(
+            `Switchboard status failed (${errorMessage(error)}) and the error could not be saved (${errorMessage(saveError)}).`,
+          )
+        }
+        return `Switchboard status is not available yet: ${errorMessage(error)}`
+      }
+
+      if (!switchboardObservationCoordinator.isCurrent(observationToken)) {
         return 'A newer Switchboard status refresh superseded this lookup.'
       }
-      const failedTask = recordSwitchboardRefreshError(pinnedTask, error)
       try {
         await persistSwitchboardTask(
           pinnedNote,
           pinnedNote.body,
-          failedTask,
+          refreshedTask,
           undefined,
         )
-      } catch (saveError) {
-        throw new Error(
-          `Switchboard status failed (${errorMessage(error)}) and the error could not be saved (${errorMessage(saveError)}).`,
-        )
+      } catch (error) {
+        throw new Error(`Switchboard status was received but could not be saved: ${errorMessage(error)}`)
       }
-      return `Switchboard status is not available yet: ${errorMessage(error)}`
+      return refreshedTask.projection?.taskState === 'not-projected'
+        ? 'Switchboard has not projected execution yet.'
+        : 'Switchboard status refreshed.'
+    } finally {
+      finishExplicitSwitchboardObservation(observationToken)
     }
-
-    if (!isCurrentSwitchboardObservation(pinnedTask.taskId, observationGeneration)) {
-      return 'A newer Switchboard status refresh superseded this lookup.'
-    }
-    try {
-      await persistSwitchboardTask(
-        pinnedNote,
-        pinnedNote.body,
-        refreshedTask,
-        undefined,
-      )
-    } catch (error) {
-      throw new Error(`Switchboard status was received but could not be saved: ${errorMessage(error)}`)
-    }
-    return refreshedTask.projection?.taskState === 'not-projected'
-      ? 'Switchboard has not projected execution yet.'
-      : 'Switchboard status refreshed.'
   }, [
-    beginSwitchboardObservation,
+    beginExplicitSwitchboardObservation,
     currentContextNote,
-    isCurrentSwitchboardObservation,
+    finishExplicitSwitchboardObservation,
     persistSwitchboardTask,
+    sourcePath,
+    switchboardObservationCoordinator,
   ])
+  const handleAutoRefreshSwitchboard = useCallback(async (
+    task: SwitchboardTaskRecord,
+    signal: AbortSignal,
+  ): Promise<{ task: SwitchboardTaskRecord; changed: boolean }> => {
+    const attemptSourcePath = sourcePath
+    const noteUid = task.receipt.sourceRecordId
+    const observationKey = switchboardObservationKey(attemptSourcePath, task.taskId)
+    const ownsActiveSurface = () => (
+      !signal.aborted
+      && sourcePathRef.current === attemptSourcePath
+      && currentContextNoteRef.current?.noteUid === noteUid
+      && currentSwitchboardTaskRef.current?.taskId === task.taskId
+      && !switchboardObservationCoordinator.hasExplicit(observationKey)
+    )
+    if (!ownsActiveSurface()) throw new SwitchboardPollingSupersededError()
+
+    const observationToken = switchboardObservationCoordinator.beginAutomatic(observationKey)
+    if (!observationToken) throw new SwitchboardPollingSupersededError()
+    const isCurrent = () => (
+      ownsActiveSurface()
+      && switchboardObservationCoordinator.isCurrent(observationToken)
+    )
+
+    try {
+      const response = await fetchSwitchboardTasks(task.receipt.messageId, {
+        baseUrl: import.meta.env.VITE_AGENT_SWITCHBOARD_URL,
+        rawIntentId: task.receipt.rawIntentId,
+        signal,
+      })
+      if (!isCurrent()) throw new SwitchboardPollingSupersededError()
+
+      const refreshedTask = applySwitchboardTaskResponse(task, response)
+      if (!isCurrent()) throw new SwitchboardPollingSupersededError()
+
+      const changed = hasMeaningfulSwitchboardTaskChange(task, refreshedTask)
+      setSwitchboardAutoObservation((current) => {
+        if (!isCurrent()) return current
+        return {
+          sourcePath: attemptSourcePath,
+          noteUid,
+          taskId: task.taskId,
+          task: refreshedTask,
+        }
+      })
+      return { task: refreshedTask, changed }
+    } catch (error) {
+      if (!isCurrent()) throw new SwitchboardPollingSupersededError()
+
+      const failedTask = recordSwitchboardRefreshError(task, error)
+      setSwitchboardAutoObservation((current) => {
+        if (!isCurrent()) return current
+        return {
+          sourcePath: attemptSourcePath,
+          noteUid,
+          taskId: task.taskId,
+          task: failedTask,
+        }
+      })
+      throw error
+    }
+  }, [sourcePath, switchboardObservationCoordinator])
   const handleOpenRelativeEditorNote = useCallback(
     (direction: -1 | 1, focusBody = true) => {
       if (currentEditorNoteIndex < 0) return
@@ -1959,6 +2129,8 @@ function LoadedSourceApp({
           <BranchControls
             key={currentContextNote?.noteUid ?? currentContextNote?.id ?? 'unsaved-branch'}
             branchId={currentContextNote?.id ?? 'unsaved-branch'}
+            branchUid={currentContextNote?.noteUid ?? ''}
+            sourcePath={sourcePath}
             parentLabel={describeNote(currentParentNote)}
             disposition={currentContextNote?.disposition ?? null}
             recording={audioRecorder.recording}
@@ -1968,7 +2140,9 @@ function LoadedSourceApp({
             onSetDisposition={saveBranchDisposition}
             onSendToSwitchboard={handleSwitchboardHandoff}
             switchboardTask={currentSwitchboardTask}
+            autoRefreshEnabled={switchboardAutoRefreshEnabled}
             onRefreshSwitchboard={handleRefreshSwitchboard}
+            onAutoRefreshSwitchboard={handleAutoRefreshSwitchboard}
           />
         )}
         {currentChildNotes.length > 0 && (
@@ -2329,6 +2503,10 @@ function ErrorRecoveryScreen({
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function switchboardObservationKey(sourcePath: string, taskId: string): string {
+  return `${sourcePath}\u001f${taskId}`
 }
 
 function chirpConfigReady(config: VoiceRecordingConfig): boolean {

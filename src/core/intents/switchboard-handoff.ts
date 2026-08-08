@@ -78,11 +78,13 @@ export interface FetchSwitchboardTasksOptions {
   baseUrl?: string
   rawIntentId?: string
   timeoutMs?: number
+  signal?: AbortSignal
   transport?: (
     endpoint: string,
     messageId: string,
     rawIntentId: string | undefined,
     timeoutMs: number,
+    signal: AbortSignal,
   ) => Promise<SwitchboardTasksResponse>
 }
 
@@ -165,10 +167,16 @@ export async function fetchSwitchboardTasks(
   const rawIntentId = options.rawIntentId?.trim() || undefined
   const endpoint = switchboardTasksEndpoint(options.baseUrl)
   const timeoutMs = normalizeTimeoutMs(options.timeoutMs ?? DEFAULT_SWITCHBOARD_STATUS_TIMEOUT_MS)
-  const response = await withTimeout(
-    (options.transport ?? getSwitchboardTasks)(endpoint, normalizedMessageId, rawIntentId, timeoutMs),
+  const response = await withSwitchboardStatusDeadline(
+    (signal) => (options.transport ?? getSwitchboardTasks)(
+      endpoint,
+      normalizedMessageId,
+      rawIntentId,
+      timeoutMs,
+      signal,
+    ),
     timeoutMs,
-    'Switchboard status lookup timed out.',
+    options.signal,
   )
   validateSwitchboardTasksResponse(response, normalizedMessageId, rawIntentId)
   return response
@@ -292,8 +300,10 @@ async function getSwitchboardTasks(
   messageId: string,
   rawIntentId: string | undefined,
   timeoutMs: number,
+  signal: AbortSignal,
 ): Promise<SwitchboardTasksResponse> {
   const { isTauri, invoke } = await import('@tauri-apps/api/core')
+  throwIfSwitchboardStatusAborted(signal)
   if (isTauri()) {
     return invoke<SwitchboardTasksResponse>('fetch_switchboard_tasks', {
       endpoint,
@@ -306,20 +316,16 @@ async function getSwitchboardTasks(
   const url = new URL(endpoint)
   url.searchParams.set('message_id', messageId)
   url.searchParams.set('limit', '1')
-  const controller = new AbortController()
-  const timeout = globalThis.setTimeout(() => controller.abort(), timeoutMs)
   let response: Response
   try {
     response = await fetch(url, {
       method: 'GET',
       headers: { accept: 'application/json' },
-      signal: controller.signal,
+      signal,
     })
   } catch (error) {
-    if (controller.signal.aborted) throw new Error('Switchboard status lookup timed out.')
+    if (signal.aborted) throw switchboardStatusAbortError()
     throw error
-  } finally {
-    globalThis.clearTimeout(timeout)
   }
   const value = await response.json().catch(() => null) as SwitchboardTasksResponse | { error?: string } | null
   if (!response.ok) {
@@ -359,4 +365,51 @@ async function withTimeout<T>(
   } finally {
     if (timeout !== undefined) globalThis.clearTimeout(timeout)
   }
+}
+
+async function withSwitchboardStatusDeadline<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  externalSignal?: AbortSignal,
+): Promise<T> {
+  throwIfSwitchboardStatusAborted(externalSignal)
+
+  const controller = new AbortController()
+  let abortCause: 'external' | 'timeout' | undefined
+  const abortFromExternal = () => {
+    if (controller.signal.aborted) return
+    abortCause = 'external'
+    controller.abort()
+  }
+  const abortFromTimeout = () => {
+    if (controller.signal.aborted) return
+    abortCause = 'timeout'
+    controller.abort()
+  }
+  const cancelled = new Promise<never>((_, reject) => {
+    controller.signal.addEventListener('abort', () => {
+      reject(abortCause === 'timeout'
+        ? new Error('Switchboard status lookup timed out.')
+        : switchboardStatusAbortError())
+    }, { once: true })
+  })
+
+  externalSignal?.addEventListener('abort', abortFromExternal, { once: true })
+  const timeout = globalThis.setTimeout(abortFromTimeout, timeoutMs)
+  try {
+    return await Promise.race([operation(controller.signal), cancelled])
+  } finally {
+    globalThis.clearTimeout(timeout)
+    externalSignal?.removeEventListener('abort', abortFromExternal)
+  }
+}
+
+function throwIfSwitchboardStatusAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw switchboardStatusAbortError()
+}
+
+function switchboardStatusAbortError(): Error {
+  const error = new Error('Switchboard status lookup was cancelled.')
+  error.name = 'AbortError'
+  return error
 }

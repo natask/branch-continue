@@ -1,10 +1,12 @@
 import { useId } from 'react'
 import type { SwitchboardTaskRecord } from '../../core/intents/switchboard-task'
+import type { SwitchboardAutoRefreshState } from '../hooks/use-switchboard-auto-refresh'
 
 interface SwitchboardTaskStatusProps {
   task: SwitchboardTaskRecord
   refreshing: boolean
   refreshDisabled?: boolean
+  autoRefreshState: SwitchboardAutoRefreshState
   onRefresh: () => void
 }
 
@@ -12,6 +14,7 @@ export function SwitchboardTaskStatus({
   task,
   refreshing,
   refreshDisabled = false,
+  autoRefreshState,
   onRefresh,
 }: SwitchboardTaskStatusProps) {
   const headingId = useId()
@@ -24,21 +27,28 @@ export function SwitchboardTaskStatus({
     <section
       className={`switchboard-task switchboard-task--${projection?.phase ?? 'admitted'}`}
       aria-labelledby={headingId}
-      aria-busy={refreshing}
+      aria-busy={refreshing || autoRefreshState === 'checking'}
     >
       <header className="switchboard-task-header">
         <div>
           <span className="switchboard-task-eyebrow">Switchboard task</span>
           <h3 id={headingId}>{projection?.phase ?? 'admitted'}</h3>
         </div>
-        <button
-          className="branch-control switchboard-task-refresh"
-          onClick={onRefresh}
-          disabled={refreshDisabled || refreshing}
-          type="button"
-        >
-          {refreshing ? 'Refreshing status…' : 'Refresh status'}
-        </button>
+        <div className="switchboard-task-actions">
+          <span
+            className={`switchboard-auto-refresh switchboard-auto-refresh--${autoRefreshState}`}
+          >
+            {autoRefreshLabel(autoRefreshState)}
+          </span>
+          <button
+            className="branch-control switchboard-task-refresh"
+            onClick={onRefresh}
+            disabled={refreshDisabled || refreshing}
+            type="button"
+          >
+            {refreshing ? 'Refreshing status…' : 'Refresh status'}
+          </button>
+        </div>
       </header>
 
       <dl className="switchboard-task-identity">
@@ -130,13 +140,23 @@ export function SwitchboardTaskStatus({
                   {intent.executionResult && (
                     <div className="switchboard-intent-output switchboard-intent-output--result">
                       <strong>Result</strong>
-                      <pre>{intent.executionResult}</pre>
+                      <pre
+                        aria-label={`Execution result for ${intent.title}`}
+                        tabIndex={0}
+                      >
+                        {intent.executionResult}
+                      </pre>
                     </div>
                   )}
                   {intent.executionError && (
                     <div className="switchboard-intent-output switchboard-intent-output--error">
                       <strong>Execution error</strong>
-                      <pre>{intent.executionError}</pre>
+                      <pre
+                        aria-label={`Execution error for ${intent.title}`}
+                        tabIndex={0}
+                      >
+                        {intent.executionError}
+                      </pre>
                     </div>
                   )}
                 </li>
@@ -148,7 +168,7 @@ export function SwitchboardTaskStatus({
         </div>
       ) : (
         <p className="switchboard-task-empty">
-          The handoff is admitted. Refresh status to inspect routing and execution progress.
+          Waiting for Switchboard to project execution.
         </p>
       )}
 
@@ -166,6 +186,16 @@ function shortHash(hash: string): string {
   const prefix = digest.slice(0, 12)
   const suffix = digest.length > prefix.length ? '…' : ''
   return hash.includes(':') ? `${algorithm}:${prefix}${suffix}` : `${prefix}${suffix}`
+}
+
+function autoRefreshLabel(state: SwitchboardAutoRefreshState): string {
+  switch (state) {
+    case 'active': return 'Auto updates on'
+    case 'checking': return 'Checking automatically…'
+    case 'backoff': return 'Next auto check delayed'
+    case 'paused': return 'Auto updates paused'
+    case 'terminal': return 'Auto updates stopped'
+  }
 }
 
 function formatCheckedAt(value: string): string {
