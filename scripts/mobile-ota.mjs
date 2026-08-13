@@ -158,6 +158,7 @@ async function shell(rawArgs) {
   const { options, passthrough } = parseShellArgs(rawArgs.slice(1))
   const url = options.url ?? process.env.MOBILE_OTA_URL ?? defaultMobileOtaUrl
   const remoteOnly = options['remote-only'] === '1'
+  const configOnly = options['config-only'] === '1'
 
   const normalizedUrl = normalizeDirectoryUrl(url, {
     allowHttp:
@@ -168,7 +169,7 @@ async function shell(rawArgs) {
   const remotePatterns = remoteCapabilityPatterns(normalizedUrl)
   const configPath = path.join(outputRoot, 'generated', `tauri.mobile-ota.${platform}.json`)
 
-  if (!remoteOnly) {
+  if (!remoteOnly && !configOnly) {
     run('pnpm', ['build'], frontendBuildEnv({
       BRANCH_CONTINUE_MOBILE_OTA: '1',
       VITE_BRANCH_CONTINUE_MOBILE_OTA_URL: normalizedUrl,
@@ -200,6 +201,9 @@ async function shell(rawArgs) {
               'allow-android-save-audio-capture',
               'allow-android-read-audio-capture',
               'allow-transcribe-with-chirp',
+              'allow-microphone-permission-state',
+              'allow-submit-switchboard-intent',
+              'allow-fetch-switchboard-tasks',
               'fs:default',
               'dialog:default',
               {
@@ -236,6 +240,8 @@ async function shell(rawArgs) {
   console.log(`mobile-ota: OTA URL ${normalizedUrl}`)
   console.log(`mobile-ota: remote capability ${remotePatterns.join(', ')}`)
   console.log(`mobile-ota: generated config ${path.relative(repoRoot, configPath)}`)
+
+  if (configOnly) return
 
   run('pnpm', ['tauri', platform, 'build', '--config', configPath, ...passthrough], process.env)
 }
@@ -342,6 +348,11 @@ function parseShellArgs(rawArgs) {
 
     if (arg === '--remote-only') {
       options['remote-only'] = '1'
+      continue
+    }
+
+    if (arg === '--config-only') {
+      options['config-only'] = '1'
       continue
     }
 
@@ -649,5 +660,6 @@ Environment:
 
 Shell options:
   --remote-only            Load the OTA URL directly instead of embedding the current app as an offline fallback.
+  --config-only            Generate and validate the shell config without building the native app.
 `)
 }

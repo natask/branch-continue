@@ -28,17 +28,22 @@ The command builds Vite with relative asset URLs and writes:
 Upload the `current/` directory to the URL used by the mobile shell. The default Branch Continue mobile shell OTA URL is:
 
 ```text
-https://branch-continue.main.lan/mobile/
+http://10.147.17.10/mobile/
 ```
 
-Branch Continue uses the project-specific `branch-continue.main.lan` host. Caddy serves `/mobile/` from the release symlink at `/home/reclaim-ethiopia/agent-stations/apps/branch-continue/mobile-ota/current`.
+The installed phone shell uses this private ZeroTier address because Android does
+not trust the private `*.main.lan` certificate by default. Caddy serves
+`/mobile/` from the release symlink at
+`/home/reclaim-ethiopia/agent-stations/apps/branch-continue/mobile-ota/current`.
+The project-specific HTTPS alias remains
+`https://branch-continue.main.lan/mobile/` for clients that trust its certificate.
 
 Useful overrides:
 
 ```sh
 MOBILE_OTA_CHANNEL=staging pnpm mobile:ota:bundle
 MOBILE_OTA_RUNTIME=tauri-mobile-v2 pnpm mobile:ota:bundle
-MOBILE_OTA_PUBLIC_URL=https://branch-continue.main.lan/mobile/ pnpm mobile:ota:bundle
+MOBILE_OTA_PUBLIC_URL=http://10.147.17.10/mobile/ pnpm mobile:ota:bundle
 ```
 
 ## Deploy an OTA update
@@ -71,15 +76,26 @@ For an Android APK build:
 pnpm mobile:shell:android:apk
 ```
 
+Generate the native-shell configuration for inspection or CI checks without
+requiring an Android or iOS SDK, signing identity, or native build:
+
+```sh
+pnpm mobile:shell:android:config
+pnpm mobile:shell:ios:config
+```
+
 Use `MOBILE_OTA_URL=...` to target another host or channel.
 
 The script generates a temporary Tauri config under `.mobile-ota/generated/` that:
 
 - sets `build.frontendDist` to `MOBILE_OTA_URL`
-- skips the frontend build for shell builds
+- embeds the current frontend as an offline fallback by default
 - grants Tauri permissions only to that exact remote URL path prefix
+- grants the hosted bundle the same source-file, voice, and Switchboard task
+  permissions used by the embedded frontend
 
-Local HTTP is blocked by default. For device testing against a local server only:
+HTTP is accepted automatically only for loopback and private-network IP
+addresses. For device testing against another local HTTP hostname:
 
 ```sh
 MOBILE_OTA_ALLOW_HTTP=1 MOBILE_OTA_URL=http://192.168.1.10:8080/ pnpm mobile:shell:android:apk
@@ -89,4 +105,8 @@ MOBILE_OTA_ALLOW_HTTP=1 MOBILE_OTA_URL=http://192.168.1.10:8080/ pnpm mobile:she
 
 Use a new `MOBILE_OTA_RUNTIME` when an OTA bundle requires a native capability older shells do not have. Keep old runtime paths online until all installed shells are upgraded or intentionally retired.
 
-The remote origin receives the same Tauri file/dialog permissions as the embedded app, so treat the OTA host as release infrastructure: HTTPS only, tightly scoped path, private deploy credentials, immutable release folders, and a simple rollback by replacing `current/` with a known-good release.
+The remote origin receives the same Tauri file/dialog permissions as the embedded
+app, so treat the OTA host as release infrastructure: use HTTPS for public hosts,
+limit private HTTP to the trusted overlay network, tightly scope the path, keep
+deploy credentials private, preserve immutable release folders, and roll back by
+replacing `current/` with a known-good release.
