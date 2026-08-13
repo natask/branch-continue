@@ -11,6 +11,7 @@ SYSTEM_APP="${BRANCH_CONTINUE_SYSTEM_APP:-/Applications/$APP_NAME}"
 OSASCRIPT_COMMAND="${BRANCH_CONTINUE_OSASCRIPT_COMMAND:-/usr/bin/osascript}"
 OPEN_COMMAND="${BRANCH_CONTINUE_OPEN_COMMAND:-/usr/bin/open}"
 APP_STATE_TIMEOUT_SECONDS="${BRANCH_CONTINUE_APP_STATE_TIMEOUT_SECONDS:-15}"
+APP_STABILITY_SECONDS="${BRANCH_CONTINUE_APP_STABILITY_SECONDS:-3}"
 
 app_is_running() {
   [[ "$($OSASCRIPT_COMMAND -e "application id \"$BUNDLE_ID\" is running" 2>/dev/null || true)" == "true" ]]
@@ -69,6 +70,11 @@ fi
 "$OPEN_COMMAND" "$USER_APP"
 if ! wait_for_app_state running; then
   echo "The installed app did not launch within ${APP_STATE_TIMEOUT_SECONDS}s." >&2
+  exit 1
+fi
+sleep "$APP_STABILITY_SECONDS"
+if ! app_is_running; then
+  echo "The installed app exited during its ${APP_STABILITY_SECONDS}s launch smoke." >&2
   exit 1
 fi
 echo "Launched app:"

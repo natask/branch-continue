@@ -18,8 +18,10 @@ describe('local-only desktop deploy scripts', () => {
 
   it('keeps deployment update startup disabled', () => {
     const main = readFileSync(path.join(repoRoot, 'src/main.tsx'), 'utf8')
+    const nativeApp = readFileSync(path.join(repoRoot, 'src-tauri/src/lib.rs'), 'utf8')
 
     expect(main).toContain('const deploymentUpdatesEnabled = false')
     expect(main).toMatch(/if \(deploymentUpdatesEnabled\) \{\s*startDesktopUpdater\(\)\s*startMobileOtaRedirect\(\)/)
+    expect(nativeApp).toContain('option_env!("BRANCH_CONTINUE_ENABLE_DESKTOP_UPDATER") == Some("1")')
   })
 })

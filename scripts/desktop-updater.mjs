@@ -174,6 +174,7 @@ async function stageFromOptions(options) {
 
 async function ensureSigningKey(options) {
   const env = { ...process.env }
+  env.BRANCH_CONTINUE_ENABLE_DESKTOP_UPDATER = '1'
   const explicitPrivateKey = env.TAURI_SIGNING_PRIVATE_KEY
   const explicitPrivateKeyPath = options['key-path'] ?? env.TAURI_SIGNING_PRIVATE_KEY_PATH
   const publicKeyFromEnv = options['public-key'] ?? env.DESKTOP_UPDATER_PUBLIC_KEY

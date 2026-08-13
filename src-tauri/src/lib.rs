@@ -25,7 +25,11 @@ pub fn run() {
         ]);
 
     #[cfg(desktop)]
-    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    let builder = if option_env!("BRANCH_CONTINUE_ENABLE_DESKTOP_UPDATER") == Some("1") {
+        builder.plugin(tauri_plugin_updater::Builder::new().build())
+    } else {
+        builder
+    };
 
     builder
         .setup(|app| {
