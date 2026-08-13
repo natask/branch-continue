@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "pnpm --filter @natnaelkahssay/card-stack-3d build && vite",
     "build": "pnpm --filter @natnaelkahssay/card-stack-3d build && tsc -b && vite build",
-    "deploy": "pnpm deploy:all",
+    "deploy": "pnpm app:deploy",
     "deploy:all": "pnpm app:deploy && pnpm desktop:ota:deploy && pnpm mobile:ota:deploy",
     "app:package": "pnpm tauri:build",
     "app:deploy": "pnpm app:package && ./scripts/deploy-single-app.sh",
