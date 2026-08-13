@@ -985,6 +985,27 @@ pre {
   color: var(--accent);
 }
 
+.lineage-pill-continue {
+  background: var(--accent);
+  color: #17120a;
+  font-weight: 700;
+}
+
+.lineage-pill-handoff {
+  background: rgba(142, 197, 195, 0.18);
+  color: var(--text);
+}
+
+.lineage-message {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+}
+
+.lineage-pill:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
 .tm-layout {
   flex: 1;
   min-height: 0;
