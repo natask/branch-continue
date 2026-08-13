@@ -48,16 +48,20 @@ AGENT_RUNTIME_PORT=8770 pnpm agent:runtime
 Default command:
 
 ```bash
-codex exec --sandbox danger-full-access --ask-for-approval never -
+codex exec --dangerously-bypass-approvals-and-sandbox --json -
 ```
 
 Override command or args:
 
 ```bash
 AGENT_CODEX_COMMAND=codex \
-AGENT_CODEX_ARGS='exec --sandbox danger-full-access --ask-for-approval never -' \
+AGENT_CODEX_ARGS='exec --dangerously-bypass-approvals-and-sandbox --json -' \
 pnpm agent:runtime
 ```
+
+The runtime maps each note's stable `context.threadId` to the Codex session ID
+returned by the first run. Later requests from that note use `codex exec resume`,
+so one note remains one real Codex conversation for the lifetime of the runtime.
 
 The working directory defaults to the current repo. Override it:
 

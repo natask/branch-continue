@@ -6,11 +6,12 @@ const HOST = process.env.AGENT_RUNTIME_HOST || '127.0.0.1'
 const CODEX_COMMAND = process.env.AGENT_CODEX_COMMAND || 'codex'
 const CODEX_ARGS = parseCommandArgs(
   process.env.AGENT_CODEX_ARGS ||
-    'exec --sandbox danger-full-access --ask-for-approval never -',
+    'exec --dangerously-bypass-approvals-and-sandbox --json -',
 )
 const DEFAULT_TIMEOUT_MS = Number(process.env.AGENT_RUNTIME_TIMEOUT_MS || 1000 * 60 * 12)
 
 const runs = new Map()
+const chatSessions = new Map()
 
 const server = createServer(async (request, response) => {
   response.setHeader('Access-Control-Allow-Origin', process.env.AGENT_RUNTIME_CORS_ORIGIN || '*')
@@ -30,6 +31,7 @@ const server = createServer(async (request, response) => {
       codexCommand: CODEX_COMMAND,
       codexArgs: CODEX_ARGS,
       runCount: runs.size,
+      chatSessionCount: chatSessions.size,
     })
     return
   }
@@ -76,7 +78,7 @@ const server = createServer(async (request, response) => {
           status: output.exitCode === 0 ? 'completed' : 'failed',
           response: output.stdout || output.stderr || 'Codex completed without output.',
           error: output.exitCode === 0 ? undefined : output.stderr || `Codex exited with ${output.exitCode}`,
-          externalId: input.request.id,
+          externalId: output.sessionId || undefined,
           metadata: {
             requestId: input.request.id,
             agentId: input.agent.id,
@@ -157,8 +159,14 @@ function normalizeAgentRunInput(body) {
 
 function executeCodex(request, agent) {
   const prompt = buildCodexPrompt(request, agent)
+  const threadId = request.context.threadId
+  const persistedSessionId = typeof request.metadata?.codexSessionId === 'string'
+    ? request.metadata.codexSessionId.trim()
+    : ''
+  const codexSessionId = chatSessions.get(threadId) || persistedSessionId
+  const args = codexSessionId ? resumeCodexArgs(CODEX_ARGS, codexSessionId) : CODEX_ARGS
   return new Promise((resolve) => {
-    const child = spawn(CODEX_COMMAND, CODEX_ARGS, {
+    const child = spawn(CODEX_COMMAND, args, {
       cwd: process.env.AGENT_RUNTIME_WORKDIR || process.cwd(),
       env: {
         ...process.env,
@@ -187,10 +195,59 @@ function executeCodex(request, agent) {
     })
     child.on('close', (exitCode) => {
       clearTimeout(timeout)
-      resolve({ exitCode: exitCode ?? 0, stdout: stdout.trim(), stderr: stderr.trim() })
+      const parsed = parseCodexJsonOutput(stdout)
+      if (parsed.sessionId && threadId) chatSessions.set(threadId, parsed.sessionId)
+      resolve({
+        exitCode: exitCode ?? 0,
+        stdout: parsed.response || stdout.trim(),
+        stderr: stderr.trim(),
+        sessionId: parsed.sessionId || codexSessionId || '',
+      })
     })
     child.stdin.end(prompt)
   })
+}
+
+function resumeCodexArgs(baseArgs, sessionId) {
+  const execIndex = baseArgs.indexOf('exec')
+  const rawOptions = execIndex >= 0 ? baseArgs.slice(execIndex + 1) : baseArgs.slice()
+  const options = []
+  for (let index = 0; index < rawOptions.length; index += 1) {
+    const arg = rawOptions[index]
+    if (arg === '-') continue
+    if (arg === '--sandbox' || arg === '-s' || arg === '--ask-for-approval') {
+      index += 1
+      continue
+    }
+    options.push(arg)
+  }
+  return [
+    ...(execIndex >= 0 ? baseArgs.slice(0, execIndex + 1) : ['exec']),
+    'resume',
+    ...options,
+    sessionId,
+    '-',
+  ]
+}
+
+function parseCodexJsonOutput(stdout) {
+  let sessionId = ''
+  let response = ''
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.trim().startsWith('{')) continue
+    try {
+      const event = JSON.parse(line)
+      if (event.type === 'thread.started' && typeof event.thread_id === 'string') {
+        sessionId = event.thread_id
+      }
+      if (event.type === 'item.completed' && event.item?.type === 'agent_message' && typeof event.item.text === 'string') {
+        response = event.item.text
+      }
+    } catch {
+      // Custom Codex wrappers may mix ordinary output with JSON events.
+    }
+  }
+  return { sessionId, response }
 }
 
 function buildCodexPrompt(request, agent) {
