@@ -21,6 +21,7 @@ import {
   type AudioRecordingRunIdentity,
   type AudioRecordingStart,
 } from './ui/hooks/use-audio-note-recorder'
+import type { CanonicalPcmFrame } from './core/audio/pcm-capture'
 import { useFactoryWorkspace } from './ui/hooks/use-factory-workspace'
 import {
   formatNotePosition,
@@ -84,15 +85,23 @@ import {
   createAudioCaptureId,
   extractAudioCaptureReferences,
   loadAudioCaptureSession,
+  loadAudioTranscriptSegments,
   preallocateAudioCapture,
   resolveAudioCaptureResumeSession,
-  registerAudioCaptureSessionSegment,
+  registerCanonicalAudioCaptureSession,
+  removeSupersededAudioCaptures,
   saveAudioCapture,
   saveAudioCapturePeaks,
   saveAudioTranscriptSegment,
   type PreallocatedAudioCapture,
+  type AudioCaptureReference,
 } from './core/audio/audio-store'
-import { createSessionPeakAccumulator, SESSION_PEAKS_PER_SECOND } from './core/audio/audio-session'
+import {
+  buildAudioSessionBlob,
+  buildCanonicalPcmWav,
+  createSessionPeakAccumulator,
+  SESSION_PEAKS_PER_SECOND,
+} from './core/audio/audio-session'
 import { transcribeAudioWithChirp } from './core/audio/chirp-transcription'
 import type { BranchDisposition, QuickNoteSearchHit, SourceNote } from './core/quicknote/types'
 
@@ -312,6 +321,7 @@ function LoadedSourceApp({
   // Levels captured live, so WebViews that cannot decode the saved container
   // still have a real waveform to draw.
   const sessionPeaksRef = useRef(createSessionPeakAccumulator())
+  const sessionPcmFramesRef = useRef(new Map<string, CanonicalPcmFrame[]>())
   const liveVoicePeaks = useCallback(() => sessionPeaksRef.current.peaks(), [])
   const editorBodyMirrorRef = useRef<{ sessionKey: number | null; body: string }>({
     sessionKey: null,
@@ -402,10 +412,11 @@ function LoadedSourceApp({
     // baseline, the prior session duration would look like one long silent run.
     lastRecognizedSpeechMsByRunRef.current.set(start.runId, start.offsetMs)
     if (start.resumed) return
-    const pending = preallocateAudioCapture(sourcePath, start.mimeType).catch(() => null)
+    const pending = preallocateAudioCapture(sourcePath, 'audio/wav').catch(() => null)
     preallocatedAudioCaptureRef.current.set(start.sessionId, pending)
     void pending.then((preallocated) => {
       if (!preallocated) return
+      audioSessionReferenceRef.current.set(start.sessionId, preallocated.uri)
       const current = editorSessionRef.current.getCurrentEditor()
       if (!current || current.sessionKey !== start.ownerSessionKey) return
       const baseBody = editorBodyMirrorRef.current.sessionKey === current.sessionKey
@@ -419,15 +430,12 @@ function LoadedSourceApp({
   }, [sourcePath])
 
   const processCompletedAudioSegment = useCallback(async (capture: AudioRecordingComplete) => {
-    const preallocated = capture.segmentIndex === 0
-      ? await (preallocatedAudioCaptureRef.current.get(capture.sessionId) ?? Promise.resolve(null))
-      : null
-    const id = preallocated?.id ?? createAudioCaptureId()
     const captureRun: AudioRecordingRunIdentity = {
       runId: capture.runId,
       sessionId: capture.sessionId,
       ownerSessionKey: capture.ownerSessionKey,
     }
+    const preallocated = await (preallocatedAudioCaptureRef.current.get(capture.sessionId) ?? Promise.resolve(null))
     const setCaptureMessage = (message: string) => {
       if (
         editorSessionRef.current.getCurrentEditor()?.sessionKey === capture.ownerSessionKey
@@ -440,13 +448,22 @@ function LoadedSourceApp({
 
     let saved: Awaited<ReturnType<typeof saveAudioCapture>>
     try {
-      saved = await saveAudioCapture({
-        id,
+      const ownerBody = editorBodyMirrorRef.current.sessionKey === capture.ownerSessionKey
+        ? editorBodyMirrorRef.current.body
+        : ''
+      const sessionUri = audioSessionReferenceRef.current.get(capture.sessionId)
+      const existingReference = sessionUri
+        ? audioReferenceForSessionUri(sessionUri)
+        : extractAudioCaptureReferences(ownerBody)[0]
+      const existingRecords = existingReference
+        ? await loadAudioCaptureSession(existingReference, sourcePath).catch(() => [])
+        : []
+      const pendingRecord = {
+        id: `pending-${capture.sessionId}-${capture.segmentIndex}`,
         blob: capture.blob,
         mimeType: capture.mimeType,
-        durationMs: capture.durationMs,
         createdAt: capture.stoppedAt,
-        sourcePath,
+        durationMs: capture.durationMs,
         metadata: {
           sessionId: capture.sessionId,
           segmentIndex: capture.segmentIndex,
@@ -455,37 +472,89 @@ function LoadedSourceApp({
           segmentStartReason: capture.segmentStartReason,
           final: capture.final,
         },
+      }
+      const pcmFrames = sessionPcmFramesRef.current.get(capture.sessionId) ?? []
+      const existingCanonical = existingRecords.length === 1 && existingRecords[0]?.mimeType === 'audio/wav'
+        ? existingRecords[0]
+        : null
+      const pcmAssembly = pcmFrames.length > 0 && (existingRecords.length === 0 || existingCanonical)
+        ? await buildCanonicalPcmWav(pcmFrames, existingCanonical?.blob)
+        : null
+      const assembled = pcmAssembly ?? await buildAudioSessionBlob([
+        ...existingRecords,
+        pendingRecord,
+      ])
+      if (!assembled) throw new Error('The captured audio could not be assembled.')
+      const id = preallocated?.id ?? audioCaptureIdForReference(existingReference) ?? createAudioCaptureId()
+      saved = await saveAudioCapture({
+        id,
+        blob: assembled.blob,
+        mimeType: assembled.mimeType,
+        durationMs: assembled.durationMs,
+        createdAt: capture.stoppedAt,
+        sourcePath,
+        metadata: {
+          sessionId: capture.sessionId,
+          segmentIndex: capture.segmentIndex,
+          offsetMs: 0,
+          languageCode: capture.languageCode,
+          segmentStartReason: capture.segmentStartReason,
+          final: capture.final,
+        },
       })
+      const superseded = existingRecords.filter((record) => record.uri !== saved.uri)
+      if (superseded.length > 0) {
+        const legacyTranscripts = await loadAudioTranscriptSegments(superseded, sourcePath).catch(() => [])
+        for (const transcript of legacyTranscripts) {
+          await saveAudioTranscriptSegment({
+            sourcePath,
+            audio: saved,
+            text: transcript.text,
+            offsetMs: transcript.offsetMs,
+            languageCode: transcript.languageCode,
+            sessionId: capture.sessionId,
+            segmentIndex: transcript.segmentIndex,
+            createdAt: transcript.createdAt,
+            durationMs: transcript.durationMs,
+            words: transcript.words?.map((word) => ({
+              ...word,
+              startMs: Math.max(0, word.startMs - transcript.offsetMs),
+              endMs: Math.max(0, word.endMs - transcript.offsetMs),
+            })),
+          }).catch(() => null)
+        }
+        await removeSupersededAudioCaptures(superseded, saved.uri, sourcePath).catch(() => undefined)
+      }
     } catch (error) {
       setCaptureMessage(`Audio captured, but local save failed: ${errorMessage(error)}`)
       return
     }
 
-    const segmentPeaks = sessionPeaksRef.current.slice(capture.offsetMs, capture.durationMs)
-    if (segmentPeaks.some((peak) => peak > 0)) {
+    const sessionPeaks = sessionPeaksRef.current.peaks()
+    if (sessionPeaks.some((peak) => peak > 0)) {
       await saveAudioCapturePeaks({
         audio: saved,
         sourcePath,
         peaksPerSecond: SESSION_PEAKS_PER_SECOND,
-        durationMs: capture.durationMs,
-        peaks: segmentPeaks,
+        durationMs: saved.durationMs,
+        peaks: sessionPeaks,
       }).catch(() => null)
     }
     if (capture.final) sessionPeaksRef.current.reset()
 
-    const sessionReference = await registerAudioCaptureSessionSegment(saved, sourcePath)
+    const sessionReference = await registerCanonicalAudioCaptureSession(saved, sourcePath)
     audioSessionReferenceRef.current.set(capture.sessionId, sessionReference)
-    preallocatedAudioCaptureRef.current.delete(capture.sessionId)
+    if (capture.final) preallocatedAudioCaptureRef.current.delete(capture.sessionId)
     setAudioTranscriptRefreshKey((current) => current + 1)
 
-    const current = editorSessionRef.current.editor
+    const current = editorSessionRef.current.getCurrentEditor()
     if (current && current.sessionKey === capture.ownerSessionKey) {
       const baseBody = editorBodyMirrorRef.current.sessionKey === current.sessionKey
         ? editorBodyMirrorRef.current.body
         : current.body
       // The reference normally already exists from recording start; replace it
       // only if the persisted path diverged from the reserved one.
-      const nextBody = preallocated && preallocated.uri !== sessionReference
+      const nextBody = (preallocated && preallocated.uri !== sessionReference) || (existingAudioReference(baseBody) && existingAudioReference(baseBody) !== sessionReference)
         ? upsertAudioCaptureReference(baseBody, sessionReference)
         : appendAudioCaptureReference(baseBody, sessionReference)
       if (nextBody !== baseBody) {
@@ -595,7 +664,18 @@ function LoadedSourceApp({
       voiceRecordingConfig.transcriptionMode !== 'chirp3' || !chirpConfigReady(voiceRecordingConfig),
     onRecordingStart: reserveAudioCaptureReference,
     onRecordingComplete: attachCompletedAudioToCurrentEditor,
-    onPcmFrame: (frame) => sessionPeaksRef.current.push(frame),
+    onPcmFrame: (frame, run) => {
+      const frames = sessionPcmFramesRef.current.get(run.sessionId) ?? []
+      if (frame.sequence === 0 && frame.startSample === 0) frames.length = 0
+      frames.push(frame)
+      sessionPcmFramesRef.current.set(run.sessionId, frames)
+      if (
+        isSameAudioRecordingRun(activeVoiceRunRef.current, run)
+        && editorSessionRef.current.getCurrentEditor()?.sessionKey === run.ownerSessionKey
+      ) {
+        sessionPeaksRef.current.push(frame)
+      }
+    },
     onRecognitionInactivity: (run) => {
       if (!isSameAudioRecordingRun(activeVoiceRunRef.current, run)) return
       autoPausedVoiceRunsRef.current.add(run.runId)
@@ -1573,6 +1653,7 @@ function LoadedSourceApp({
           setAudioNoteMessage('This older voice note cannot be resumed yet, but it is still available to play.')
           return
         }
+        audioSessionReferenceRef.current.set(resumeSession.sessionId, reference.uri)
         await audioRecorder.start(undefined, { resumeSession })
         return
       } catch (error) {
@@ -2275,6 +2356,23 @@ function agentWorkResultToLaunchSummary(
 
 function createAgentRequestId(): string {
   return `request_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+function existingAudioReference(body: string): string | null {
+  return extractAudioCaptureReferences(body)[0]?.uri ?? null
+}
+
+function audioReferenceForSessionUri(uri: string): AudioCaptureReference | undefined {
+  return extractAudioCaptureReferences(`Audio recording: ${uri}`)[0]
+}
+
+function audioCaptureIdForReference(reference: AudioCaptureReference | undefined): string | null {
+  if (!reference) return null
+  if (reference.id) return reference.id
+  const normalized = (reference.href ?? reference.uri).split('\\').join('/')
+  const fileName = normalized.split('/').pop() ?? ''
+  const id = fileName.replace(/\.(webm|m4a|mp4|aac|ogg|opus|wav|mp3|flac)$/i, '')
+  return id || null
 }
 
 function SourceSelectionScreen({
