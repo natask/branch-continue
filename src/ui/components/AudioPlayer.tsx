@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
 import { useWavesurfer } from '@wavesurfer/react'
 import type WaveSurfer from 'wavesurfer.js'
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js'
@@ -77,8 +77,10 @@ export function AudioPlayer({
   const pinchDistanceRef = useRef<number | null>(null)
   const pinchActiveRef = useRef(false)
   const suppressNextClickRef = useRef(false)
-  const pendingWaveformSeekRef = useRef<number | null>(null)
   const waveContainerRef = useRef<HTMLDivElement | null>(null)
+  const waveformStageRef = useRef<HTMLDivElement | null>(null)
+  const progressRef = useRef<HTMLSpanElement | null>(null)
+  const playheadRef = useRef<HTMLSpanElement | null>(null)
   const [duration, setDuration] = useState(0)
   const [currentTime, setCurrentTime] = useState(0)
   const [waveformZoom, setWaveformZoom] = useState(0)
@@ -102,9 +104,12 @@ export function AudioPlayer({
     container: waveContainerRef,
     height: waveformHeight,
     waveColor: 'rgba(232, 224, 214, 0.3)',
-    progressColor: 'rgba(232, 168, 76, 0.78)',
-    cursorColor: 'rgba(232, 168, 76, 0.92)',
-    cursorWidth: 2,
+    // Playback belongs to the global audio element. Keep WaveSurfer's canvas
+    // static and draw one compositor-backed playhead below; forcing this
+    // separate media instance to seek on every animation frame flickers in
+    // WKWebView when transcript regions are layered over the waveform.
+    progressColor: 'rgba(232, 224, 214, 0.3)',
+    cursorWidth: 0,
     barWidth: 2,
     barGap: 2,
     barRadius: 2,
@@ -160,16 +165,16 @@ export function AudioPlayer({
   }, [src])
 
   const restAppliedForSrcRef = useRef<string | null>(null)
-  useEffect(() => {
+  useLayoutEffect(() => {
     // Right after a recording, the seeker belongs at the point recording
-    // reached, not back at zero. One-shot per source so later seeks win.
-    if (!restAtEnd || !wavesurfer || displayDuration <= 0) return
+    // reached, not back at zero. Apply before paint so the stopped player never
+    // flashes a contradictory 0:00 frame while its cursor is moving to the end.
+    // One-shot per source so later seeks win.
+    if (!restAtEnd || displayDuration <= 0) return
     if (restAppliedForSrcRef.current === src) return
     restAppliedForSrcRef.current = src
-    wavesurfer.setTime(displayDuration)
-    keepPlayheadVisible(wavesurfer, displayDuration)
     setCurrentTime(displayDuration)
-  }, [displayDuration, restAtEnd, src, wavesurfer])
+  }, [displayDuration, restAtEnd, src])
 
   useEffect(() => {
     if (!wavesurfer) return undefined
@@ -190,8 +195,6 @@ export function AudioPlayer({
       }),
     ]
     applyDuration(wavesurfer.getDuration())
-    const pendingTime = pendingWaveformSeekRef.current
-    if (pendingTime !== null) wavesurfer.setTime(pendingTime)
     return () => {
       for (const unsubscribe of unsubscribes) unsubscribe()
     }
@@ -201,13 +204,7 @@ export function AudioPlayer({
     if (!isActive) return
     const nextTime = globalAudio.currentTime
     setCurrentTime(nextTime)
-    if (wavesurfer && Math.abs(wavesurfer.getCurrentTime() - nextTime) > 0.01) {
-      wavesurfer.setTime(nextTime)
-      // Playback runs through the global audio element, so wavesurfer's own
-      // auto-scroll never engages; keep the playhead on-screen ourselves.
-      keepPlayheadVisible(wavesurfer, nextTime)
-    }
-  }, [globalAudio.currentTime, isActive, wavesurfer])
+  }, [globalAudio.currentTime, isActive])
 
   useEffect(() => {
     if (!isActive || globalAudio.duration <= 0) return
@@ -236,7 +233,6 @@ export function AudioPlayer({
 
     const unsubscribe = regions.on('region-clicked', (region, event) => {
       event.stopPropagation()
-      wavesurfer.setTime(region.start)
       playAt(region.start * 1000)
     })
 
@@ -248,7 +244,7 @@ export function AudioPlayer({
     // plugin positions them relative to the duration at add time.
   }, [displayDuration, playAt, regions, waveformRegions, wavesurfer])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!wavesurfer) return
     try {
       wavesurfer.zoom(waveformZoom)
@@ -256,6 +252,25 @@ export function AudioPlayer({
       // Zoom requires decoded data; before decode the fit view stays.
     }
   }, [waveformZoom, wavesurfer])
+
+  useLayoutEffect(() => {
+    const playhead = playheadRef.current
+    const progress = progressRef.current
+    const stage = waveformStageRef.current
+    if (!playhead || !progress || !stage || displayDuration <= 0) return
+    // Scroll first, then measure. Reading the old scroll offset during render
+    // made the cursor disappear for one painted frame whenever playback crossed
+    // the viewport margin, which looked like a periodic flicker in WKWebView.
+    if (wavesurfer) keepPlayheadVisible(wavesurfer, currentTime)
+    const playheadOffset = waveformPlayheadOffsetPx(
+      currentTime,
+      displayDuration,
+      stage.clientWidth,
+      waveformViewport(wavesurfer),
+    )
+    playhead.style.transform = `translate3d(${playheadOffset - 1}px, 0, 0)`
+    progress.style.transform = `scaleX(${waveformProgressScale(playheadOffset, stage.clientWidth)})`
+  }, [currentTime, displayDuration, waveformZoom, wavesurfer])
 
   useEffect(() => {
     // The ruler's resolution follows the zoom: re-register the timeline with
@@ -279,14 +294,9 @@ export function AudioPlayer({
 
   const seekTo = useCallback((nextTimeMs: number) => {
     const seconds = Math.max(0, nextTimeMs / 1000)
-    pendingWaveformSeekRef.current = seconds
-    if (wavesurfer) {
-      wavesurfer.setTime(seconds)
-      keepPlayheadVisible(wavesurfer, seconds)
-    }
     setCurrentTime(seconds)
     playAt(nextTimeMs)
-  }, [playAt, wavesurfer])
+  }, [playAt])
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -480,7 +490,15 @@ export function AudioPlayer({
               />
             </div>
           ) : (
-            <div ref={waveContainerRef} />
+            <div ref={waveformStageRef} className="audio-player-waveform-stage">
+              <div ref={waveContainerRef} />
+              {displayDuration > 0 && (
+                <>
+                  <span ref={progressRef} className="audio-player-progress" aria-hidden="true" />
+                  <span ref={playheadRef} className="audio-player-playhead" aria-hidden="true" />
+                </>
+              )}
+            </div>
           )}
         </div>
         <div className="audio-player-foot">
@@ -493,6 +511,25 @@ export function AudioPlayer({
       </div>
     </div>
   )
+}
+
+export function waveformPlayheadOffsetPx(
+  currentTimeSeconds: number,
+  durationSeconds: number,
+  visibleWidthPx: number,
+  viewport?: WaveformViewport | null,
+): number {
+  if (!durationSeconds) return 0
+  const fraction = Math.max(0, Math.min(1, currentTimeSeconds / durationSeconds))
+  if (viewport && viewport.renderedWidthPx > 0) {
+    return fraction * viewport.renderedWidthPx - viewport.scrollPx
+  }
+  return fraction * Math.max(0, visibleWidthPx)
+}
+
+export function waveformProgressScale(playheadOffsetPx: number, visibleWidthPx: number): number {
+  if (visibleWidthPx <= 0) return 0
+  return Math.max(0, Math.min(1, playheadOffsetPx / visibleWidthPx))
 }
 
 function distanceBetweenFirstTwoPointers(points: Map<number, { x: number; y: number }>): number | null {

@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { remapRecorderTimeToAssembledTime } from '../src/core/audio/audio-session'
-import { seekFromClientX } from '../src/ui/components/AudioPlayer'
+import {
+  seekFromClientX,
+  waveformPlayheadOffsetPx,
+  waveformProgressScale,
+} from '../src/ui/components/AudioPlayer'
 import { dispatchVoiceSeek, VOICE_SEEK_EVENT, type VoiceSeekDetail } from '../src/ui/lib/voice-seek'
 
 describe('voice seek interactions', () => {
@@ -40,6 +44,13 @@ describe('voice seek interactions', () => {
 
     expect(seek).toHaveBeenCalledOnce()
     expect(seek).toHaveBeenCalledWith(10_000)
+  })
+
+  it('positions one playhead without seeking and repainting the waveform', () => {
+    expect(waveformPlayheadOffsetPx(10, 20, 400)).toBe(200)
+    expect(waveformPlayheadOffsetPx(10, 20, 400, { scrollPx: 1_800, renderedWidthPx: 4_000 })).toBe(200)
+    expect(waveformProgressScale(200, 400)).toBe(0.5)
+    expect(waveformProgressScale(500, 400)).toBe(1)
   })
 
   it('remaps recorder wall-clock gaps onto the assembled WAV timeline', () => {
