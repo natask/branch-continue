@@ -28,7 +28,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "node --env-file-if-exists=.env scripts/desktop-updater.mjs package",
+    "tauri:build": "pnpm tauri build",
     "tauri:android:dev": "tauri android dev",
     "tauri:android:build": "tauri android build",
     "tauri:ios:dev": "tauri ios dev",
