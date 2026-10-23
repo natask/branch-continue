@@ -4,6 +4,19 @@ import { homedir, networkInterfaces } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+// launchd can acknowledge bootout before the old job has fully left its domain.
+export async function restartLaunchAgent(domain, label, plist, run = (args) => spawnSync('launchctl', args, { encoding: 'utf8' }), wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
+  run(['bootout', `${domain}/${label}`])
+  let result
+  for (let attempt = 0; attempt < 20; attempt++) {
+    result = run(['bootstrap', domain, plist])
+    if (result.status === 0) return
+    await wait(250)
+  }
+  throw new Error(`Could not start Backbone runtime: ${result?.stderr || result?.error?.message || result?.status}`)
+}
+
+export async function installAgentRuntime() {
 if (process.platform !== 'darwin') {
   console.log('Start the Backbone runtime with pnpm agent:runtime on this platform.')
   process.exit(0)
@@ -32,6 +45,11 @@ await writeFile(plist, `<?xml version="1.0" encoding="UTF-8"?>
 <key>StandardOutPath</key><string>${xml(path.join(logs, 'runtime.log'))}</string>
 <key>StandardErrorPath</key><string>${xml(path.join(logs, 'runtime-error.log'))}</string>
 </dict></plist>\n`, { mode: 0o600 })
-spawnSync('launchctl', ['bootout', `${domain}/${label}`], { stdio: 'ignore' })
-execFileSync('launchctl', ['bootstrap', domain, plist])
+await restartLaunchAgent(domain, label, plist)
 console.log(`Installed Backbone runtime: ${plist}`)
+
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await installAgentRuntime()
+}
