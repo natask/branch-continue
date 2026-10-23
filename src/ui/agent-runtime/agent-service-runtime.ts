@@ -77,7 +77,7 @@ export async function getCodexAccount(baseUrl = resolveAgentRuntimeUrl()): Promi
   return codexAccountRequest(baseUrl, '/codex/account')
 }
 
-export async function startCodexSignIn(baseUrl = resolveAgentRuntimeUrl(), deviceCode = false): Promise<CodexSignIn> {
+export async function startCodexSignIn(baseUrl = resolveAgentRuntimeUrl(), deviceCode = usesRemoteCodexRuntime(baseUrl)): Promise<CodexSignIn> {
   return codexAccountRequest(baseUrl, '/codex/login', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceCode }),
   })
@@ -88,4 +88,10 @@ async function codexAccountRequest<T>(baseUrl: string, path: string, init?: Requ
   const payload = await response.json()
   if (!response.ok) throw new Error(payload.error || `Codex account request failed (${response.status}).`)
   return payload as T
+}
+
+/** A browser callback on localhost cannot reach a runtime hosted on another device. */
+export function usesRemoteCodexRuntime(baseUrl: string): boolean {
+  const hostname = new URL(baseUrl).hostname
+  return !['localhost', '127.0.0.1', '[::1]', '::1'].includes(hostname)
 }

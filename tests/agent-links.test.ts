@@ -162,6 +162,20 @@ describe('agent link helpers', () => {
     })).toContain('pnpm agent:runtime')
   })
 
+  it('preserves a page conflict reason across reload and reports the saved suggestion', () => {
+    const body = appendAgentTask('My newer wording.', {
+      taskId: 'request_conflict', sessionId: agentChatSessionId(NOTE), agent: 'agent',
+      prompt: 'Refine this page', status: 'blocked', blockedReason: 'page-changed',
+      sourceKind: 'note', submittedAt: '2026-08-07T10:00:00.000Z',
+      response: 'Proposed version:\n\nA clearer sentence.',
+    })
+    const task = extractLatestAgentTask(body)!
+    expect(task.blockedReason).toBe('page-changed')
+    expect(agentTaskStatusMessage(task)).toContain('Your edits were kept')
+    expect(agentTaskStatusMessage(task)).not.toContain('runtime')
+    expect(persistedAgentTaskProgress(body, NOTE.id)?.message).toContain('Task details')
+  })
+
   it('does not present a reloaded orphaned task as live running work', () => {
     const body = appendAgentTask('source text', {
       taskId: 'request_interrupted_1',

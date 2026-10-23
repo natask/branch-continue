@@ -70,3 +70,9 @@ Setting `AGENT_CODEX_ARGS` explicitly retains the earlier command-wrapper
 executor for existing integrations. This compatibility mode does not implement
 structured page editing; leave it unset for Backbone page agents. Normal
 execution uses app-server and does not bypass its filesystem sandbox.
+
+For a frontend configured with a runtime on another host, sign-in defaults to
+`chatgptDeviceCode`. The phone displays the verification link and code; it does
+not attempt to receive the desktop runtime's localhost browser callback. Local
+desktop sign-in retains the browser flow. This follows the official
+[app-server device-code flow](https://learn.chatgpt.com/docs/app-server#3b-log-in-with-chatgpt-device-code-flow).

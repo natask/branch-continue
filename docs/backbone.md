@@ -75,3 +75,11 @@ Phone installation and actual sync-provider transport still require device evide
 The final mobile OTA release is `0.1.13-20261023T002626Z-fc8f23a` at [the mobile endpoint](http://10.147.17.10/mobile/). Its 15 assets pass size and SHA-256 checks from both the Mac and release host. The private Codex endpoint is reachable from that host using the mobile origin. The [Android ARM64 development installer](http://10.147.17.10/mobile/native/Backbone-0.1.13-android-arm64-development.apk) stays available across OTA promotions. Master Orch release registration failed because that service is unavailable; public delivery and its asset checks passed.
 
 The source and release work is committed directly on `master`. No new branch or worktree was created. The pre-existing worktrees and unrelated untracked files were left in place.
+
+## UI refinement, version 0.1.14
+
+The editor now puts writing on a warm paper canvas, with Codex, versions, and ideas in a separate desktop rail. Mobile puts those tools below the note. A compact toolbar and More menus keep secondary actions available without competing with the text. The library shows the source filename and note count; the welcome screen explains how to open the note file. Dates display in a readable form while retaining the original source timestamp.
+
+The update also preserves page instructions and ideas changed while Codex runs. A genuine wording conflict keeps the user's text and shows the proposed edit with an accurate explanation. External timestamp and parent-link edits now become history versions before an app edit can replace them. A phone using the remote Codex runtime starts device-code sign-in, so authentication does not depend on a localhost callback on the phone.
+
+Verification for this increment: 350 unit tests across 51 files pass, TypeScript passes, and 15 browser checks pass with six device-specific cases skipped. Landing snapshots now wait for the actual welcome screen, rather than capturing the transient restore state. Desktop and mobile deployment use the existing `pnpm app:deploy` and `pnpm mobile:ota:deploy` commands. The published 0.1.13 Android shell remains compatible with this frontend update; native code and permissions did not change.

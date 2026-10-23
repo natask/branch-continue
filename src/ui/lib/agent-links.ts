@@ -35,6 +35,7 @@ export interface AgentTaskRecord {
   agent: string
   prompt: string
   status: AgentTaskStatus
+  blockedReason?: 'page-changed'
   sourceKind: AgentTaskSourceKind
   submittedAt: string
   updatedAt?: string
@@ -153,6 +154,7 @@ export function extractLatestAgentTask(body: string): AgentTaskRecord | null {
     agent,
     prompt: taskField(block, 'Prompt'),
     status,
+    blockedReason: taskField(block, 'Blocked reason') === 'page-changed' ? 'page-changed' : undefined,
     sourceKind: sourceLabel === 'recognized voice note' ? 'recognized-voice-note' : 'note',
     submittedAt: taskField(block, 'Submitted'),
     updatedAt: taskField(block, 'Updated') || undefined,
@@ -175,6 +177,7 @@ export function agentTaskStatusMessage(task: AgentTaskRecord): string {
   if (task.status === 'launched') return `@${task.agent} launched. Its run link is saved in this note.`
   if (task.status === 'completed') return `@${task.agent} responded. The answer is saved in this note.`
   if (task.status === 'blocked') {
+    if (task.blockedReason === 'page-changed') return 'Your note changed while Codex was running. Your edits were kept. Open Task details to see the proposed version.'
     return `@${task.agent} was saved, but no answering runtime was online. Start pnpm agent:runtime, then run it again.`
   }
   return `@${task.agent} failed. The runtime response is saved in this note.`
@@ -229,6 +232,7 @@ function formatAgentTaskBlock(task: AgentTaskRecord): string {
     `Agent task: ${task.taskId}`,
     `Session: ${task.sessionId}`,
     `Status: ${task.status}`,
+    ...(task.blockedReason ? [`Blocked reason: ${task.blockedReason}`] : []),
     `Agent: @${task.agent}`,
     `Source: ${task.sourceKind === 'recognized-voice-note' ? 'recognized voice note' : 'note'}`,
     `Submitted: ${task.submittedAt}`,

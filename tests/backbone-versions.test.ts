@@ -109,6 +109,25 @@ describe('append-only file undo', () => {
 })
 
 describe('event replay', () => {
+  it.each(['timestamp', 'parentNoteId'] as const)('captures an external %s change before a later user change replaces it', (field) => {
+    const first = appendQuickNoteEntry(parseQuickNoteFile('', 'notes.org'), {
+      title: 'Thought', body: 'Unchanged text.', timestamp: '[2026-01-01 Thu 12:00]', parentNoteId: 'original-parent',
+    })
+    const externalValue = field === 'timestamp' ? '[2026-01-02 Fri 12:00]' : 'external-parent'
+    const finalValue = field === 'timestamp' ? '[2026-01-03 Sat 12:00]' : 'final-parent'
+    // Change only the materialized source, leaving its embedded history untouched.
+    const source = field === 'timestamp'
+      ? first.parsed.content.replace('* Thought [2026-01-01 Thu 12:00]', `* Thought ${externalValue}`)
+      : first.parsed.content.replace(':BRANCH_CONTINUE_PARENT_NOTE_ID: original-parent', `:BRANCH_CONTINUE_PARENT_NOTE_ID: ${externalValue}`)
+    const parsed = parseQuickNoteFile(source, 'notes.org')
+    const saved = updateQuickNoteEntry(parsed, parsed.entries[0].id, { body: 'Unchanged text.', [field]: finalValue })
+    const reopened = parseQuickNoteFile(saved.parsed.content, 'other-device.org').entries[0]
+    expect(reopened.versions?.map((version) => version[field])).toEqual([
+      first.entry.versions![0][field], externalValue, finalValue,
+    ])
+    expect(reopened.versions?.[1]).toMatchObject({ actor: 'system', label: 'External source change' })
+    expect(replayBackboneVersions(reopened.versions!)?.[field]).toBe(finalValue)
+  })
   it('replays the portable state and captures externally edited materialized text before the next save', () => {
     const first = initial()
     const external = first.parsed.content.replace('An initial thought.\n', 'An external thought.\n')

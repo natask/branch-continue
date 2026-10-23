@@ -1,6 +1,59 @@
 import { expect, test, type Download } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 
+test('Codex keeps edits made during a run and explains wording conflicts', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === 'tablet', 'Desktop and phone cover this workflow.')
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'showOpenFilePicker', { value: undefined })
+  })
+  await page.route('**/codex/account', (route) => route.fulfill({ json: { account: { type: 'chatgpt', email: 'test@example.com' }, requiresOpenaiAuth: false } }))
+  let finishRun: (() => void) | undefined
+  let runNumber = 0
+  await page.route('**/agent-runs', async (route) => {
+    runNumber += 1
+    await new Promise<void>((resolve) => { finishRun = resolve })
+    await route.fulfill({ json: {
+      runtimeId: 'local-codex', status: 'completed', response: 'Refined the page.',
+      editedDocument: runNumber === 1 ? 'A precise outcome.' : 'A second suggestion.', externalId: 'test-codex-session',
+    } })
+  })
+  await page.goto('/')
+  const chooser = page.waitForEvent('filechooser')
+  await page.getByRole('button', { name: 'Choose File', exact: true }).click()
+  await (await chooser).setFiles({ name: 'concurrent.org', mimeType: 'text/plain', buffer: Buffer.from('* Existing page\nAn existing thought.\n') })
+  await page.getByRole('button', { name: 'New Note', exact: true }).click()
+  const editor = page.locator('.note-editor')
+  const body = editor.locator('textarea.note-editor-body')
+  await body.fill('A rough outcome.')
+  await expect(editor.locator('.save-icon--saved')).toBeVisible()
+  await editor.getByRole('button', { name: 'Enhance', exact: true }).click()
+  await editor.getByText('Instructions for this page', { exact: true }).click()
+  const instructions = editor.getByLabel('Page system prompt', { exact: true })
+  await instructions.fill('Keep my voice.')
+  await expect(editor.locator('.save-icon--saved')).toBeVisible()
+  await editor.getByRole('button', { name: 'Run on note', exact: true }).click()
+  await expect.poll(() => Boolean(finishRun)).toBe(true)
+  await instructions.fill('Keep examples and use short sentences.')
+  await expect(editor.locator('.save-icon--saved')).toBeVisible()
+  finishRun!()
+  await expect(body).toHaveValue('A precise outcome.')
+  await expect(instructions).toHaveValue('Keep examples and use short sentences.')
+
+  finishRun = undefined
+  await expect(editor.locator('.save-icon--saved')).toBeVisible()
+  await editor.getByRole('button', { name: 'Run on note', exact: true }).click()
+  await expect.poll(() => Boolean(finishRun)).toBe(true)
+  await body.fill('My own newer outcome.')
+  await expect(editor.locator('.save-icon--saved')).toBeVisible()
+  finishRun!()
+  const status = editor.locator('.note-agent-composer .agent-task-status')
+  await expect(status).toContainText('Your edits were kept')
+  await expect(status).not.toContainText('no answering runtime')
+  await expect(body).toHaveValue('My own newer outcome.')
+  await status.getByText('Task details', { exact: true }).click()
+  await expect(status.locator('.agent-task-result')).toContainText('A second suggestion.')
+})
+
 test('Backbone saves portable note versions, ideas, and Codex page edits', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === 'tablet', 'Desktop and phone cover this workflow.')
   const downloads: Download[] = []

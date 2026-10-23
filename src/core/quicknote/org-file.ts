@@ -128,7 +128,13 @@ export function updateQuickNoteEntry(
     metadata.push(VERSION_PREFIX + JSON.stringify(makeVersion(existing, lineage.noteUid!, { actor: 'system' }, 'created')))
   }
   const latestVersion = existing.versions?.[existing.versions.length - 1]
-  if (latestVersion && (latestVersion.body !== existing.body.trimEnd() || latestVersion.title !== existing.title || JSON.stringify(latestVersion.tags) !== JSON.stringify(existing.tags) || (latestVersion.disposition ?? null) !== (existing.disposition ?? null))) {
+  if (latestVersion && (
+    latestVersion.body !== existing.body.trimEnd() || latestVersion.title !== existing.title ||
+    JSON.stringify(latestVersion.tags) !== JSON.stringify(existing.tags) ||
+    (latestVersion.timestamp ?? null) !== existing.timestamp ||
+    (latestVersion.parentNoteId ?? null) !== (existing.parentNoteId ?? null) ||
+    (latestVersion.disposition ?? null) !== (existing.disposition ?? null)
+  )) {
     metadata.push(VERSION_PREFIX + JSON.stringify(makeVersion(existing, lineage.noteUid!, { body: existing.body, actor: 'system', versionLabel: 'External source change' }, 'edited', latestVersion.id)))
     metadata.push(...bodyChangeRecords({ noteUid: lineage.noteUid!, before: latestVersion.body, after: existing.body, actor: 'system' }).map((record) => RECORD_PREFIX + JSON.stringify(record)))
   }

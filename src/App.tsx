@@ -751,6 +751,7 @@ function LoadedSourceApp({
       const finalTask: AgentTaskRecord = edited === null ? {
         ...task,
         status: 'blocked',
+        blockedReason: 'page-changed',
         response: `${task.response ?? ''}\n\nYour note changed while Codex was running. Your edits were kept. Proposed version:\n\n${edit!.body}`,
       } : task
       savedTask = finalTask
@@ -1616,7 +1617,9 @@ function LoadedSourceApp({
       }
       const completed = await persistAgentTask(pending.note, pending.body, completedTask,
         result.status === 'completed' && typeof result.editedDocument === 'string'
-          ? { base: pending.body, body: result.editedDocument } : undefined)
+          // Compare against the text sent to Codex. The pending task save can
+          // already include newer user wording entered while context loaded.
+          ? { base: sourceBody, body: result.editedDocument } : undefined)
       taskNote = completed.note
       taskBody = completed.body
       persistedTask = completed.task
@@ -2201,54 +2204,13 @@ function LoadedSourceApp({
       <header className="topbar">
         <div className="topbar-copy">
           <h1 className="topbar-title">Backbone</h1>
-          <p className="topbar-path">{sourcePath}</p>
+          <p className="topbar-path" title={sourcePath}>
+            {displaySourceFilename(sourcePath)}
+            <span className="topbar-count">{notes.length} {notes.length === 1 ? 'note' : 'notes'}</span>
+          </p>
         </div>
 
         <div className="topbar-meta">
-          {!isMobile && (
-            <div className="topbar-jump">
-              <button
-                className={`topbar-jump-opt${sortMode === 'oldest' ? ' active' : ''}`}
-                onClick={() => setSortMode('oldest')}
-                type="button"
-              >
-                Oldest
-              </button>
-              <button
-                className={`topbar-jump-opt${sortMode === 'latest' ? ' active' : ''}`}
-                onClick={() => setSortMode('latest')}
-                type="button"
-              >
-                Latest
-              </button>
-              <button
-                className="topbar-jump-go"
-                onClick={handleGoToBoundary}
-                type="button"
-              >
-                Go
-              </button>
-            </div>
-          )}
-          {!isMobile && (
-            <button className="topbar-search" onClick={() => void reloadSource()} type="button">
-              Reload
-            </button>
-          )}
-          <button
-            className="topbar-search"
-            onClick={() => setFactoryOpen(true)}
-            type="button"
-          >
-            Factory {factorySummary.active}
-          </button>
-          <button
-            className="topbar-search"
-            onClick={() => setShowCardStackTuner((current) => !current)}
-            type="button"
-          >
-            Tune: {showCardStackTuner ? 'On' : 'Off'}
-          </button>
           <button className="topbar-search topbar-search-strong" onClick={() => void handleCreateNewNote()} type="button">
             New Note
           </button>
@@ -2269,9 +2231,54 @@ function LoadedSourceApp({
               </button>
             )}
           </div>
-          <button className="topbar-search topbar-search-strong" onClick={() => setSearchOpen(true)} type="button">
+          <button className="topbar-search" onClick={() => setSearchOpen(true)} type="button">
             Commands
           </button>
+          <details className="workspace-menu">
+            <summary>More</summary>
+            <div className="workspace-menu-panel">
+              <div className="topbar-jump">
+                <button
+                  className={`topbar-jump-opt${sortMode === 'oldest' ? ' active' : ''}`}
+                  onClick={() => setSortMode('oldest')}
+                  type="button"
+                >
+                  Oldest
+                </button>
+                <button
+                  className={`topbar-jump-opt${sortMode === 'latest' ? ' active' : ''}`}
+                  onClick={() => setSortMode('latest')}
+                  type="button"
+                >
+                  Latest
+                </button>
+                <button
+                  className="topbar-jump-go"
+                  onClick={handleGoToBoundary}
+                  type="button"
+                >
+                  Go
+                </button>
+              </div>
+              <button className="topbar-search" onClick={() => void reloadSource()} type="button">
+                Reload
+              </button>
+            <button
+              className="topbar-search"
+              onClick={() => setFactoryOpen(true)}
+              type="button"
+            >
+              Factory {factorySummary.active}
+              </button>
+              <button
+                className="topbar-search"
+                onClick={() => setShowCardStackTuner((current) => !current)}
+                type="button"
+              >
+                Tune: {showCardStackTuner ? 'On' : 'Off'}
+              </button>
+            </div>
+          </details>
         </div>
       </header>
       <section
@@ -2517,17 +2524,16 @@ function SourceSelectionScreen({
   return (
     <div className="app">
       <div className="empty-panel">
-        <div>
-          <p className="empty-title">Select a source file to start.</p>
+        <div className="welcome-card">
+          <p className="welcome-brand">Backbone</p>
+          <h1 className="welcome-title">Make room for your next thought.</h1>
+          <p className="welcome-copy">Open your notes file to continue. Your drafts and their history stay together.</p>
           <div className="empty-actions">
             <button className="btn-primary" onClick={() => void selectSourceFile()} type="button">
               {selectingSource ? 'Selecting...' : 'Choose File'}
             </button>
             <button className="btn-secondary" onClick={() => setSearchOpen(true)} type="button">
               Commands
-            </button>
-            <button className="btn-secondary" onClick={() => factoryWorkspace.setOpen(true)} type="button">
-              Factory
             </button>
           </div>
         </div>
@@ -2841,4 +2847,9 @@ function describeNote(note: SourceNote): string {
   if (title.length > 0) return title
   if (note.timestamp) return note.timestamp
   return `L${note.startLine}`
+}
+
+function displaySourceFilename(sourcePath: string): string {
+  const lastPart = sourcePath.split(/[\\/]/).pop() || sourcePath
+  try { return decodeURIComponent(lastPart).split(/[\\/]/).pop() || lastPart } catch { return lastPart }
 }

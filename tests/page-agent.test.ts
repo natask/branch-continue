@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { applyPageAgentEdit, pageSystemPrompt, stripPageSystemPrompt, withPageSystemPrompt } from '../src/ui/lib/page-agent'
 import { readConcepts, writeConcepts } from '../src/core/backbone/concepts'
+import { appendAgentTask, extractLatestAgentTask, stripAgentMetadata } from '../src/ui/lib/agent-links'
+import { stripConceptMetadata } from '../src/core/backbone/concepts'
 
 describe('portable page instructions and agent edits', () => {
   it('stores multiline instructions inside the note and keeps prose separate', () => {
@@ -25,5 +27,25 @@ describe('portable page instructions and agent edits', () => {
   })
   it('rejects a late edit when the user changed this page', () => {
     expect(applyPageAgentEdit('A new thought.', 'An earlier thought.', 'Agent suggestion.')).toBeNull()
+  })
+  it('keeps newer ideas and instructions when only metadata changed during a request', () => {
+    const base = appendAgentTask(withPageSystemPrompt('A rough sentence.', 'Keep my voice.'), {
+      taskId: 'request_1', sessionId: 'note-agent:1', agent: 'agent', prompt: 'Refine',
+      status: 'running', sourceKind: 'note', submittedAt: 'now',
+    })
+    const current = writeConcepts(withPageSystemPrompt(base, 'Use short sentences.'), [{
+      id: 'idea', parentId: null, title: 'New idea', description: 'Added while running',
+      sourceText: 'A rough sentence.', outcome: '', createdAt: 'now', updatedAt: 'now',
+    }])
+    const applied = applyPageAgentEdit(current, base, withPageSystemPrompt('A clear sentence.', 'Outdated agent instructions.'))!
+    expect(pageSystemPrompt(applied)).toBe('Use short sentences.')
+    expect(readConcepts(applied)[0]?.title).toBe('New idea')
+    expect(extractLatestAgentTask(applied)?.taskId).toBe('request_1')
+    expect(stripAgentMetadata(stripConceptMetadata(stripPageSystemPrompt(applied)))).toBe('A clear sentence.')
+  })
+  it('rejects prose conflicts even when hidden metadata also changed', () => {
+    const base = withPageSystemPrompt('An earlier thought.', 'Keep my voice.')
+    const current = withPageSystemPrompt('A new thought.', 'Use short sentences.')
+    expect(applyPageAgentEdit(current, base, 'Agent suggestion.')).toBeNull()
   })
 })

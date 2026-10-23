@@ -1,5 +1,5 @@
-import { preserveAgentMetadata } from './agent-links'
-import { preserveConceptMetadata } from '../../core/backbone/concepts'
+import { preserveAgentMetadata, stripAgentMetadata } from './agent-links'
+import { preserveConceptMetadata, stripConceptMetadata } from '../../core/backbone/concepts'
 
 const PROMPT_LINE = /^<!-- backbone-page-system:v1 (.*?) -->\n?/m
 
@@ -25,6 +25,9 @@ export function withPageSystemPrompt(body: string, prompt: string): string {
 
 /** Keep a late agent result from replacing edits made while the request ran. */
 export function applyPageAgentEdit(current: string, base: string, edited: string): string | null {
-  if (current !== base) return null
-  return preserveAgentMetadata(preserveConceptMetadata(withPageSystemPrompt(stripPageSystemPrompt(edited), pageSystemPrompt(base)), base), base)
+  const prose = (body: string) => stripAgentMetadata(stripConceptMetadata(stripPageSystemPrompt(body)))
+  if (prose(current) !== prose(base)) return null
+  // Ideas, instructions, and task records can change independently of wording.
+  // Keep their latest values rather than rolling them back to launch time.
+  return preserveAgentMetadata(preserveConceptMetadata(withPageSystemPrompt(stripPageSystemPrompt(edited), pageSystemPrompt(current)), current), current)
 }

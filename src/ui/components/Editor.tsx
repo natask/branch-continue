@@ -286,13 +286,14 @@ export function Editor({
   return (
     <article className="note-editor">
       <div ref={shellRef} className="note-editor-shell">
-        <div className="note-editor-header">
+        <div className="note-editor-header note-editor-toolbar">
           <div className="note-editor-title-area">
             {editor.editing && editor.editingTitle ? (
               <input
                 ref={session.titleInputRef}
                 className="note-editor-title-input"
-                value={editor.title}
+                value={editor.title === editor.timestamp ? '' : editor.title}
+                placeholder="Untitled note"
                 onChange={(event) => session.updateTitle(event.target.value)}
                 onBlur={session.stopTitleEdit}
                 onKeyDown={session.handleTitleKeyDown}
@@ -302,13 +303,13 @@ export function Editor({
                 className={`note-editor-title ${editor.editing ? 'note-editor-title--editable' : ''}`}
                 onClick={editor.editing ? session.beginTitleEdit : undefined}
               >
-                {editor.title}
+                {editor.title === editor.timestamp ? 'Untitled note' : editor.title}
               </h2>
             ) : (
               editor.editing && (
-                <span className="note-editor-add-title" onClick={session.beginTitleEdit}>
-                  + add title
-                </span>
+                <button type="button" className="note-editor-add-title" onClick={session.beginTitleEdit}>
+                  Untitled note
+                </button>
               )
             )}
           </div>
@@ -334,45 +335,7 @@ export function Editor({
               </svg>
               {!session.autoSaveEnabled && <span className="save-icon-slash" />}
             </button>
-            {editor.editing && !isMobile && (
-              <>
-                <button
-                  className="btn-icon"
-                  onClick={session.handleUndo}
-                  disabled={!session.canUndo}
-                  type="button"
-                  title="Undo"
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="1 4 1 10 7 10" />
-                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-                  </svg>
-                </button>
-                <button
-                  className="btn-icon"
-                  onClick={session.handleRedo}
-                  disabled={!session.canRedo}
-                  type="button"
-                  title="Redo"
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="23 4 23 10 17 10" />
-                    <path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10" />
-                  </svg>
-                </button>
-              </>
-            )}
-            <button
-              className={`btn-icon ${!editor.editing ? 'btn-icon--active' : ''}`}
-              onClick={session.toggleEdit}
-              type="button"
-              title={editor.editing ? 'Switch to read mode' : 'Switch to edit mode'}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
-            </button>
+            <span className="note-save-state">{session.saveError ? 'Save failed' : session.saving ? 'Saving…' : editor.dirty ? 'Unsaved' : 'Saved'}</span>
             <div className="note-editor-branch-close">
               <button
                 className={`recordings-stealth-toggle${showRecordingsPanel ? ' recordings-stealth-toggle--active' : ''}`}
@@ -407,7 +370,7 @@ export function Editor({
                 {isMobile ? 'Search' : 'Commands'}
               </button>
               <button
-                className={`btn-secondary${agentComposerOpen ? ' btn-secondary--active' : ''}`}
+                className={`btn-primary note-enhance-button${agentComposerOpen ? ' btn-secondary--active' : ''}`}
                 onClick={() => {
                   setAgentComposerOpen(true)
                   if (!agentPrompt.trim()) setAgentPrompt('Improve the clarity and wording of this page while preserving my meaning and voice.')
@@ -417,9 +380,55 @@ export function Editor({
               >
                 Enhance
               </button>
-              <button className="btn-primary" onClick={() => void session.handleBranchFromEditor()} type="button">
-                Branch
-              </button>
+              <details className="editor-actions-menu" onClick={(event) => {
+                if ((event.target as HTMLElement).closest('button')) event.currentTarget.open = false
+              }}>
+                <summary>More</summary>
+                <div className="editor-actions-menu-content" role="group" aria-label="More note actions">
+                  {editor.editing && (
+                    <>
+                      <button
+                        className="btn-icon"
+                        onClick={session.handleUndo}
+                        disabled={!session.canUndo}
+                        type="button"
+                        title="Undo"
+                      >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="1 4 1 10 7 10" />
+                          <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                        </svg><span>Undo</span>
+                      </button>
+                      <button
+                        className="btn-icon"
+                        onClick={session.handleRedo}
+                        disabled={!session.canRedo}
+                        type="button"
+                        title="Redo"
+                      >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="23 4 23 10 17 10" />
+                          <path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10" />
+                        </svg><span>Redo</span>
+                      </button>
+                    </>
+                  )}
+                  <button
+                    className={`btn-icon ${!editor.editing ? 'btn-icon--active' : ''}`}
+                    onClick={session.toggleEdit}
+                    type="button"
+                    title={editor.editing ? 'Switch to read mode' : 'Switch to edit mode'}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg><span>{editor.editing ? 'Read mode' : 'Edit mode'}</span>
+                  </button>
+                    <button className="btn-secondary note-branch-button" onClick={() => void session.handleBranchFromEditor()} type="button">
+                      Branch
+                    </button>
+                </div>
+              </details>
               <button className="btn-secondary" onClick={session.closeEditor} type="button">
                 Close
               </button>
@@ -441,9 +450,10 @@ export function Editor({
             ) : (
               <span
                 className="note-editor-timestamp note-editor-timestamp--demoted"
+                title={editor.timestamp}
                 onClick={editor.editing ? session.beginTimestampEdit : undefined}
               >
-                {editor.timestamp}
+                {displayNoteDate(editor.timestamp)}
               </span>
             )}
           </div>
@@ -500,6 +510,62 @@ export function Editor({
         </div>
 
         {session.saveError && <p className="status-error">{session.saveError}</p>}
+        <div className={`note-editor-content note-workspace${showRecordingsPanel ? ' note-editor-content--with-recordings' : ''}`}>
+          <div className="note-editor-main note-document">
+            <div className="note-document-label">Your writing</div>
+            {editor.editing ? (
+              <textarea
+                ref={handleBodyRef}
+                className="note-editor-body note-editor-body--edit"
+                aria-label="Note text"
+                placeholder="Start with a thought. There is room to refine it."
+                value={stripAgentMetadata(stripConceptMetadata(stripPageSystemPrompt(editor.body)))}
+                onChange={(event) => session.updateBody(preserveAgentMetadata(preserveConceptMetadata(withPageSystemPrompt(event.target.value, pageSystemPrompt(editor.body)), editor.body), editor.body))}
+                onKeyDown={session.handleBodyKeyDown}
+              />
+            ) : (
+              <ReadableNoteBody body={editor.body} sessionId={voiceSessionIdForBody(editor.body)} />
+            )}
+
+            {isMobile && (
+              <div className="note-editor-mobile-nav" aria-label="Note navigation">
+                <button
+                  className="btn-secondary note-editor-mobile-nav-btn"
+                  onPointerDown={(event) => startMobileNavRepeat('older', event)}
+                  onPointerUp={stopMobileNavRepeat}
+                  onPointerCancel={cancelMobileNavRepeat}
+                  onLostPointerCapture={stopMobileNavRepeat}
+                  onClick={() => handleMobileNavClick('older')}
+                  disabled={!canOpenOlderNote}
+                  type="button"
+                >
+                  Older
+                </button>
+                <button
+                  className="btn-primary note-editor-mobile-nav-btn note-editor-mobile-nav-search"
+                  onClick={onOpenSearch}
+                  type="button"
+                >
+                  Search Notes
+                </button>
+                <button
+                  className="btn-secondary note-editor-mobile-nav-btn"
+                  onPointerDown={(event) => startMobileNavRepeat('newer', event)}
+                  onPointerUp={stopMobileNavRepeat}
+                  onPointerCancel={cancelMobileNavRepeat}
+                  onLostPointerCapture={stopMobileNavRepeat}
+                  onClick={() => handleMobileNavClick('newer')}
+                  disabled={!canOpenNewerNote}
+                  type="button"
+                >
+                  Newer
+                </button>
+              </div>
+            )}
+          </div>
+
+          <aside className="note-tools" aria-label="Page tools">
+            <div className="note-tools-heading">Page tools <span>Refine and explore</span></div>
         {agentComposerOpen && (
           <form
             className="note-agent-composer"
@@ -509,7 +575,7 @@ export function Editor({
               void onRunAgent(agentPrompt)
             }}
           >
-            <CodexAccount />
+            <div className="note-panel-heading"><span>Refine with Codex</span><button type="button" className="note-panel-dismiss" onClick={() => setAgentComposerOpen(false)} aria-label="Close Codex panel">×</button></div>
             <label htmlFor="note-agent-prompt">Ask Codex to edit this page</label>
             <div className="note-agent-composer-row">
               <textarea
@@ -535,6 +601,7 @@ export function Editor({
                 rows={3}
               />
             </details>
+            <details className="note-account-settings"><summary>Codex account</summary><CodexAccount /></details>
             <AgentTaskStatus progress={visibleAgentProgress} />
           </form>
         )}
@@ -589,61 +656,11 @@ export function Editor({
           </>}
           {versionError && <p className="status-error">{versionError}</p>}
         </details>
-        <div className={`note-editor-content${showRecordingsPanel ? ' note-editor-content--with-recordings' : ''}`}>
-          <div className="note-editor-main">
-            {editor.editing ? (
-              <textarea
-                ref={handleBodyRef}
-                className="note-editor-body note-editor-body--edit"
-                value={stripAgentMetadata(stripConceptMetadata(stripPageSystemPrompt(editor.body)))}
-                onChange={(event) => session.updateBody(preserveAgentMetadata(preserveConceptMetadata(withPageSystemPrompt(event.target.value, pageSystemPrompt(editor.body)), editor.body), editor.body))}
-                onKeyDown={session.handleBodyKeyDown}
-              />
-            ) : (
-              <ReadableNoteBody body={editor.body} sessionId={voiceSessionIdForBody(editor.body)} />
-            )}
-
             <ConceptDepthPanel
               pageId={editor.source?.noteUid ?? editor.source?.id ?? `draft:${editor.sessionKey}`}
               pageText={editor.body}
               onChange={session.updateBody}
             />
-            {isMobile && (
-              <div className="note-editor-mobile-nav" aria-label="Note navigation">
-                <button
-                  className="btn-secondary note-editor-mobile-nav-btn"
-                  onPointerDown={(event) => startMobileNavRepeat('older', event)}
-                  onPointerUp={stopMobileNavRepeat}
-                  onPointerCancel={cancelMobileNavRepeat}
-                  onLostPointerCapture={stopMobileNavRepeat}
-                  onClick={() => handleMobileNavClick('older')}
-                  disabled={!canOpenOlderNote}
-                  type="button"
-                >
-                  Older
-                </button>
-                <button
-                  className="btn-primary note-editor-mobile-nav-btn note-editor-mobile-nav-search"
-                  onClick={onOpenSearch}
-                  type="button"
-                >
-                  Search Notes
-                </button>
-                <button
-                  className="btn-secondary note-editor-mobile-nav-btn"
-                  onPointerDown={(event) => startMobileNavRepeat('newer', event)}
-                  onPointerUp={stopMobileNavRepeat}
-                  onPointerCancel={cancelMobileNavRepeat}
-                  onLostPointerCapture={stopMobileNavRepeat}
-                  onClick={() => handleMobileNavClick('newer')}
-                  disabled={!canOpenNewerNote}
-                  type="button"
-                >
-                  Newer
-                </button>
-              </div>
-            )}
-          </div>
 
           {showRecordingsPanel && (
             <VoiceRecordingsPanel
@@ -671,6 +688,7 @@ export function Editor({
               }}
             />
           )}
+          </aside>
         </div>
       </div>
     </article>
@@ -780,4 +798,12 @@ function focusedControlRect(target: HTMLElement): Pick<DOMRect, 'top' | 'bottom'
   const top = targetRect.top + paddingTop + Math.max(0, visualLineIndex) * lineHeight
 
   return { top, bottom: top + lineHeight }
+}
+
+function displayNoteDate(timestamp: string): string {
+  const date = timestamp.match(/\d{4}-\d{2}-\d{2}/)?.[0]
+  if (!date) return timestamp
+  const parsed = new Date(`${date}T12:00:00`)
+  if (Number.isNaN(parsed.getTime())) return timestamp
+  return parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
