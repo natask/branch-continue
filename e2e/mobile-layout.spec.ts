@@ -39,6 +39,27 @@ for (const width of [320, 430]) {
     expect(geometry.contentWidth).toBeLessThanOrEqual(geometry.shellWidth)
     await page.screenshot({ path: `test-results/mobile-editor-${width}.png` })
 
+    await editor.getByRole('button', { name: 'Enhance', exact: true }).click()
+    const sheet = page.getByRole('dialog', { name: 'Refine with Codex', exact: true })
+    await expect(sheet).toBeVisible()
+    await sheet.evaluate(async (element) => {
+      await Promise.all(element.getAnimations().map((animation) => animation.finished))
+    })
+    const sheetGeometry = await sheet.evaluate((element) => {
+      const rect = element.getBoundingClientRect()
+      return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: element.clientWidth, contentWidth: element.scrollWidth }
+    })
+    expect(sheetGeometry.left).toBeGreaterThanOrEqual(0)
+    expect(sheetGeometry.right).toBeLessThanOrEqual(width)
+    expect(sheetGeometry.top).toBeGreaterThanOrEqual(0)
+    expect(sheetGeometry.bottom).toBeLessThanOrEqual(460)
+    expect(sheetGeometry.contentWidth).toBeLessThanOrEqual(sheetGeometry.width)
+    await sheet.getByLabel('Ask Codex to edit this page').fill('Keep my meaning and make this clearer.')
+    await expect(sheet.getByRole('button', { name: 'Run on note', exact: true })).toBeInViewport()
+    await page.screenshot({ path: `test-results/mobile-sheet-${width}.png` })
+    await sheet.getByRole('button', { name: 'Done', exact: true }).click()
+    await expect(editor).toBeVisible()
+
     const search = editor.getByRole('button', { name: 'Search', exact: true }).first()
     await search.scrollIntoViewIfNeeded()
     await search.click()

@@ -7,16 +7,18 @@ import {
 export interface ConceptDepthPanelProps {
   pageId: string
   pageText: string
+  initiallyOpen?: boolean
+  hideToggle?: boolean
   onChange: (body: string) => void
 }
 
-export function ConceptDepthPanel({ pageId, pageText, onChange }: ConceptDepthPanelProps) {
+export function ConceptDepthPanel({ pageId, pageText, onChange, initiallyOpen = false, hideToggle = false }: ConceptDepthPanelProps) {
   const concepts = useMemo(() => readConcepts(pageText), [pageText])
   const sentences = useMemo(() => pageSentences(pageText), [pageText])
   const [draft, setDraft] = useState<PageConcept | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [opened, setOpened] = useState(false)
-  useEffect(() => { setDraft(null); setError(null); setOpened(false) }, [pageId])
+  const [opened, setOpened] = useState(initiallyOpen)
+  useEffect(() => { setDraft(null); setError(null); setOpened(initiallyOpen) }, [pageId, initiallyOpen])
 
   function createIdea(parentId: string | null = null) {
     const now = new Date().toISOString()
@@ -62,7 +64,7 @@ export function ConceptDepthPanel({ pageId, pageText, onChange }: ConceptDepthPa
   const excludedParents = draft ? conceptDescendants(concepts, draft.id) : new Set<string>()
   return <section className="concept-depth-panel" aria-label="Idea depth">
     <div className="concept-actions">
-      <button type="button" className="btn-secondary" aria-expanded={opened} onClick={() => setOpened(!opened)}>Ideas{concepts.length ? ` (${concepts.length})` : ''}</button>
+      {!hideToggle && <button type="button" className="btn-secondary" aria-expanded={opened} onClick={() => setOpened(!opened)}>Ideas{concepts.length ? ` (${concepts.length})` : ''}</button>}
       <button type="button" className="btn-secondary" onClick={() => createIdea()}>+ Idea</button>
     </div>
     {opened && <>

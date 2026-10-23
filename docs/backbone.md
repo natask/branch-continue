@@ -87,3 +87,9 @@ Verification for this increment: 350 unit tests across 51 files pass, TypeScript
 Version 0.1.14 delivery passed: `pnpm app:deploy` built both desktop bundles, installed and launched the app, and restarted its runtime. The installed app reports 0.1.14. The final live signed-in Codex browser workflow passed in 12.3 seconds after deployment.
 
 `pnpm mobile:ota:deploy` published `0.1.14-20261023T083650Z-380c1d8`. All 15 public assets match their manifest sizes and SHA-256 values; the mobile runtime health check passes. The existing signed 0.1.13 Android installer remains available at its published URL and keeps the same verified hash. This is a frontend update, so compatible native shells can load it without a new APK. Physical phone application remains unverified; the release registry is unavailable, while publication itself passed.
+
+## Modal refinement, version 0.1.15
+
+The earlier dark appearance is restored. Notes stay in a single writing area; Codex, versions, ideas and recordings open only when requested, in modal sheets. Desktop centers the sheet and mobile anchors it above the keyboard. Each sheet contains focus, closes with Escape, Done or a backdrop click, and returns focus to its trigger. Page shortcuts stay inactive while a sheet is open. Reduced-motion preferences disable the entry animation.
+
+TypeScript and 350 unit tests across 51 files pass. The browser suite passes 21 checks with six device-specific cases skipped, covering modal dismissal, focus containment, phone keyboard clearance, note editing, snapshots, restore, ideas and Codex conflict handling. Landing screenshots reflect the restored appearance. Native mobile code is unchanged; the existing Android shell can load this frontend through the OTA channel. Phone installation and sync still require physical device evidence.

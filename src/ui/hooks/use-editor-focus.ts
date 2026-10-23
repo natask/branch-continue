@@ -51,7 +51,7 @@ export function useEditorFocus({
     if (!editor?.editing) return
     const activeElement = typeof document !== 'undefined' ? document.activeElement : null
     const activeInsideEditor =
-      activeElement instanceof HTMLElement && activeElement.closest('.note-editor') !== null
+      activeElement instanceof HTMLElement && activeElement.closest('.note-editor, .note-sheet') !== null
 
     if (editor.editingTitle) {
       if (activeElement === titleInputRef.current) return

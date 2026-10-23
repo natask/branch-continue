@@ -1,3 +1,4 @@
+import { NoteSheet } from './NoteSheet'
 import { ConceptDepthPanel } from './ConceptDepthPanel'
 import { stripConceptMetadata, preserveConceptMetadata } from '../../core/backbone/concepts'
 import { CodexAccount } from './CodexAccount'
@@ -9,9 +10,7 @@ import type { UseAudioNoteRecorderResult } from '../hooks/use-audio-note-recorde
 import type { UseEditorSessionResult } from '../hooks/use-editor-session'
 import { type VoiceRecordingConfig } from '../lib/voice-recording-config'
 import {
-  resolveRecordingsPanelOpen,
   resolveVoiceContinueControl,
-  type VoicePanelPreference,
 } from '../lib/voice-panel-state'
 import { parseVoiceTranscriptTime } from '../lib/voice-transcript'
 import { extractAudioCaptureReferences } from '../../core/audio/audio-store'
@@ -91,8 +90,9 @@ export function Editor({
   const shellRef = useRef<HTMLDivElement | null>(null)
   const navRepeatTimerRef = useRef<number | null>(null)
   const ignorePointerClickRef = useRef(false)
-  const [panelPreference, setPanelPreference] = useState<VoicePanelPreference>('auto')
-  const [agentComposerOpen, setAgentComposerOpen] = useState(false)
+  const [activeTool, setActiveTool] = useState<'codex' | 'versions' | 'ideas' | 'recordings' | null>(null)
+  const agentComposerOpen = activeTool === 'codex'
+  const setAgentComposerOpen = (open: boolean) => setActiveTool(open ? 'codex' : null)
   const [agentPrompt, setAgentPrompt] = useState('')
   const versionTouchRef = useRef<{ x: number; y: number } | null>(null)
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null)
@@ -147,13 +147,7 @@ export function Editor({
     [session.autoSaveEnabled],
   )
   const hasLinkedAudio = editor ? extractAudioCaptureReferences(editor.body).length > 0 : false
-  const hasRecorderAudio = Boolean(audioRecorder.audioUrl || audioRecorder.audioBlob) || audioRecorder.status === 'stopped'
-  const showRecordingsPanel = resolveRecordingsPanelOpen({
-    preference: panelPreference,
-    hasLinkedAudio,
-    recorderActive: audioRecorder.recording || hasRecorderAudio,
-    voiceConfigOpen,
-  })
+  const showRecordingsPanel = activeTool === 'recordings'
   const voiceControl = resolveVoiceContinueControl({
     status: audioRecorder.status,
     recording: audioRecorder.recording,
@@ -163,13 +157,8 @@ export function Editor({
   })
 
   function handleVoiceControlClick() {
-    // Toggling only reveals or hides an existing voice note; it never records.
-    if (voiceControl.action === 'toggle-panel') {
-      setPanelPreference(showRecordingsPanel ? 'closed' : 'open')
-      return
-    }
-    setPanelPreference('open')
-    onVoiceCapture()
+    setActiveTool('recordings')
+    if (voiceControl.action !== 'toggle-panel') onVoiceCapture()
   }
 
   const handleBodyRef = useCallback(
@@ -238,14 +227,15 @@ export function Editor({
 
   // Hiding the panel lasts for the note being read, not for every note after it.
   useEffect(() => {
-    setPanelPreference('auto')
+    setActiveTool(null)
+    setSelectedVersion(null)
     setAgentComposerOpen(false)
     setAgentPrompt('')
   }, [editor?.sessionKey])
 
   useEffect(() => {
     if (voiceConfigOpen) {
-      setPanelPreference('open')
+      setActiveTool('recordings')
     }
   }, [voiceConfigOpen])
 
@@ -376,10 +366,13 @@ export function Editor({
                   if (!agentPrompt.trim()) setAgentPrompt('Improve the clarity and wording of this page while preserving my meaning and voice.')
                 }}
                 type="button"
+                aria-haspopup="dialog"
                 aria-expanded={agentComposerOpen}
               >
                 Enhance
               </button>
+              <button className="btn-secondary note-tool-trigger" type="button" onClick={() => setActiveTool('versions')} aria-label="Versions" aria-haspopup="dialog"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>Versions</span></button>
+              <button className="btn-secondary note-tool-trigger" type="button" onClick={() => setActiveTool('ideas')} aria-label="Ideas" aria-haspopup="dialog"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M9 18h6m-5 3h4M8 13a6 6 0 1 1 8 0c-1 1-1 2-1 3H9c0-1 0-2-1-3Z"/></svg><span>Ideas</span></button>
               <details className="editor-actions-menu" onClick={(event) => {
                 if ((event.target as HTMLElement).closest('button')) event.currentTarget.open = false
               }}>
@@ -512,13 +505,12 @@ export function Editor({
         {session.saveError && <p className="status-error">{session.saveError}</p>}
         <div className={`note-editor-content note-workspace${showRecordingsPanel ? ' note-editor-content--with-recordings' : ''}`}>
           <div className="note-editor-main note-document">
-            <div className="note-document-label">Your writing</div>
             {editor.editing ? (
               <textarea
                 ref={handleBodyRef}
                 className="note-editor-body note-editor-body--edit"
                 aria-label="Note text"
-                placeholder="Start with a thought. There is room to refine it."
+                placeholder="Start writing…"
                 value={stripAgentMetadata(stripConceptMetadata(stripPageSystemPrompt(editor.body)))}
                 onChange={(event) => session.updateBody(preserveAgentMetadata(preserveConceptMetadata(withPageSystemPrompt(event.target.value, pageSystemPrompt(editor.body)), editor.body), editor.body))}
                 onKeyDown={session.handleBodyKeyDown}
@@ -564,9 +556,7 @@ export function Editor({
             )}
           </div>
 
-          <aside className="note-tools" aria-label="Page tools">
-            <div className="note-tools-heading">Page tools <span>Refine and explore</span></div>
-        {agentComposerOpen && (
+          <NoteSheet open={agentComposerOpen} title="Refine with Codex" onClose={() => setActiveTool(null)}>
           <form
             className="note-agent-composer"
             onSubmit={(event) => {
@@ -575,7 +565,6 @@ export function Editor({
               void onRunAgent(agentPrompt)
             }}
           >
-            <div className="note-panel-heading"><span>Refine with Codex</span><button type="button" className="note-panel-dismiss" onClick={() => setAgentComposerOpen(false)} aria-label="Close Codex panel">×</button></div>
             <label htmlFor="note-agent-prompt">Ask Codex to edit this page</label>
             <div className="note-agent-composer-row">
               <textarea
@@ -604,9 +593,10 @@ export function Editor({
             <details className="note-account-settings"><summary>Codex account</summary><CodexAccount /></details>
             <AgentTaskStatus progress={visibleAgentProgress} />
           </form>
-        )}
-        <details className="note-version-panel">
-          <summary>Versions ({versions.length})</summary>
+          </NoteSheet>
+          <NoteSheet open={activeTool === 'versions'} title="Version history" onClose={() => setActiveTool(null)}>
+        <section className="note-version-panel">
+          <p className="sheet-description">Every saved change stays in this note. Keep a snapshot or return to an earlier version.</p>
           <button type="button" className="btn-secondary" disabled={versionBusy} onClick={() => void runVersionAction(onSnapshot)}>Keep snapshot</button>
           <label>
             Saved version
@@ -655,14 +645,19 @@ export function Editor({
             <button type="button" className="btn-secondary" disabled={versionBusy} onClick={() => void runVersionAction(() => onRestoreVersion(previewVersion.id))}>Restore as new version</button>
           </>}
           {versionError && <p className="status-error">{versionError}</p>}
-        </details>
-            <ConceptDepthPanel
+        </section>
+
+          </NoteSheet>
+          <NoteSheet open={activeTool === 'ideas'} title="Ideas" onClose={() => setActiveTool(null)}>
+            <ConceptDepthPanel initiallyOpen hideToggle
               pageId={editor.source?.noteUid ?? editor.source?.id ?? `draft:${editor.sessionKey}`}
               pageText={editor.body}
               onChange={session.updateBody}
             />
 
-          {showRecordingsPanel && (
+
+          </NoteSheet>
+          <NoteSheet open={showRecordingsPanel} title="Recordings" onClose={() => { setActiveTool(null); onVoiceConfigOpenChange(false) }}>
             <VoiceRecordingsPanel
               audioRecorder={audioRecorder}
               audioNoteMessage={audioNoteMessage}
@@ -683,12 +678,12 @@ export function Editor({
               onVoiceRecordingConfigChange={onVoiceRecordingConfigChange}
               onSelectVoiceCredentialFile={onSelectVoiceCredentialFile}
               onClose={() => {
-                setPanelPreference('closed')
+                setActiveTool(null)
                 onVoiceConfigOpenChange(false)
               }}
             />
-          )}
-          </aside>
+
+          </NoteSheet>
         </div>
       </div>
     </article>
