@@ -53,9 +53,39 @@ async function submitToAgentService(
     runUrl: payload?.runUrl,
     externalId: payload?.externalId,
     error: payload?.error,
+    editedDocument: payload?.editedDocument,
   }
 }
 
 function resolveAgentRuntimeUrl(): string {
   return import.meta.env.VITE_AGENT_RUNTIME_URL || DEFAULT_AGENT_RUNTIME_URL
+}
+
+export interface CodexAccountState {
+  account: { type: string; email?: string | null; planType?: string } | null
+  requiresOpenaiAuth: boolean
+}
+
+export interface CodexSignIn {
+  loginId?: string
+  authUrl?: string
+  verificationUrl?: string
+  userCode?: string
+}
+
+export async function getCodexAccount(baseUrl = resolveAgentRuntimeUrl()): Promise<CodexAccountState> {
+  return codexAccountRequest(baseUrl, '/codex/account')
+}
+
+export async function startCodexSignIn(baseUrl = resolveAgentRuntimeUrl(), deviceCode = false): Promise<CodexSignIn> {
+  return codexAccountRequest(baseUrl, '/codex/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceCode }),
+  })
+}
+
+async function codexAccountRequest<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${baseUrl.replace(/\/+$/, '')}${path}`, init)
+  const payload = await response.json()
+  if (!response.ok) throw new Error(payload.error || `Codex account request failed (${response.status}).`)
+  return payload as T
 }

@@ -67,6 +67,10 @@ if [[ -d "$SYSTEM_APP" ]]; then
   fi
 fi
 
+if [[ "${BRANCH_CONTINUE_INSTALL_AGENT_RUNTIME:-1}" == "1" ]]; then
+  node "$ROOT_DIR/scripts/install-agent-runtime.mjs"
+fi
+
 "$OPEN_COMMAND" "$USER_APP"
 if ! wait_for_app_state running; then
   echo "The installed app did not launch within ${APP_STATE_TIMEOUT_SECONDS}s." >&2

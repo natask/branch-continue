@@ -14,6 +14,7 @@ const defaultMobileOtaUrl = 'http://10.147.17.10/mobile/'
 const defaultRemoteHost = 'reclaim@10.147.17.10'
 const defaultRemoteBase = '/home/reclaim-ethiopia/agent-stations/apps/branch-continue/mobile-ota'
 const defaultMasterOrchUrl = 'http://10.147.17.10:43110'
+const defaultMobileAgentRuntimeUrl = 'http://10.147.17.6:8765'
 const outputRoot = path.join(repoRoot, '.mobile-ota')
 
 const command = process.argv[2]
@@ -90,6 +91,7 @@ async function bundle(rawArgs) {
     createdAt: new Date().toISOString(),
     entrypoint: 'index.html',
     publicUrl: normalizedPublicUrl,
+    agentRuntimeUrl: mobileAgentRuntimeUrl(),
     bundleSha256: hashManifestFiles(fileEntries),
     files: fileEntries,
   }
@@ -259,8 +261,18 @@ function frontendBuildEnv(extra = {}) {
   return {
     ...process.env,
     ...safeVoiceFrontendEnv(),
+    VITE_AGENT_RUNTIME_URL: mobileAgentRuntimeUrl(),
     ...extra,
   }
+}
+
+function mobileAgentRuntimeUrl() {
+  const value = firstEnv(['MOBILE_OTA_AGENT_RUNTIME_URL', 'VITE_AGENT_RUNTIME_URL']) || defaultMobileAgentRuntimeUrl
+  const url = new URL(value)
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
+    throw new Error('Mobile agent runtime must be an HTTP(S) URL without embedded credentials.')
+  }
+  return url.href.replace(/\/+$/, '')
 }
 
 function safeVoiceFrontendEnv() {
@@ -656,6 +668,7 @@ Environment:
   MOBILE_OTA_SSH_HOST      SSH upload target, default ${defaultRemoteHost}
   MOBILE_OTA_REMOTE_BASE   Remote release base, default ${defaultRemoteBase}
   MOBILE_OTA_MASTER_ORCH_URL  Master Orch API for deployment registration, default ${defaultMasterOrchUrl}
+  MOBILE_OTA_AGENT_RUNTIME_URL  Codex runtime reachable from the phone, default ${defaultMobileAgentRuntimeUrl}
   --skip-master-orch       Deploy without recording the promoted mobile deployment in Master Orch
 
 Shell options:

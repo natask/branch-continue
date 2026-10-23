@@ -1,109 +1,72 @@
-# Local Agent Runtime
+# Backbone Codex runtime
 
-This is the scrappy execution layer for inline `@agent` requests.
+The application sends page requests to a local JavaScript service. The service
+controls `codex app-server` over its documented JSON-RPC protocol. This supports
+normal ChatGPT sign-in, saved Codex credentials, conversation resume, and page
+editing without putting credentials in a note or browser storage.
 
-The goal is one stable runtime API that can be implemented locally today and by
-Cloudflare Workflows/Durable Objects later.
+Start it with `pnpm agent:runtime`. It listens on `http://127.0.0.1:8765`.
+The host needs Node.js and the Codex CLI available on PATH. The JavaScript
+runtime runs on the desktop host; mobile clients use the same host through a
+configured reachable endpoint. A mobile WebView cannot run Node or Codex locally.
 
-The browser app does not run Codex directly. It submits an `AgentWorkRequest` to a local runtime service:
+The protocol is documented in the official [Codex app-server guide](https://learn.chatgpt.com/docs/app-server).
+The [Codex SDK guide](https://learn.chatgpt.com/docs/codex-sdk) also establishes
+that the TypeScript SDK requires a server-side Node runtime.
 
-```text
-AgentRouter
-  -> http://127.0.0.1:8765/agent-runs
-  -> Codex CLI
-```
+## Sign-in and page edits
 
-## Start Runtime
+`GET /codex/account` returns Codex's account state. `POST /codex/login` starts a
+normal ChatGPT browser sign-in and returns `authUrl`. Open that URL in a browser;
+Codex owns the callback and saves and refreshes credentials. Send
+`{"deviceCode":true}` to use device-code sign-in and receive `verificationUrl`
+and `userCode` instead. Poll account state to confirm completion.
 
-Start the local service:
+`POST /agent-runs` accepts `{request, agent}`. Each request includes a unique
+`id`, `agentId`, `prompt`, and `context` containing `pageId`, `threadId`, and
+`documentText`. Existing anchor/context fields remain supported.
 
-```bash
-pnpm agent:runtime
-```
+Set `request.metadata.editPage` to `true` to edit a page. Set
+`request.metadata.pageSystemPrompt` to that page's saved instructions. Codex
+returns `{response, editedDocument, externalId}` where `editedDocument` is the
+complete revised page and `externalId` is its Codex conversation ID. The UI saves
+that revision through the normal note/history path. A failed run never returns
+an applicable edit. The UI must check whether the note changed during the run
+before replacing its contents.
 
-The service listens on:
+Codex runs with read-only filesystem permissions and no tool approvals. Page
+editing happens through the returned text. The agent is instructed to operate
+only on the supplied page and to preserve unaffected content.
 
-```text
-http://127.0.0.1:8765
-```
+The runtime resolves the model through `model/list` so a model configured by a
+different client cannot override the signed-in account's available default.
+Set `AGENT_CODEX_MODEL` to select a specific available model.
 
-The app writes the request ID and `running` status into the source note before
-calling the service. Inspect the answering runtime directly with:
+Requests on the same page/thread run in order. Repeating an active request ID
+joins the existing run; repeating a completed request ID returns its result.
+`GET /agent-runs/:requestId` reports current or completed state. Run deduplication
+and the in-memory conversation map reset on service restart; persist
+`externalId` on the page and send it back as `metadata.codexSessionId` to resume
+across restarts. These operational maps are separate from the durable note
+history.
 
-```text
-GET http://127.0.0.1:8765/agent-runs/<request-id>
-```
+## Configuration
 
-Submitting the same request ID while it is running joins the existing run; it
-does not start a second Codex process.
+- `AGENT_RUNTIME_PORT`: service port, default `8765`.
+- `AGENT_RUNTIME_HOST`: primary bind address, default `127.0.0.1`.
+- `AGENT_RUNTIME_MOBILE_HOST`: optional second listener on an explicit private IPv4 address. The localhost listener remains available to the desktop app.
+- `AGENT_RUNTIME_WORKDIR`: Codex working directory, default current directory.
+- `AGENT_CODEX_COMMAND`: executable path, default `codex`.
+- `AGENT_RUNTIME_TIMEOUT_MS`: request timeout, default 12 minutes.
+- `AGENT_RUNTIME_CORS_ORIGIN`: comma-separated exact additional app origins.
+- `VITE_AGENT_RUNTIME_URL`: frontend endpoint, default `http://127.0.0.1:8765`.
 
-Override with:
+The runtime accepts localhost development and Tauri app origins. Other browser
+origins receive HTTP 403 before authentication or execution. Bind non-loopback
+only behind authenticated TLS infrastructure; CORS alone is not remote access
+authentication.
 
-```bash
-AGENT_RUNTIME_PORT=8770 pnpm agent:runtime
-```
-
-## Codex Executor
-
-Default command:
-
-```bash
-codex exec --dangerously-bypass-approvals-and-sandbox --json -
-```
-
-Override command or args:
-
-```bash
-AGENT_CODEX_COMMAND=codex \
-AGENT_CODEX_ARGS='exec --dangerously-bypass-approvals-and-sandbox --json -' \
-pnpm agent:runtime
-```
-
-The runtime maps each note's stable `context.threadId` to the Codex session ID
-returned by the first run. Later requests from that note use `codex exec resume`,
-so one note remains one real Codex conversation for the lifetime of the runtime.
-
-The working directory defaults to the current repo. Override it:
-
-```bash
-AGENT_RUNTIME_WORKDIR=/Users/natnaelkahssay/projs/branch-continue pnpm agent:runtime
-```
-
-## Permission Model
-
-The scrappy version intentionally uses full local permissions.
-
-That is not the final model. The durable run contract must later support:
-
-```text
-full local files
-workspace-only
-read-only context
-no file access
-remote main-machine runtime
-Master Orch runtime
-voice runtime
-```
-
-The current point is to prove the execution layer exists and can be wrapped in durability without forcing the UI to know how agents run.
-
-## Future Hosted Runtime
-
-The future hosted path should implement the same HTTP shape:
-
-```text
-GET  /health
-POST /agent-runs
-GET  /agent-runs/:requestId
-```
-
-On Cloudflare, the natural mapping is:
-
-```text
-Worker route
-  -> Durable Object per user/workspace/thread
-  -> Workflow per agent run
-  -> Durable Object SQLite for run/event state
-```
-
-The Branch Continue UI should not need to know whether the runtime is local or hosted.
+Setting `AGENT_CODEX_ARGS` explicitly retains the earlier command-wrapper
+executor for existing integrations. This compatibility mode does not implement
+structured page editing; leave it unset for Backbone page agents. Normal
+execution uses app-server and does not bypass its filesystem sandbox.

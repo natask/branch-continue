@@ -1,3 +1,8 @@
+import { ConceptDepthPanel } from './ConceptDepthPanel'
+import { stripConceptMetadata, preserveConceptMetadata } from '../../core/backbone/concepts'
+import { CodexAccount } from './CodexAccount'
+import { diffWords } from '../../core/backbone/versions'
+import { pageSystemPrompt, stripPageSystemPrompt, withPageSystemPrompt } from '../lib/page-agent'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type React from 'react'
 import type { UseAudioNoteRecorderResult } from '../hooks/use-audio-note-recorder'
@@ -32,6 +37,9 @@ interface EditorProps {
   audioRecorder: UseAudioNoteRecorderResult
   audioNoteMessage: string | null
   audioTranscriptRefreshKey: number
+  agentComposerRequest: number
+  onSnapshot: () => Promise<void>
+  onRestoreVersion: (versionId: string) => Promise<void>
   agentRequestPending: boolean
   agentTaskProgress: AgentTaskProgress | null
   liveVoicePeaks: () => number[]
@@ -58,6 +66,9 @@ export function Editor({
   audioRecorder,
   audioNoteMessage,
   audioTranscriptRefreshKey,
+  agentComposerRequest,
+  onSnapshot,
+  onRestoreVersion,
   agentRequestPending,
   agentTaskProgress,
   liveVoicePeaks,
@@ -81,6 +92,27 @@ export function Editor({
   const [panelPreference, setPanelPreference] = useState<VoicePanelPreference>('auto')
   const [agentComposerOpen, setAgentComposerOpen] = useState(false)
   const [agentPrompt, setAgentPrompt] = useState('')
+  const versionTouchRef = useRef<{ x: number; y: number } | null>(null)
+  const [selectedVersion, setSelectedVersion] = useState<string | null>(null)
+  const [versionBusy, setVersionBusy] = useState(false)
+  const [versionError, setVersionError] = useState<string | null>(null)
+  useEffect(() => {
+    if (agentComposerRequest > 0) setAgentComposerOpen(true)
+  }, [agentComposerRequest])
+  const runVersionAction = async (action: () => Promise<void>) => {
+    setVersionBusy(true)
+    setVersionError(null)
+    try { await action() } catch (error) { setVersionError(String(error)) }
+    finally { setVersionBusy(false) }
+  }
+  const versions = editor?.source?.versions ?? []
+  const previewVersion = versions.find((version) => version.id === selectedVersion)
+  const navigateVersion = (offset: number) => {
+    const index = versions.findIndex((version) => version.id === selectedVersion)
+    if (index < 0 || index + offset < 0) return
+    setSelectedVersion(versions[index + offset]?.id ?? null)
+  }
+
   const visibleAgentProgress = useMemo<AgentTaskProgress | null>(() => {
     if (agentTaskProgress && (
       agentTaskProgress.sourceNoteId === null
@@ -374,11 +406,14 @@ export function Editor({
               </button>
               <button
                 className={`btn-secondary${agentComposerOpen ? ' btn-secondary--active' : ''}`}
-                onClick={() => setAgentComposerOpen((open) => !open)}
+                onClick={() => {
+                  setAgentComposerOpen(true)
+                  if (!agentPrompt.trim()) setAgentPrompt('Improve the clarity and wording of this page while preserving my meaning and voice.')
+                }}
                 type="button"
                 aria-expanded={agentComposerOpen}
               >
-                Ask Agent
+                Enhance
               </button>
               <button className="btn-primary" onClick={() => void session.handleBranchFromEditor()} type="button">
                 Branch
@@ -472,13 +507,14 @@ export function Editor({
               void onRunAgent(agentPrompt)
             }}
           >
-            <label htmlFor="note-agent-prompt">Ask an agent about this note</label>
+            <CodexAccount />
+            <label htmlFor="note-agent-prompt">Ask Codex to edit this page</label>
             <div className="note-agent-composer-row">
               <textarea
                 id="note-agent-prompt"
                 value={agentPrompt}
                 onChange={(event) => setAgentPrompt(event.target.value)}
-                placeholder="What should the agent do? Use @critic, @researcher, or @editor to choose a role."
+                placeholder="Describe the changes you want. Codex saves a new version of this page."
                 rows={2}
                 autoFocus
               />
@@ -486,23 +522,90 @@ export function Editor({
                 {agentRequestPendingForNote ? 'Running…' : agentRequestPending ? 'Agent busy' : 'Run on note'}
               </button>
             </div>
+            <details className="note-agent-settings">
+              <summary>Instructions for this page</summary>
+              <label htmlFor="note-page-system-prompt">Page system prompt</label>
+              <textarea
+                id="note-page-system-prompt"
+                value={pageSystemPrompt(editor.body)}
+                onChange={(event) => session.updateBody(withPageSystemPrompt(editor.body, event.target.value))}
+                placeholder="How should Codex work on this page? These instructions are saved with the note."
+                rows={3}
+              />
+            </details>
             <AgentTaskStatus progress={visibleAgentProgress} />
           </form>
         )}
+        <details className="note-version-panel">
+          <summary>Versions ({versions.length})</summary>
+          <button type="button" className="btn-secondary" disabled={versionBusy} onClick={() => void runVersionAction(onSnapshot)}>Keep snapshot</button>
+          <label>
+            Saved version
+            <select value={selectedVersion ?? ''} onChange={(event) => setSelectedVersion(event.target.value || null)}>
+              <option value="">Current page</option>
+              {[...versions].reverse().map((version, index) => (
+                <option key={version.id} value={version.id}>
+                  {versions.length - index}. {new Date(version.at).toLocaleString()} · {version.label || version.kind}
+                </option>
+              ))}
+            </select>
+          </label>
+          {previewVersion && <>
+            <div className="note-version-navigation">
+              <button type="button" className="btn-secondary" disabled={versions.findIndex((item) => item.id === previewVersion.id) <= 0} onClick={() => setSelectedVersion(versions[versions.findIndex((item) => item.id === previewVersion.id) - 1]?.id ?? null)}>Previous version</button>
+              <button type="button" className="btn-secondary" onClick={() => setSelectedVersion(versions[versions.findIndex((item) => item.id === previewVersion.id) + 1]?.id ?? null)}>Next version</button>
+            </div>
+            <pre
+              className="note-version-preview"
+              tabIndex={0}
+              aria-label="Saved version preview"
+              style={{ touchAction: 'pan-y' }}
+              onKeyDown={(event) => {
+                if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                  event.preventDefault()
+                  navigateVersion(event.key === 'ArrowLeft' ? -1 : 1)
+                }
+              }}
+              onTouchStart={(event) => {
+                const touch = event.touches[0]
+                versionTouchRef.current = touch ? { x: touch.clientX, y: touch.clientY } : null
+              }}
+              onTouchEnd={(event) => {
+                const start = versionTouchRef.current
+                versionTouchRef.current = null
+                const touch = event.changedTouches[0]
+                if (!start || !touch) return
+                const dx = touch.clientX - start.x
+                const dy = touch.clientY - start.y
+                if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) navigateVersion(dx > 0 ? -1 : 1)
+              }}
+            >{stripConceptMetadata(stripPageSystemPrompt(previewVersion.body))}</pre>
+            <details><summary>Word changes to current page</summary>
+              <div className="note-version-preview note-version-diff">{diffWords(stripConceptMetadata(stripPageSystemPrompt(previewVersion.body)), stripConceptMetadata(stripPageSystemPrompt(editor.body))).map((part, index) => part.type === 'added' ? <ins key={index}>{part.text}</ins> : part.type === 'removed' ? <del key={index}>{part.text}</del> : <span key={index}>{part.text}</span>)}</div>
+            </details>
+            <button type="button" className="btn-secondary" disabled={versionBusy} onClick={() => void runVersionAction(() => onRestoreVersion(previewVersion.id))}>Restore as new version</button>
+          </>}
+          {versionError && <p className="status-error">{versionError}</p>}
+        </details>
         <div className={`note-editor-content${showRecordingsPanel ? ' note-editor-content--with-recordings' : ''}`}>
           <div className="note-editor-main">
             {editor.editing ? (
               <textarea
                 ref={handleBodyRef}
                 className="note-editor-body note-editor-body--edit"
-                value={editor.body}
-                onChange={(event) => session.updateBody(event.target.value)}
+                value={stripConceptMetadata(stripPageSystemPrompt(editor.body))}
+                onChange={(event) => session.updateBody(preserveConceptMetadata(withPageSystemPrompt(event.target.value, pageSystemPrompt(editor.body)), editor.body))}
                 onKeyDown={session.handleBodyKeyDown}
               />
             ) : (
               <ReadableNoteBody body={editor.body} sessionId={voiceSessionIdForBody(editor.body)} />
             )}
 
+            <ConceptDepthPanel
+              pageId={editor.source?.noteUid ?? editor.source?.id ?? `draft:${editor.sessionKey}`}
+              pageText={editor.body}
+              onChange={session.updateBody}
+            />
             {isMobile && (
               <div className="note-editor-mobile-nav" aria-label="Note navigation">
                 <button
@@ -573,7 +676,7 @@ export function Editor({
 }
 
 function ReadableNoteBody({ body, sessionId }: { body: string; sessionId: string | null }) {
-  const readableBody = stripSwitchboardTasks(body)
+  const readableBody = stripSwitchboardTasks(stripConceptMetadata(stripPageSystemPrompt(body)))
     .split('\n')
     .filter((line) => (
       !/^\s*Audio recording:\s+/i.test(line)

@@ -1,3 +1,4 @@
+import { applyPageAgentEdit, pageSystemPrompt } from './ui/lib/page-agent'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createAgentRouter } from './core/agents/router'
 import { createLocalAgentRuntime } from './core/agents/local-runtime'
@@ -343,6 +344,7 @@ function LoadedSourceApp({
     [station],
   )
   const [audioNoteMessage, setAudioNoteMessage] = useState<string | null>(null)
+  const [agentComposerRequest, setAgentComposerRequest] = useState(0)
   const [agentRequestPending, setAgentRequestPending] = useState(false)
   const [agentTaskProgress, setAgentTaskProgress] = useState<AgentTaskProgress | null>(null)
   const agentRequestInFlightRef = useRef(false)
@@ -741,21 +743,34 @@ function LoadedSourceApp({
     sourceNote: SourceNote,
     fallbackBody: string,
     task: AgentTaskRecord,
-  ): Promise<{ body: string; note: SourceNote }> => {
+    edit?: { base: string; body: string },
+  ): Promise<{ body: string; note: SourceNote; task: AgentTaskRecord }> => {
+    let savedTask = task
+    const bodyWithTask = (body: string) => {
+      const edited = edit ? applyPageAgentEdit(body, edit.base, edit.body) : body
+      const finalTask: AgentTaskRecord = edited === null ? {
+        ...task,
+        status: 'blocked',
+        response: `${task.response ?? ''}\n\nYour note changed while Codex was running. Your edits were kept. Proposed version:\n\n${edit!.body}`,
+      } : task
+      savedTask = finalTask
+      return updateAgentTask(edited ?? body, finalTask)
+    }
     const taskMarker = `Agent task: ${task.taskId}`
     const current = editorSessionRef.current.getCurrentEditor()
     const currentOwnsTask = Boolean(current?.source) && (
-      current!.source!.id === sourceNote.id
-      || Boolean(sourceNote.noteUid && current!.source!.noteUid === sourceNote.noteUid)
+      (sourceNote.noteUid && current!.source!.noteUid
+        ? current!.source!.noteUid === sourceNote.noteUid
+        : current!.source!.id === sourceNote.id)
       || current!.body.includes(taskMarker)
     )
 
     if (current && currentOwnsTask) {
       const ownerSessionKey = current.sessionKey
-      const nextBody = updateAgentTask(current.body, task)
+      const nextBody = bodyWithTask(current.body)
       editorBodyMirrorRef.current = { sessionKey: current.sessionKey, body: nextBody }
       editorSessionRef.current.updateBody(nextBody)
-      const saved = await editorSessionRef.current.flushAutoSave()
+      const saved = await editorSessionRef.current.flushAutoSave('codex')
       if (!saved) throw new Error('Could not save the agent task to this note.')
       const savedEditor = editorSessionRef.current.getCurrentEditor()
       const savedSource = savedEditor?.sessionKey === ownerSessionKey
@@ -764,6 +779,7 @@ function LoadedSourceApp({
       return {
         body: savedEditor?.sessionKey === ownerSessionKey ? savedEditor.body : nextBody,
         note: savedSource ?? sourceNote,
+        task: savedTask,
       }
     }
 
@@ -771,17 +787,18 @@ function LoadedSourceApp({
       ?? notesByIdRef.current.get(sourceNote.id)
       ?? Array.from(notesByIdRef.current.values()).find((note) => note.body.includes(taskMarker))
       ?? sourceNote
-    const nextBody = updateAgentTask(latest.body || fallbackBody, task)
+    const nextBody = bodyWithTask(latest.body || fallbackBody)
     const updated = await updateNoteRef.current(latest.id, {
       title: latest.title,
       timestamp: latest.timestamp ?? undefined,
       tags: latest.tags,
       body: nextBody,
+      actor: 'codex',
       noteUid: latest.noteUid,
       parentNoteId: latest.parentNoteId,
       disposition: latest.disposition,
     })
-    return { body: updated.body, note: updated }
+    return { body: updated.body, note: updated, task: savedTask }
   }, [])
   const persistSwitchboardTask = useCallback(async (
     sourceNote: SourceNote,
@@ -1417,6 +1434,48 @@ function LoadedSourceApp({
     window.setTimeout(focusPrompt, 100)
   }, [currentContextNote, updateVoiceRecordingConfig, voiceRecordingConfig.transcriptionMode])
 
+  const [fileHistoryError, setFileHistoryError] = useState<string | null>(null)
+  const handleSavedHistory = useCallback(async (direction: 'undo' | 'redo') => {
+    setFileHistoryError(null)
+    const owner = editorSessionRef.current.getCurrentEditor()
+    try {
+      if (!await editorSessionRef.current.flushAutoSave()) throw new Error('Could not save the current page before changing history.')
+      const source = editorSessionRef.current.getCurrentEditor()?.sessionKey === owner?.sessionKey
+        ? editorSessionRef.current.getCurrentEditor()?.source : null
+      const changed = await (direction === 'undo' ? undoFile() : redoFile())
+      if (!changed || !owner || !source) return
+      if (editorSessionRef.current.getCurrentEditor()?.sessionKey !== owner.sessionKey) return
+      const latest = app.getLatestNote(source.noteUid ?? source.id)
+      if (latest) editorSessionRef.current.openNoteEditor(latest)
+    } catch (error) { setFileHistoryError(errorMessage(error)) }
+  }, [app.getLatestNote, undoFile, redoFile])
+
+  const handlePageVersion = useCallback(async (restoreId?: string) => {
+    const owner = editorSessionRef.current.getCurrentEditor()
+    if (!owner) return
+    if (!await editorSessionRef.current.flushAutoSave()) throw new Error('Save this page before keeping a version.')
+    const current = editorSessionRef.current.getCurrentEditor()
+    if (!current?.source || current.sessionKey !== owner.sessionKey) return
+    const source = current.source
+    const version = restoreId ? source.versions?.find((item) => item.id === restoreId) : null
+    if (restoreId && !version) throw new Error('The selected version is no longer available.')
+    const saved = await updateNoteRef.current(source.id, {
+      title: version?.title ?? current.title,
+      timestamp: (version?.timestamp ?? source.timestamp) ?? undefined,
+      tags: version?.tags ?? current.tags,
+      body: version?.body ?? current.body,
+      noteUid: source.noteUid,
+      parentNoteId: version?.parentNoteId !== undefined ? version.parentNoteId : source.parentNoteId,
+      disposition: version?.disposition !== undefined ? version.disposition : source.disposition,
+      versionKind: version ? 'restored' : 'snapshot',
+      restoredFrom: version?.id,
+    })
+    if (editorSessionRef.current.getCurrentEditor()?.sessionKey === owner.sessionKey) {
+      if (version) editorSessionRef.current.openNoteEditor(saved)
+      else editorSessionRef.current.syncSource(saved, owner.sessionKey)
+    }
+  }, [])
+
   const handleRunLatestAgentPrompt = useCallback(async (
     promptInput?: string,
     options: { requireRecognizedVoiceTranscript?: boolean } = {},
@@ -1523,6 +1582,8 @@ function LoadedSourceApp({
         },
         metadata: {
           source: 'source-backed-note',
+          editPage: true,
+          pageSystemPrompt: pageSystemPrompt(sourceBody),
           sourceKind: persistedTask.sourceKind,
           agentTaskId: requestId,
           sourceNoteId: pending.note.id,
@@ -1553,15 +1614,17 @@ function LoadedSourceApp({
         runtimeSessionId: result.runtimeId === 'local-codex' ? result.externalId : undefined,
         launch,
       }
-      const completed = await persistAgentTask(pending.note, pending.body, completedTask)
+      const completed = await persistAgentTask(pending.note, pending.body, completedTask,
+        result.status === 'completed' && typeof result.editedDocument === 'string'
+          ? { base: pending.body, body: result.editedDocument } : undefined)
       taskNote = completed.note
       taskBody = completed.body
-      persistedTask = completedTask
+      persistedTask = completed.task
       setAgentTaskProgress({
         sourceNoteId: completed.note.id,
-        task: completedTask,
-        phase: completedTask.status,
-        message: agentTaskStatusMessage(completedTask),
+        task: completed.task,
+        phase: completed.task.status,
+        message: agentTaskStatusMessage(completed.task),
       })
     } catch (error) {
       const message = errorMessage(error)
@@ -1873,6 +1936,17 @@ function LoadedSourceApp({
         run: () => void editorSession.handleBranchFromEditor(),
       },
       {
+        id: 'invoke-agent-on-page',
+        label: 'Invoke Codex on This Page',
+        keywords: ['codex', 'agent', 'page', 'note', 'enhance', 'message', 'prompt'],
+        group: 'Actions',
+        disabled: !editorSession.editor && !currentContextNote,
+        run: () => {
+          if (!editorSession.editor && currentContextNote) editorSession.openNoteEditor(currentContextNote)
+          setAgentComposerRequest((value) => value + 1)
+        },
+      },
+      {
         id: 'run-latest-agent-request',
         label: 'Run Latest @agent Request',
         hint: 'current note',
@@ -2058,16 +2132,16 @@ function LoadedSourceApp({
         label: 'Undo Last Saved Change',
         keywords: ['undo', 'file', 'saved', 'persistent', 'history'],
         group: 'History',
-        disabled: Boolean(editorSession.editor) || !canUndoFile,
-        run: () => void undoFile(),
+        disabled: !canUndoFile,
+        run: () => void handleSavedHistory('undo'),
       },
       {
         id: 'file-redo',
         label: 'Redo Last Saved Change',
         keywords: ['redo', 'file', 'saved', 'persistent', 'history'],
         group: 'History',
-        disabled: Boolean(editorSession.editor) || !canRedoFile,
-        run: () => void redoFile(),
+        disabled: !canRedoFile,
+        run: () => void handleSavedHistory('redo'),
       },
     ],
     [
@@ -2086,6 +2160,7 @@ function LoadedSourceApp({
       handleCreateVoiceNote,
       handleUpdateVoiceNotePrompt,
       handleRunLatestAgentPrompt,
+      handleSavedHistory,
       handleCaptureCurrentFactoryIntent,
       handleGoToBoundary,
       handleOpenLinkedNote,
@@ -2122,9 +2197,10 @@ function LoadedSourceApp({
 
   return (
     <div className={`app${mobilePreview ? ' app-mobile-preview' : ''}`}>
+      {fileHistoryError && <p className="status-error" role="alert">{fileHistoryError}</p>}
       <header className="topbar">
         <div className="topbar-copy">
-          <h1 className="topbar-title">Branch Continue</h1>
+          <h1 className="topbar-title">Backbone</h1>
           <p className="topbar-path">{sourcePath}</p>
         </div>
 
@@ -2297,6 +2373,9 @@ function LoadedSourceApp({
           audioRecorder={audioRecorder}
           audioNoteMessage={audioNoteMessage}
           audioTranscriptRefreshKey={audioTranscriptRefreshKey}
+          onSnapshot={() => handlePageVersion()}
+          onRestoreVersion={(id) => handlePageVersion(id)}
+          agentComposerRequest={agentComposerRequest}
           agentRequestPending={agentRequestPending}
           agentTaskProgress={agentTaskProgress}
           liveVoicePeaks={liveVoicePeaks}

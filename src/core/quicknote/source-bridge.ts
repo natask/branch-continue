@@ -83,6 +83,13 @@ export class SourceFileUnavailableError extends Error {
   }
 }
 
+export class SourceFileConflictError extends Error {
+  constructor() {
+    super('The source file changed on another device or in another app. Reload it before saving again.')
+    this.name = 'SourceFileConflictError'
+  }
+}
+
 export interface SelectedFileResult {
   summary: SourceSummary
   content: string
@@ -92,7 +99,7 @@ export interface SourceBridge {
   selectFile(): Promise<SelectedFileResult>
   restoreLastSelection(): Promise<SelectedFileResult | null>
   read(): Promise<SelectedFileResult>
-  write(content: string): Promise<void>
+  write(content: string, expectedContent?: string): Promise<void>
   summary(): SourceSummary | null
   startWatching(onChanged: () => void): void
   stopWatching(): void
@@ -103,7 +110,6 @@ const FILE_WATCH_INTERVAL_MS = 2000
 export function createSourceBridge(): SourceBridge {
   let active: ActiveSource | null = null
   let watchTimer: ReturnType<typeof setInterval> | null = null
-  let lastKnownModified: number | null = null
   let lastKnownContentHash: string | null = null
 
   function stopWatchTimer() {
@@ -111,13 +117,12 @@ export function createSourceBridge(): SourceBridge {
       clearInterval(watchTimer)
       watchTimer = null
     }
-    lastKnownModified = null
     lastKnownContentHash = null
   }
 
   async function simpleHash(text: string): Promise<string> {
-    // Use length + first/last chars as a fast change fingerprint
-    return `${text.length}:${text.charCodeAt(0) || 0}:${text.charCodeAt(text.length - 1) || 0}:${text.charCodeAt(Math.floor(text.length / 2)) || 0}`
+    // Compare all text. Sparse fingerprints miss equal-length edits from sync.
+    return text
   }
 
   async function clearCurrentSource(source: ActiveSource): Promise<void> {
@@ -325,7 +330,7 @@ export function createSourceBridge(): SourceBridge {
       return { summary: toSummary(active), content: active.content }
     },
 
-    async write(content: string): Promise<void> {
+    async write(content: string, expectedContent?: string): Promise<void> {
       if (!active) {
         throw new Error('No file selected. Choose a file first.')
       }
@@ -333,6 +338,10 @@ export function createSourceBridge(): SourceBridge {
       if (active.kind === 'tauri') {
         const source = active
         try {
+          if (expectedContent !== undefined && await readTauriFile(source.path) !== expectedContent) {
+            throw new SourceFileConflictError()
+          }
+          if (active !== source) throw new SourceFileConflictError()
           await writeTauriFile(source.path, content)
           return
         } catch (error) {
@@ -343,6 +352,10 @@ export function createSourceBridge(): SourceBridge {
       if (active.kind === 'filesystem-handle') {
         const source = active
         try {
+          if (expectedContent !== undefined && await (await source.handle.getFile()).text() !== expectedContent) {
+            throw new SourceFileConflictError()
+          }
+          if (active !== source) throw new SourceFileConflictError()
           const writable = await source.handle.createWritable()
           await writable.write(content)
           await writable.close()
@@ -388,12 +401,13 @@ export function createSourceBridge(): SourceBridge {
 
           if (source.kind === 'filesystem-handle') {
             const file = await source.handle.getFile()
-            if (lastKnownModified === null) {
-              lastKnownModified = file.lastModified
+            const content = await file.text()
+            if (lastKnownContentHash === null) {
+              lastKnownContentHash = content
               return
             }
-            if (file.lastModified !== lastKnownModified) {
-              lastKnownModified = file.lastModified
+            if (content !== lastKnownContentHash) {
+              lastKnownContentHash = content
               onChanged()
             }
             return

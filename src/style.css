@@ -23,6 +23,7 @@
 
 /* Agentic markdown route */
 .agentic-page {
+  height: 100%;
   min-height: 100%;
   padding: 22px;
   background:
@@ -380,6 +381,11 @@ html,
 body,
 #root {
   height: 100%;
+  min-width: 0;
+}
+
+html {
+  height: 100dvh;
 }
 
 body {
@@ -415,7 +421,7 @@ pre {
   display: flex;
   flex-direction: column;
   height: 100%;
-  animation: app-enter 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: app-enter 0.8s cubic-bezier(0.16, 1, 0.3, 1) backwards;
 }
 
 @keyframes app-enter {
@@ -425,7 +431,7 @@ pre {
   }
   to {
     opacity: 1;
-    transform: scale(1) translateY(0);
+    transform: none;
   }
 }
 
@@ -2007,11 +2013,11 @@ pre {
   box-shadow: none;
   display: flex;
   flex-direction: column;
-  padding: 28px 28px calc(28px + env(safe-area-inset-bottom, 0px) + var(--editor-keyboard-inset, 0px));
+  padding: 28px 28px calc(28px + env(safe-area-inset-bottom, 0px));
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  scroll-padding-bottom: calc(96px + var(--editor-keyboard-inset, 0px));
+  scroll-padding-bottom: 96px;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -2207,6 +2213,94 @@ pre {
   color: var(--text-dim);
   font-size: 0.78rem;
   line-height: 1.45;
+}
+
+.note-agent-settings,
+.note-version-panel {
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.note-agent-settings summary,
+.note-version-panel summary {
+  cursor: pointer;
+  padding: 8px 0;
+}
+
+.note-agent-settings label,
+.note-version-panel label {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+  min-width: 0;
+}
+
+.note-agent-settings textarea,
+.note-version-panel select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--bg-surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.note-version-panel {
+  margin-bottom: 16px;
+  border-block: 1px solid var(--border);
+  padding: 4px 0 10px;
+}
+
+.note-version-preview {
+  max-height: min(40dvh, 28rem);
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  margin: 12px 0;
+  color: var(--text);
+  font: inherit;
+  line-height: 1.8;
+}
+
+.note-codex-account,
+.note-version-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+  min-width: 0;
+}
+
+.note-codex-account p {
+  flex-basis: 100%;
+  overflow-wrap: anywhere;
+}
+
+.note-version-diff {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+}
+
+.note-version-diff ins {
+  background: rgba(129, 199, 132, 0.15);
+  color: var(--success);
+  text-decoration: none;
+}
+
+.note-version-diff del {
+  background: rgba(229, 115, 115, 0.15);
+  color: var(--danger);
+  text-decoration: line-through;
 }
 
 .agent-task-status {
@@ -3877,7 +3971,7 @@ pre {
   }
 
   .note-editor-shell {
-    padding: 18px 18px calc(18px + env(safe-area-inset-bottom, 0px) + var(--editor-keyboard-inset, 0px));
+    padding: calc(18px + env(safe-area-inset-top, 0px)) max(18px, env(safe-area-inset-right, 0px)) calc(18px + env(safe-area-inset-bottom, 0px)) max(18px, env(safe-area-inset-left, 0px));
   }
 
   .note-editor-content {
@@ -3895,14 +3989,15 @@ pre {
 
   .note-editor-header {
     flex-direction: column;
+    flex-shrink: 0;
+    min-width: 0;
   }
 
   .note-editor-actions {
     width: 100%;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     gap: 8px;
-    overflow-x: auto;
-    overflow-y: hidden;
+    overflow: visible;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
     padding-bottom: 4px;
@@ -3913,12 +4008,16 @@ pre {
   }
 
   .note-editor-branch-close {
-    margin-left: auto;
+    min-width: 0;
+    max-width: 100%;
+    margin-left: 0;
+    flex-wrap: wrap;
   }
 
   .note-editor-actions .btn-primary,
   .note-editor-actions .btn-secondary,
   .note-editor-actions .recordings-stealth-toggle {
+    flex: 0 0 auto;
     padding: 9px 10px;
     white-space: nowrap;
     font-size: 0.74rem;
@@ -3953,5 +4052,73 @@ pre {
   .voice-recorder-panel,
   .audio-capture-list {
     max-block-size: min(38svh, 24em);
+  }
+
+  .topbar {
+    flex-shrink: 0;
+    gap: 14px;
+    padding: calc(18px + env(safe-area-inset-top, 0px)) max(18px, env(safe-area-inset-right, 0px)) 12px max(18px, env(safe-area-inset-left, 0px));
+  }
+
+  .app {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .note-editor-title-area,
+  .note-editor-header,
+  .note-editor-tags,
+  .note-agent-composer {
+    max-width: 100%;
+  }
+
+  .note-editor-body,
+  .note-editor-title,
+  .agent-link-readable,
+  .agent-link-message,
+  .agent-task-status {
+    overflow-wrap: anywhere;
+  }
+
+  .note-editor textarea,
+  .note-editor select,
+  .search-input {
+    font-size: 16px;
+  }
+
+  .note-editor-shell > * {
+    flex-shrink: 0;
+  }
+
+  .search-modal {
+    top: calc(12px + env(safe-area-inset-top, 0px));
+    max-height: calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - var(--editor-keyboard-inset, 0px));
+  }
+
+  .search-results {
+    min-height: 0;
+    max-height: none;
+  }
+
+  .factory-panel {
+    top: calc(8px + env(safe-area-inset-top, 0px));
+    bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .agent-link-editor-grid {
+    flex: 0 0 auto;
+    min-height: 70dvh;
+  }
+
+  .agent-link-editor .note-editor-actions {
+    flex-wrap: wrap;
+  }
+
+  .agent-link-editor .note-editor-shell {
+    padding-top: calc(18px + env(safe-area-inset-top, 0px));
+  }
+
+  .agentic-page {
+    padding-top: calc(14px + env(safe-area-inset-top, 0px));
+    padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
   }
 }

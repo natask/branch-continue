@@ -1,9 +1,22 @@
+import { parseQuickNoteFile, updateQuickNoteEntry } from '../quicknote/org-file'
+import type { SourceNote, QuickNoteCreateRequest } from '../quicknote/types'
+
 const DB_NAME = 'branch-continue-history'
 const STORE_NAME = 'source-histories'
 const DB_VERSION = 1
 export const MAX_SOURCE_HISTORY_COMMANDS = 200
 
 export type SourceFileCommandKind = 'create-note' | 'update-note'
+
+export interface SourceFileNoteState {
+  noteUid: string
+  title: string
+  body: string
+  tags: string[]
+  timestamp: string | null
+  parentNoteId: string | null
+  disposition: SourceNote['disposition']
+}
 
 export interface SourceFileCommand {
   id: string
@@ -14,6 +27,8 @@ export interface SourceFileCommand {
   start: number
   removedText: string
   insertedText: string
+  beforeNote?: SourceFileNoteState | null
+  afterNote?: SourceFileNoteState
 }
 
 export interface SourceFileHistoryState {
@@ -59,9 +74,18 @@ export function createSourceFileCommand(input: {
     afterEnd -= 1
   }
 
+  const beforeNotes = parseQuickNoteFile(input.before, '').entries
+  const afterNotes = parseQuickNoteFile(input.after, '').entries
+  const afterNote = afterNotes.find((note) => note.noteUid === input.noteId || note.id === input.noteId)
+  const beforeNote = afterNote && beforeNotes.find((note) => note.noteUid === afterNote.noteUid || note.id === input.noteId || (!note.noteUid && note.id === afterNote.id))
+  const semantic = afterNote?.noteUid ? {
+    beforeNote: beforeNote ? { ...materializeNote(beforeNote), noteUid: afterNote.noteUid } : null,
+    afterNote: materializeNote(afterNote),
+  } : {}
   const createdAt = (input.now ?? new Date()).toISOString()
   return {
     id: createCommandId(),
+    ...semantic,
     kind: input.kind,
     label: input.label,
     noteId: input.noteId,
@@ -159,6 +183,24 @@ function applyCommand(
   command: SourceFileCommand,
   direction: 'undo' | 'redo',
 ): string | null {
+  if (command.afterNote) {
+    const parsed = parseQuickNoteFile(content, '')
+    const existing = parsed.entries.find((note) => note.noteUid === command.afterNote!.noteUid)
+    if (!existing) return null
+    const expected = direction === 'undo' ? command.afterNote : command.beforeNote
+    const target = direction === 'undo' ? command.beforeNote : command.afterNote
+    const expectedState = expected ?? { ...command.afterNote, disposition: 'discarded' }
+    if (!sameMaterializedNote(materializeNote(existing), expectedState)) return null
+    const targetState = target ?? { ...command.afterNote, disposition: 'discarded' }
+    const request: QuickNoteCreateRequest = {
+      ...targetState, timestamp: targetState.timestamp ?? undefined,
+      versionKind: 'restored', versionLabel: `${direction === 'undo' ? 'Undo' : 'Redo'}: ${command.label}`,
+      actor: 'user',
+    }
+    return updateQuickNoteEntry(parsed, existing.id, request).parsed.content
+  }
+  // Old offset commands cannot safely rewrite an embedded event log.
+  if (content.includes('#+BACKBONE_EVENT: ')) return null
   const expected = direction === 'undo' ? command.insertedText : command.removedText
   const replacement = direction === 'undo' ? command.removedText : command.insertedText
   if (content.slice(command.start, command.start + expected.length) !== expected) return null
@@ -230,4 +272,17 @@ function request<T = IDBValidKey>(operation: IDBRequest<T>): Promise<T> {
     operation.onsuccess = () => resolve(operation.result)
     operation.onerror = () => reject(operation.error ?? new Error('Command history operation failed.'))
   })
+}
+
+function materializeNote(note: SourceNote): SourceFileNoteState {
+  return {
+    noteUid: note.noteUid!, title: note.title, body: note.body.trimEnd(), tags: [...note.tags],
+    timestamp: note.timestamp, parentNoteId: note.parentNoteId ?? null,
+    disposition: note.disposition ?? null,
+  }
+}
+function sameMaterializedNote(a: SourceFileNoteState, b: SourceFileNoteState): boolean {
+  return a.noteUid === b.noteUid && a.title === b.title && a.body === b.body &&
+    a.timestamp === b.timestamp && a.parentNoteId === b.parentNoteId &&
+    (a.disposition ?? null) === (b.disposition ?? null) && JSON.stringify(a.tags) === JSON.stringify(b.tags)
 }

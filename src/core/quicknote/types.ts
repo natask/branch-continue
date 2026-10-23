@@ -1,6 +1,9 @@
+import type { BackboneActor, BackboneRecord, BackboneVersion, BackboneVersionKind } from '../backbone/versions'
 export type BranchDisposition = 'retained' | 'discarded' | 'handed-off'
 
 export interface SourceNote {
+  versions?: BackboneVersion[]
+  backboneRecords?: BackboneRecord[]
   id: string
   noteUid?: string | null
   parentNoteId?: string | null
@@ -27,6 +30,11 @@ export interface QuickNoteSearchHit {
 }
 
 export interface QuickNoteCreateRequest {
+  actor?: BackboneActor
+  versionKind?: BackboneVersionKind
+  restoredFrom?: string
+  versionLabel?: string
+  backboneRecords?: BackboneRecord[]
   title?: string
   timestamp?: string
   tags?: string[]

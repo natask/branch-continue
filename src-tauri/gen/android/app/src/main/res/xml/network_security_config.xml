@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <!-- Private overlay endpoints used for OTA delivery and the signed-in Codex runtime. -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain>10.147.17.10</domain>
+        <domain>10.147.17.6</domain>
+    </domain-config>
+</network-security-config>

@@ -1,3 +1,4 @@
+import type { QuickNoteCreateRequest } from '../../core/quicknote/types'
 import { useCallback, useRef, useState } from 'react'
 import type React from 'react'
 import type { SourceNote } from '../../core/quicknote/types'
@@ -34,7 +35,7 @@ export interface UseEditorSessionResult {
   openNoteEditor: (note: SourceNote, options?: OpenEditorOptions) => void
   openBranchEditor: (source?: SourceNote | null) => void
   closeEditor: () => void
-  flushAutoSave: () => Promise<boolean>
+  flushAutoSave: (actor?: QuickNoteCreateRequest['actor']) => Promise<boolean>
   handleUndo: () => void
   handleRedo: () => void
   handleSaveIndicatorClick: () => void

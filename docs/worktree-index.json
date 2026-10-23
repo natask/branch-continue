@@ -1,0 +1,71 @@
+{
+  "policy": "Use master. No branches or worktrees created for Backbone. Existing worktrees are recorded without changing their owners or state.",
+  "worktrees": [
+    {
+      "path": "/Users/natnaelkahssay/projs/branch-continue",
+      "branch": "master",
+      "status": "shared master; no task branch or separate worktree created"
+    },
+    {
+      "path": "/Users/natnaelkahssay/projs/branch-continue-worktrees/desktop-waveform",
+      "branch": "voice/desktop-waveform",
+      "head": "2cf3327969cb32388bd77ca42335820bcd32a1a5",
+      "status": "existing; ownership unchanged"
+    },
+    {
+      "path": "/Users/natnaelkahssay/projs/branch-continue-worktrees/ideas-llm",
+      "branch": "voice2/ideas-llm",
+      "head": "23813e7b60b8549a7f833d8455e2331364214d4a",
+      "status": "existing; ownership unchanged"
+    },
+    {
+      "path": "/Users/natnaelkahssay/projs/branch-continue-worktrees/macos-mic",
+      "branch": "voice/macos-mic",
+      "head": "7d934cc9cc2dfed7ebff634ec128e4b9c00b45ae",
+      "status": "existing; ownership unchanged"
+    },
+    {
+      "path": "/Users/natnaelkahssay/projs/branch-continue-worktrees/panel-expand",
+      "branch": "voice2/panel-expand",
+      "head": "70b0602296de68354a4ce750286d4902d79d5c52",
+      "status": "existing; ownership unchanged"
+    },
+    {
+      "path": "/Users/natnaelkahssay/projs/branch-continue-worktrees/player-waveform",
+      "branch": "voice2/player-waveform",
+      "head": "dc57b2835cab01e6ed46d516b9e7c89c7f4541e8",
+      "status": "existing; ownership unchanged"
+    },
+    {
+      "path": "/Users/natnaelkahssay/projs/branch-continue-worktrees/staging",
+      "branch": "voice2/staging",
+      "head": "b2811f2f6b02eab281a5f22c7d18693f9f3b54b0",
+      "status": "existing; ownership unchanged"
+    },
+    {
+      "path": "/Users/natnaelkahssay/projs/branch-continue-worktrees/transcript-cache",
+      "branch": "voice2/transcript-cache",
+      "head": "6f63009b831498f8517ae81b5a1ae8efe1b8278d",
+      "status": "existing; ownership unchanged"
+    },
+    {
+      "path": "/Users/natnaelkahssay/projs/branch-continue-worktrees/transcription-quality",
+      "branch": "voice2/transcription-quality",
+      "head": "655b83b99293a05e5931f7f2ec2c8c6296127391",
+      "status": "existing; ownership unchanged"
+    },
+    {
+      "path": "/Users/natnaelkahssay/projs/branch-continue-worktrees/voice-early-audio-reference",
+      "branch": "voice/early-audio-reference",
+      "head": "5a36a8459f7867d2fb9af3bff4a197cff868d000",
+      "status": "existing; ownership unchanged"
+    },
+    {
+      "path": "/Users/natnaelkahssay/projs/branch-continue-worktrees/voice-ux",
+      "branch": "voice/voice-ux",
+      "head": "d6384b2804267ac972b337fad59cfeb9e5a7f7ee",
+      "status": "existing; ownership unchanged"
+    }
+  ],
+  "observedFor": "Backbone implementation; existing worktrees were not changed"
+}

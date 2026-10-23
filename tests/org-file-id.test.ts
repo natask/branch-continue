@@ -178,9 +178,10 @@ describe('parseQuickNoteFile note ids', () => {
       body: legacyRoot.body,
     })
 
-    expect(entry.noteUid).toBeNull()
+    expect(entry.noteUid).toMatch(/^qnuid-/)
     expect(entry.parentNoteId).toBeNull()
-    expect(updated.content).not.toContain(':PROPERTIES:')
+    expect(updated.content).toContain(':PROPERTIES:')
+    expect(entry.versions?.[0]?.body).toBe('legacy body')
   })
 
   it('backfills a stable UID when a legacy branch is saved for handoff', () => {

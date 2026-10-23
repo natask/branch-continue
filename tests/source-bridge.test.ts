@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   SourceFileUnavailableError,
+  SourceFileConflictError,
   createSourceBridge,
 } from '../src/core/quicknote/source-bridge'
 
@@ -103,6 +104,58 @@ describe('source bridge stale source handling', () => {
     tauri.writeTextFile.mockReset()
     tauri.homeDir.mockReset()
     tauri.join.mockReset()
+  })
+
+  it('refuses to overwrite a source changed by device sync', async () => {
+    tauri.isTauri = true
+    installLocalStorage()
+    tauri.readTextFile.mockResolvedValueOnce('original').mockResolvedValue('remote edit')
+    const bridge = createSourceBridge()
+    await bridge.selectFile()
+    await expect(bridge.write('local edit', 'original')).rejects.toBeInstanceOf(SourceFileConflictError)
+    expect(tauri.writeTextFile).not.toHaveBeenCalled()
+    expect(bridge.summary()).not.toBeNull()
+  })
+
+  it('writes when the expected source still matches', async () => {
+    tauri.isTauri = true
+    installLocalStorage()
+    tauri.readTextFile.mockResolvedValue('original')
+    const bridge = createSourceBridge()
+    await bridge.selectFile()
+    await bridge.write('local edit', 'original')
+    expect(tauri.writeTextFile).toHaveBeenCalledWith('/tmp/quicknote.org', 'local edit')
+  })
+
+  it('detects equal-length edits away from the old fingerprint positions', async () => {
+    vi.useFakeTimers()
+    tauri.isTauri = true
+    installLocalStorage()
+    tauri.readTextFile.mockResolvedValue('abcdefghij')
+    const bridge = createSourceBridge()
+    await bridge.selectFile()
+    const changed = vi.fn()
+    bridge.startWatching(changed)
+    await vi.advanceTimersByTimeAsync(2000)
+    tauri.readTextFile.mockResolvedValue('abXdefghij')
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(changed).toHaveBeenCalledOnce()
+    bridge.stopWatching()
+  })
+
+  it('detects browser file changes when modified timestamps match', async () => {
+    vi.useFakeTimers()
+    const getFile = vi.fn().mockResolvedValue(textFile('quicknote.org', 'original', 1))
+    installPicker({ kind: 'file', getFile } as unknown as FileSystemFileHandle)
+    const bridge = createSourceBridge()
+    await bridge.selectFile()
+    const changed = vi.fn()
+    bridge.startWatching(changed)
+    await vi.advanceTimersByTimeAsync(2000)
+    getFile.mockResolvedValue(textFile('quicknote.org', 'modified', 1))
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(changed).toHaveBeenCalledOnce()
+    bridge.stopWatching()
   })
 
   it('clears the active source when a browser file handle no longer resolves', async () => {

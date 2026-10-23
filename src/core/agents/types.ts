@@ -41,6 +41,8 @@ export interface AgentWorkResult {
   runUrl?: string
   externalId?: string
   error?: string
+  /** Complete revised page text, returned only by page editing runs. */
+  editedDocument?: string
 }
 
 export interface AgentRuntime {

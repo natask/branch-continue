@@ -1,20 +1,31 @@
 import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
+import { CodexAppServer } from './codex-app-server.mjs'
 
 const PORT = Number(process.env.AGENT_RUNTIME_PORT || 8765)
 const HOST = process.env.AGENT_RUNTIME_HOST || '127.0.0.1'
 const CODEX_COMMAND = process.env.AGENT_CODEX_COMMAND || 'codex'
 const CODEX_ARGS = parseCommandArgs(
   process.env.AGENT_CODEX_ARGS ||
-    'exec --dangerously-bypass-approvals-and-sandbox --json -',
+    'exec --sandbox read-only --json -',
 )
 const DEFAULT_TIMEOUT_MS = Number(process.env.AGENT_RUNTIME_TIMEOUT_MS || 1000 * 60 * 12)
 
+const codex = new CodexAppServer({ timeoutMs: DEFAULT_TIMEOUT_MS })
+const legacyExecutor = Boolean(process.env.AGENT_CODEX_ARGS)
+const threadQueues = new Map()
 const runs = new Map()
 const chatSessions = new Map()
 
-const server = createServer(async (request, response) => {
-  response.setHeader('Access-Control-Allow-Origin', process.env.AGENT_RUNTIME_CORS_ORIGIN || '*')
+const handleRequest = async (request, response) => {
+  const origin = request.headers.origin
+  const configuredOrigins = (process.env.AGENT_RUNTIME_CORS_ORIGIN || '').split(',').map((value) => value.trim()).filter(Boolean)
+  const allowed = !origin || configuredOrigins.includes(origin) ||
+    ['tauri://localhost', 'http://tauri.localhost', 'https://tauri.localhost'].includes(origin) ||
+    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+  if (!allowed) { writeJson(response, 403, { error: 'Origin is not allowed.' }); return }
+  if (origin) response.setHeader('Access-Control-Allow-Origin', origin)
+  response.setHeader('Vary', 'Origin')
   response.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
   response.setHeader('Access-Control-Allow-Headers', 'Content-Type')
 
@@ -33,6 +44,19 @@ const server = createServer(async (request, response) => {
       runCount: runs.size,
       chatSessionCount: chatSessions.size,
     })
+    return
+  }
+
+  if (request.method === 'GET' && request.url === '/codex/account') {
+    try { writeJson(response, 200, await codex.account()) }
+    catch (error) { writeJson(response, 503, { error: errorMessage(error) }) }
+    return
+  }
+  if (request.method === 'POST' && request.url === '/codex/login') {
+    try {
+      const body = await readJson(request)
+      writeJson(response, 200, await codex.login(body.deviceCode === true))
+    } catch (error) { writeJson(response, 503, { error: errorMessage(error) }) }
     return
   }
 
@@ -72,13 +96,16 @@ const server = createServer(async (request, response) => {
       }
 
       const startedAt = new Date().toISOString()
-      const promise = executeCodex(input.request, input.agent)
+      const threadKey = `${input.request.context.pageId}:${input.request.context.threadId}`
+      const previous = threadQueues.get(threadKey) || Promise.resolve()
+      const promise = previous.catch(() => {}).then(() => executeCodex(input.request, input.agent))
         .then((output) => ({
           runtimeId: 'local-codex',
           status: output.exitCode === 0 ? 'completed' : 'failed',
           response: output.stdout || output.stderr || 'Codex completed without output.',
           error: output.exitCode === 0 ? undefined : output.stderr || `Codex exited with ${output.exitCode}`,
           externalId: output.sessionId || undefined,
+          editedDocument: output.exitCode === 0 ? output.editedDocument : undefined,
           metadata: {
             requestId: input.request.id,
             agentId: input.agent.id,
@@ -102,6 +129,8 @@ const server = createServer(async (request, response) => {
             stderr: errorMessage(error),
           },
         }))
+      threadQueues.set(threadKey, promise)
+      promise.finally(() => { if (threadQueues.get(threadKey) === promise) threadQueues.delete(threadKey) })
       runs.set(input.request.id, {
         id: input.request.id,
         status: 'running',
@@ -133,12 +162,35 @@ const server = createServer(async (request, response) => {
   }
 
   writeJson(response, 404, { error: 'Not found' })
-})
+}
+
+const server = createServer(handleRequest)
+const mobileHost = process.env.AGENT_RUNTIME_MOBILE_HOST
+let mobileServer
+if (mobileHost && mobileHost !== HOST) {
+  if (!isPrivateAddress(mobileHost)) throw new Error('AGENT_RUNTIME_MOBILE_HOST must be an explicit private IPv4 address.')
+  mobileServer = createServer(handleRequest)
+  mobileServer.on('error', (error) => console.error(`Mobile agent runtime listener failed: ${errorMessage(error)}`))
+  mobileServer.listen(PORT, mobileHost, () => console.log(`Mobile agent runtime service listening at http://${mobileHost}:${mobileServer.address().port}`))
+}
 
 server.listen(PORT, HOST, () => {
-  console.log(`Agent runtime service listening at http://${HOST}:${PORT}`)
-  console.log(`Codex executor: ${CODEX_COMMAND} ${CODEX_ARGS.join(' ')}`)
+  console.log(`Agent runtime service listening at http://${HOST}:${server.address().port}`)
+  console.log(`Codex executor: ${CODEX_COMMAND} ${legacyExecutor ? CODEX_ARGS.join(' ') : 'app-server (JavaScript client)'}`)
 })
+
+for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => {
+  codex.close()
+  server.close()
+  mobileServer?.close()
+  process.exit(0)
+})
+
+function isPrivateAddress(value) {
+  const octets = value.split('.').map(Number)
+  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false
+  return octets[0] === 10 || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) || (octets[0] === 192 && octets[1] === 168)
+}
 
 function normalizeAgentRunInput(body) {
   if (!body || typeof body !== 'object') {
@@ -157,7 +209,19 @@ function normalizeAgentRunInput(body) {
   return { request, agent }
 }
 
-function executeCodex(request, agent) {
+async function executeCodex(request, agent) {
+  if (!legacyExecutor) {
+    const threadKey = `${request.context.pageId}:${request.context.threadId}`
+    const output = await codex.run({
+      prompt: buildCodexPrompt(request, agent),
+      sessionId: chatSessions.get(threadKey) || request.metadata?.codexSessionId,
+      editPage: request.metadata?.editPage === true,
+      instructions: [agent.instructions, typeof request.metadata?.pageSystemPrompt === 'string' ? request.metadata.pageSystemPrompt : ''].filter(Boolean).join('\n\n'),
+    })
+    chatSessions.set(threadKey, output.sessionId)
+    return { exitCode: 0, stdout: output.response, stderr: '', ...output }
+  }
+  if (request.metadata?.editPage === true) throw new Error('Page editing requires the default Codex app-server executor. Unset AGENT_CODEX_ARGS.')
   const prompt = buildCodexPrompt(request, agent)
   const threadId = request.context.threadId
   const persistedSessionId = typeof request.metadata?.codexSessionId === 'string'
@@ -254,8 +318,14 @@ function buildCodexPrompt(request, agent) {
   return [
     `You are @${agent.id}: ${agent.purpose || 'a local agent worker'}.`,
     '',
-    'You are running as a local full-permission worker for Branch Continue.',
-    'Answer the user request directly. Do not modify files unless the request explicitly asks for implementation or code changes.',
+    'You are the page agent inside Backbone. Only the supplied page is your editing target.',
+    'Do not inspect or modify local files or run commands. Return your answer directly.',
+    agent.instructions || '',
+    typeof request.metadata?.pageSystemPrompt === 'string' ? request.metadata.pageSystemPrompt : '',
+    request.metadata?.editPage === true
+      ? 'Revise the full document according to the user request. Return JSON with response (brief explanation) and editedDocument (the entire revised document, preserving unaffected content). The app will save this as a new version.'
+      : '',
+    'Answer the user request directly.',
     '',
     `Prompt: ${request.prompt}`,
     '',
@@ -279,6 +349,7 @@ function readJson(request) {
     let body = ''
     request.on('data', (chunk) => {
       body += chunk.toString()
+      if (body.length > 4 * 1024 * 1024) { reject(new Error('Agent request exceeds 4 MB.')); request.destroy() }
     })
     request.on('end', () => {
       try {

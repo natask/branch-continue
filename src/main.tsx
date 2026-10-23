@@ -6,14 +6,13 @@ import { startMobileOtaRedirect } from './core/platform/mobile-ota'
 import '@natnaelkahssay/card-stack-3d/styles.css'
 import './style.css'
 
-// Branch Continue currently ships as a local-only desktop app. Keep the
-// existing update implementations intact until their deletion is approved,
-// but do not contact or redirect to deployment infrastructure at startup.
+// Desktop installs remain local-only. Mobile shells and published mobile pages
+// opt into the configured OTA lane and retain their embedded offline fallback.
 const deploymentUpdatesEnabled = false
 if (deploymentUpdatesEnabled) {
   startDesktopUpdater()
-  startMobileOtaRedirect()
 }
+startMobileOtaRedirect()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

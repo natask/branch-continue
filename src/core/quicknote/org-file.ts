@@ -1,3 +1,5 @@
+import { bodyChangeRecords, sequenceBackboneMetadata } from '../backbone/log'
+import { VERSION_PREFIX, RECORD_PREFIX, readBackboneVersion, readBackboneRecord, createBackboneId, type BackboneVersion } from '../backbone/versions'
 import type {
   BranchDisposition,
   QuickNoteCreateRequest,
@@ -79,7 +81,11 @@ export function appendQuickNoteEntry(
   const timestamp = request.timestamp?.trim() || formatOrgTimestamp(new Date())
   const lineage = resolveLineageForCreate(request)
   const disposition = normalizeDisposition(request.disposition)
-  const entryLines = buildNoteLines({ title, timestamp, tags, body, lineage, disposition })
+  const entryLines = buildNoteLines({ title, timestamp, tags, body, lineage, disposition, metadata: sequenceBackboneMetadata([
+    VERSION_PREFIX + JSON.stringify(makeVersion({ title, body, tags, timestamp, parentNoteId: lineage.parentNoteId, disposition }, lineage.noteUid!, request, 'created')),
+    ...bodyChangeRecords({ noteUid: lineage.noteUid!, before: '', after: body, actor: request.actor }).map((record) => RECORD_PREFIX + JSON.stringify(record)),
+    ...(request.backboneRecords ?? []).map((record) => RECORD_PREFIX + JSON.stringify(record)),
+  ], parsed.content) })
   const nextContent = `${parsed.content.trimEnd()}\n\n${entryLines.join('\n')}\n`
   const nextParsed = parseQuickNoteFile(nextContent, parsed.sourcePath)
   const entry = nextParsed.entries[0]
@@ -115,7 +121,30 @@ export function updateQuickNoteEntry(
 
   const startIndex = existing.startLine - 1
   const endExclusiveIndex = existing.endLine
-  const entryLines = buildNoteLines({ title, timestamp, tags, body, lineage, disposition })
+  const metadata = parsed.lines.slice(startIndex + 1, endExclusiveIndex)
+    .filter((line) => line.startsWith(VERSION_PREFIX) || line.startsWith(RECORD_PREFIX))
+  const existingMetadataCount = metadata.length
+  if (!existing.versions?.length) {
+    metadata.push(VERSION_PREFIX + JSON.stringify(makeVersion(existing, lineage.noteUid!, { actor: 'system' }, 'created')))
+  }
+  const latestVersion = existing.versions?.[existing.versions.length - 1]
+  if (latestVersion && (latestVersion.body !== existing.body.trimEnd() || latestVersion.title !== existing.title || JSON.stringify(latestVersion.tags) !== JSON.stringify(existing.tags) || (latestVersion.disposition ?? null) !== (existing.disposition ?? null))) {
+    metadata.push(VERSION_PREFIX + JSON.stringify(makeVersion(existing, lineage.noteUid!, { body: existing.body, actor: 'system', versionLabel: 'External source change' }, 'edited', latestVersion.id)))
+    metadata.push(...bodyChangeRecords({ noteUid: lineage.noteUid!, before: latestVersion.body, after: existing.body, actor: 'system' }).map((record) => RECORD_PREFIX + JSON.stringify(record)))
+  }
+  const changed = title !== existing.title || body !== existing.body.trimEnd() || JSON.stringify(tags) !== JSON.stringify(existing.tags) || timestamp !== existing.timestamp || disposition !== (existing.disposition ?? null) || lineage.parentNoteId !== (existing.parentNoteId ?? null)
+  if (changed || request.versionKind === 'snapshot' || request.versionKind === 'restored') {
+    const versions = metadata.map(readBackboneVersion).filter((value) => value !== null)
+    const previous = versions[versions.length - 1]
+    metadata.push(VERSION_PREFIX + JSON.stringify(makeVersion({ title, body, tags, timestamp, parentNoteId: lineage.parentNoteId, disposition }, lineage.noteUid!, request, 'edited', previous?.id)))
+  }
+  for (const record of [...bodyChangeRecords({ noteUid: lineage.noteUid!, before: existing.body, after: body, actor: request.actor }), ...(request.backboneRecords ?? [])]) {
+    if (!(existing.backboneRecords ?? []).some((previous) => previous.id === record.id)) {
+      metadata.push(RECORD_PREFIX + JSON.stringify(record))
+    }
+  }
+  const properties = extractBodyPreamble(parsed.lines.slice(startIndex + 1, endExclusiveIndex)).properties
+  const entryLines = buildNoteLines({ title, timestamp, tags, body, lineage, disposition, metadata: sequenceBackboneMetadata(metadata, parsed.content, existingMetadataCount), properties })
   const nextLines = [
     ...parsed.lines.slice(0, startIndex),
     ...entryLines,
@@ -149,6 +178,7 @@ export function searchQuickNoteFile(
 
   for (let index = 0; index < parsed.lines.length; index += 1) {
     const line = parsed.lines[index]
+    if (line.startsWith(VERSION_PREFIX) || line.startsWith(RECORD_PREFIX)) continue
     const lineScore = fuzzy(needle, line)
     if (lineScore <= 0) continue
 
@@ -205,12 +235,14 @@ function parseNote(
   const timestamp = timestampMatch?.[0] ?? null
   const cleanedTitle = withoutSuffix.replace(TIMESTAMP_RE, '').trim()
   const bodyPreamble = extractBodyPreamble(bodyLines)
-  const contentLines = bodyLines.filter((_, index) => !bodyPreamble.indexes.has(index))
+  const contentLines = bodyLines.filter((line, index) => !bodyPreamble.indexes.has(index) && !line.startsWith(VERSION_PREFIX) && !line.startsWith(RECORD_PREFIX))
   const title = cleanedTitle || withoutSuffix || rawHeadlineTrimmed || 'Untitled'
   const tags = Array.from(new Set([...suffixTags, ...bodyPreamble.tags]))
   const previewSource = firstMeaningfulLine(contentLines) ?? firstMeaningfulLine(bodyLines) ?? rawHeadlineTrimmed
 
   return {
+    versions: bodyLines.map(readBackboneVersion).filter((value) => value !== null),
+    backboneRecords: bodyLines.map(readBackboneRecord).filter((value) => value !== null),
     id: buildNoteId(timestamp, startIndex, idUsage),
     noteUid: bodyPreamble.lineage.noteUid,
     parentNoteId: bodyPreamble.lineage.parentNoteId,
@@ -382,11 +414,15 @@ function buildNoteLines(input: {
   body: string
   lineage: NoteLineageMetadata
   disposition: BranchDisposition | null
+  metadata?: string[]
+  properties?: Map<string, string>
 }): string[] {
   const headline = input.title ? `* ${input.title} ${input.timestamp}` : `* ${input.timestamp}`
   const lines = [headline]
 
-  if (input.lineage.noteUid || input.lineage.parentNoteId || input.disposition) {
+  const extraProperties = [...(input.properties ?? new Map<string, string>())]
+    .filter(([key]) => ![NOTE_UID_PROPERTY_KEY, PARENT_NOTE_ID_PROPERTY_KEY, DISPOSITION_PROPERTY_KEY].includes(key))
+  if (input.lineage.noteUid || input.lineage.parentNoteId || input.disposition || extraProperties.length) {
     lines.push(':PROPERTIES:')
     if (input.lineage.noteUid) {
       lines.push(`:${NOTE_UID_PROPERTY_KEY}: ${input.lineage.noteUid}`)
@@ -397,12 +433,15 @@ function buildNoteLines(input: {
     if (input.disposition) {
       lines.push(`:${DISPOSITION_PROPERTY_KEY}: ${input.disposition}`)
     }
+    for (const [key, value] of extraProperties) lines.push(`:${key}: ${value}`)
     lines.push(':END:')
   }
 
   if (input.tags.length > 0) {
     lines.push(input.tags.map((tag) => `#${tag}`).join(' '))
   }
+
+  lines.push(...(input.metadata ?? []))
 
   if (input.body.length > 0) {
     lines.push(...input.body.split('\n'))
@@ -459,7 +498,7 @@ function resolveLineageForUpdate(
       ? normalizeLineageValue(existing.noteUid)
       : normalizeLineageValue(request.noteUid)
 
-  if (parentNoteId && !noteUid) {
+  if (!noteUid) {
     noteUid = createStableNoteUid()
   }
 
@@ -487,4 +526,23 @@ function createStableNoteUid(): string {
   }
   const randomPart = Math.random().toString(36).slice(2, 10)
   return `qnuid-${Date.now().toString(36)}-${randomPart}`
+}
+
+function makeVersion(
+  note: Pick<SourceNote, 'title' | 'body' | 'tags'> & Partial<Pick<SourceNote, 'timestamp' | 'parentNoteId' | 'disposition'>>,
+  noteUid: string,
+  request: QuickNoteCreateRequest | { actor: 'system' },
+  fallbackKind: BackboneVersion['kind'],
+  previousVersionId?: string,
+): BackboneVersion {
+  const options = request as QuickNoteCreateRequest
+  return {
+    id: createBackboneId(), noteUid, at: new Date().toISOString(),
+    actor: request.actor ?? 'user', kind: options.versionKind ?? fallbackKind,
+    title: note.title.trim() || note.timestamp || 'Untitled', body: note.body.trimEnd(), tags: [...note.tags],
+    timestamp: note.timestamp ?? null, parentNoteId: note.parentNoteId ?? null, disposition: note.disposition ?? null,
+    ...(previousVersionId ? { previousVersionId } : {}),
+    ...(options.restoredFrom ? { restoredFrom: options.restoredFrom } : {}),
+    ...(options.versionLabel ? { label: options.versionLabel } : {}),
+  }
 }

@@ -26,7 +26,7 @@ interface UseEditorDraftResult {
   commitDraftTimestamp: (timestamp: string | null) => void
   commitDraftBody: (body: string) => void
   commitDraftTags: (tags: string[]) => void
-  flushAutoSave: () => Promise<boolean>
+  flushAutoSave: (actor?: QuickNoteCreateRequest['actor']) => Promise<boolean>
   handleUndo: () => void
   handleRedo: () => void
   handleSaveIndicatorClick: () => void
@@ -158,7 +158,7 @@ export function useEditorDraft({
   )
 
   const persistEditor = useCallback(
-    async (snapshot: EditorState): Promise<boolean> => {
+    async (snapshot: EditorState, actor?: QuickNoteCreateRequest['actor']): Promise<boolean> => {
       if (!sourceSelected) return false
 
       const hasCreateContent =
@@ -179,6 +179,8 @@ export function useEditorDraft({
           timestamp: snapshot.timestamp ?? undefined,
           tags: snapshot.tags,
           body: snapshot.body,
+          actor,
+          noteUid: snapshot.source?.noteUid,
         }
         const parentRef = snapshot.branchFrom?.noteUid ?? snapshot.branchFrom?.id
 
@@ -211,7 +213,7 @@ export function useEditorDraft({
     [createNote, editorRef, setEditorState, sourceSelected, updateNote],
   )
 
-  const flushAutoSave = useCallback(async (): Promise<boolean> => {
+  const flushAutoSave = useCallback(async (actor?: QuickNoteCreateRequest['actor']): Promise<boolean> => {
     if (autoSaveTimerRef.current !== null) {
       window.clearTimeout(autoSaveTimerRef.current)
       autoSaveTimerRef.current = null
@@ -222,7 +224,7 @@ export function useEditorDraft({
     const current = editorRef.current
     if (!current || !current.dirty) return true
 
-    return persistEditor({ ...current, tags: [...current.tags] })
+    return persistEditor({ ...current, tags: [...current.tags] }, actor)
   }, [editorRef, persistEditor, saving])
 
   const handleUndo = useCallback(() => {

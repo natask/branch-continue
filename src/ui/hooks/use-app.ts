@@ -50,6 +50,7 @@ interface AppState {
 }
 
 interface AppActions {
+  getLatestNote: (identity: string) => SourceNote | null
   selectNote: (note: SourceNote) => void
   searchNotes: (query: string) => Promise<QuickNoteSearchHit[]>
   jumpToSearchHit: (hit: QuickNoteSearchHit) => void
@@ -288,7 +289,7 @@ export function useApp(): AppState & AppActions {
 
       const { parsed: nextParsed, entry } = appendQuickNoteEntry(currentParsed, request)
       try {
-        await sourceBridge.write(nextParsed.content)
+        await sourceBridge.write(nextParsed.content, currentParsed.content)
       } catch (nextError) {
         if (isSourceUnavailable(nextError)) {
           clearSourceState()
@@ -339,7 +340,7 @@ export function useApp(): AppState & AppActions {
         || Boolean(stableUid && activeEntry?.noteUid === stableUid)
       const { parsed: nextParsed, entry } = updateQuickNoteEntry(currentParsed, resolvedNoteId, request)
       try {
-        await sourceBridge.write(nextParsed.content)
+        await sourceBridge.write(nextParsed.content, currentParsed.content)
       } catch (nextError) {
         if (isSourceUnavailable(nextError)) {
           clearSourceState()
@@ -384,7 +385,7 @@ export function useApp(): AppState & AppActions {
         const wasActive = activeEntry?.noteUid === stableUid
         const { parsed: nextParsed, entry } = updateQuickNoteEntry(currentParsed, target.id, request)
         try {
-          await sourceBridge.write(nextParsed.content)
+          await sourceBridge.write(nextParsed.content, currentParsed.content)
         } catch (nextError) {
           if (isSourceUnavailable(nextError)) clearSourceState()
           throw nextError
@@ -417,7 +418,7 @@ export function useApp(): AppState & AppActions {
     if (!currentParsed || !currentHistory || currentHistory.sourceKey !== currentParsed.sourcePath) return false
     const step = undoSourceFileCommand(currentHistory, currentParsed.content)
     if (!step) return false
-    await sourceBridge.write(step.content)
+    await sourceBridge.write(step.content, currentParsed.content)
     setActiveHistory(step.state)
     await persistSourceHistory(step.state)
     applyParsed(parseQuickNoteFile(step.content, currentParsed.sourcePath), null)
@@ -430,7 +431,7 @@ export function useApp(): AppState & AppActions {
     if (!currentParsed || !currentHistory || currentHistory.sourceKey !== currentParsed.sourcePath) return false
     const step = redoSourceFileCommand(currentHistory, currentParsed.content)
     if (!step) return false
-    await sourceBridge.write(step.content)
+    await sourceBridge.write(step.content, currentParsed.content)
     setActiveHistory(step.state)
     await persistSourceHistory(step.state)
     applyParsed(parseQuickNoteFile(step.content, currentParsed.sourcePath), null)
@@ -453,6 +454,7 @@ export function useApp(): AppState & AppActions {
   const canRedoFile = Boolean(parsed && historyState && canRedoSourceFile(historyState, parsed.content))
 
   return {
+    getLatestNote: (identity: string) => parsedRef.current?.entries.find((note) => note.noteUid === identity || note.id === identity) ?? null,
     ready: lifecycle !== 'booting',
     lifecycle,
     error,
