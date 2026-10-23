@@ -533,6 +533,8 @@ async function installRemotePreviewFallbacks(remoteHost, remoteBase, remoteRelea
     'set -e',
     `base=${shellQuote(remoteBase.replace(/\/+$/, ''))}`,
     `release=${shellQuote(remoteRelease)}`,
+    'mkdir -p "$base/native"',
+    'ln -sfn "$base/native" "$release/native"',
     'mkdir -p "$release/previews"',
     'if [ -d "$base/previews" ]; then',
     '  for path in "$base"/previews/*; do',

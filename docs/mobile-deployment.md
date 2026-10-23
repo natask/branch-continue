@@ -42,4 +42,14 @@ pnpm mobile:shell:android:apk --debug --target aarch64 --ci
 
 The APK is written to `src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`. It uses the existing Android debug signing key. It is a development build. Preserve the package ID and installed signature when updating a phone, and never uninstall an existing app to bypass a signature mismatch because that can erase local data.
 
+Compact the development APK before sharing it. This removes native debug symbols, preserves the raw artifact, aligns native libraries, re-signs with the same existing debug key, and verifies the ZIP and signature:
+
+```sh
+python3 scripts/compact-android-apk.py \
+  src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk \
+  .mobile-ota/native/Backbone-android-arm64-development.apk
+```
+
+Publish APKs under `/home/reclaim-ethiopia/agent-stations/apps/branch-continue/mobile-ota/native/`. The deploy script links each release's `native` directory to that shared directory, so links such as `http://10.147.17.10/mobile/native/Backbone-0.1.13-android-arm64-development.apk` survive OTA promotions. Verify the public download's SHA-256 against the local signed file.
+
 The shell embeds an offline fallback and checks the mobile release endpoint when reachable. Older shells with OTA startup disabled need a native shell update. Publishing an OTA bundle or an APK does not prove a particular phone installed it; that requires device evidence.

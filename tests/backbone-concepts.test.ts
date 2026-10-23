@@ -47,3 +47,18 @@ describe('portable idea hierarchy', () => {
     expect(pageSentences(writeConcepts('One sentence. Two sentences!\nOne sentence.', [concept]))).toEqual(['One sentence.', 'Two sentences!'])
   })
 })
+
+it('offers note wording as source passages while hiding generated instructions and task records', () => {
+  const body = [
+    '<!-- backbone-page-system:v1 %22Hidden%20instructions.%22 -->',
+    'A visible sentence.',
+    '',
+    '<!-- branch-continue-agent-task:start r1 -->',
+    'Agent task: r1',
+    'Session: hidden-session',
+    'Status: completed',
+    '<!-- branch-continue-agent-task:end r1 -->',
+  ].join('\n')
+  expect(pageSentences(body)).toEqual(['A visible sentence.'])
+  expect(conceptSourceStatus({ ...idea('a'), sourceText: 'hidden-session' }, body)).toBe('changed')
+})

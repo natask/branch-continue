@@ -1,3 +1,5 @@
+import { stripAgentMetadata } from './agent-metadata'
+
 /** Ideas live inside their note so copying/syncing the note carries the hierarchy. */
 export interface PageConcept {
   id: string
@@ -94,10 +96,15 @@ export function removeConcept(concepts: PageConcept[], id: string): PageConcept[
 
 export function conceptSourceStatus(concept: PageConcept, pageText: string): 'unlinked' | 'linked' | 'changed' {
   if (!concept.sourceText) return 'unlinked'
-  return stripConceptMetadata(pageText).includes(concept.sourceText) ? 'linked' : 'changed'
+  return conceptSourceText(pageText).includes(concept.sourceText) ? 'linked' : 'changed'
 }
 
 export function pageSentences(pageText: string): string[] {
-  return [...new Set(stripConceptMetadata(pageText).split(/(?<=[.!?])\s+|\n+/)
+  return [...new Set(conceptSourceText(pageText).split(/(?<=[.!?])\s+|\n+/)
     .map((sentence) => sentence.trim()).filter(Boolean))]
+}
+
+function conceptSourceText(pageText: string): string {
+  return stripAgentMetadata(stripConceptMetadata(pageText))
+    .replace(/^<!-- backbone-page-system:v1 .*? -->\r?\n?/gm, '')
 }

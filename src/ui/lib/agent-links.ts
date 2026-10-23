@@ -335,3 +335,5 @@ function describeSourceNote(note: SourceNote): string {
 function fence(value: string): string {
   return ['```', value, '```'].join('\n')
 }
+
+export { stripAgentMetadata, preserveAgentMetadata } from '../../core/backbone/agent-metadata'

@@ -19,6 +19,8 @@ import { stripSwitchboardTasks } from '../../core/intents/switchboard-task'
 import { formatElapsed, VoiceRecordingsPanel } from './VoiceRecordingsPanel'
 import {
   persistedAgentTaskProgress,
+  stripAgentMetadata,
+  preserveAgentMetadata,
   type AgentTaskProgress,
 } from '../lib/agent-links'
 import { AgentTaskStatus } from './AgentTaskStatus'
@@ -579,9 +581,9 @@ export function Editor({
                 const dy = touch.clientY - start.y
                 if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) navigateVersion(dx > 0 ? -1 : 1)
               }}
-            >{stripConceptMetadata(stripPageSystemPrompt(previewVersion.body))}</pre>
+            >{stripAgentMetadata(stripConceptMetadata(stripPageSystemPrompt(previewVersion.body)))}</pre>
             <details><summary>Word changes to current page</summary>
-              <div className="note-version-preview note-version-diff">{diffWords(stripConceptMetadata(stripPageSystemPrompt(previewVersion.body)), stripConceptMetadata(stripPageSystemPrompt(editor.body))).map((part, index) => part.type === 'added' ? <ins key={index}>{part.text}</ins> : part.type === 'removed' ? <del key={index}>{part.text}</del> : <span key={index}>{part.text}</span>)}</div>
+              <div className="note-version-preview note-version-diff">{diffWords(stripAgentMetadata(stripConceptMetadata(stripPageSystemPrompt(previewVersion.body))), stripAgentMetadata(stripConceptMetadata(stripPageSystemPrompt(editor.body)))).map((part, index) => part.type === 'added' ? <ins key={index}>{part.text}</ins> : part.type === 'removed' ? <del key={index}>{part.text}</del> : <span key={index}>{part.text}</span>)}</div>
             </details>
             <button type="button" className="btn-secondary" disabled={versionBusy} onClick={() => void runVersionAction(() => onRestoreVersion(previewVersion.id))}>Restore as new version</button>
           </>}
@@ -593,8 +595,8 @@ export function Editor({
               <textarea
                 ref={handleBodyRef}
                 className="note-editor-body note-editor-body--edit"
-                value={stripConceptMetadata(stripPageSystemPrompt(editor.body))}
-                onChange={(event) => session.updateBody(preserveConceptMetadata(withPageSystemPrompt(event.target.value, pageSystemPrompt(editor.body)), editor.body))}
+                value={stripAgentMetadata(stripConceptMetadata(stripPageSystemPrompt(editor.body)))}
+                onChange={(event) => session.updateBody(preserveAgentMetadata(preserveConceptMetadata(withPageSystemPrompt(event.target.value, pageSystemPrompt(editor.body)), editor.body), editor.body))}
                 onKeyDown={session.handleBodyKeyDown}
               />
             ) : (
@@ -676,7 +678,7 @@ export function Editor({
 }
 
 function ReadableNoteBody({ body, sessionId }: { body: string; sessionId: string | null }) {
-  const readableBody = stripSwitchboardTasks(stripConceptMetadata(stripPageSystemPrompt(body)))
+  const readableBody = stripSwitchboardTasks(stripAgentMetadata(stripConceptMetadata(stripPageSystemPrompt(body))))
     .split('\n')
     .filter((line) => (
       !/^\s*Audio recording:\s+/i.test(line)
