@@ -61,7 +61,7 @@ observations, not proof that a particular phone applied an update.
 
 This follows the official [Codex thread lifecycle](https://developers.openai.com/codex/app-server#threads).
 
- Repeating an active request ID
+Repeating an active request ID
 joins the existing run; repeating a completed request ID returns its result.
 `GET /agent-runs/:requestId` reports current or completed state. Run deduplication
 and the in-memory conversation map reset on service restart; persist
