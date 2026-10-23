@@ -10,6 +10,8 @@ export class CodexAppServer {
     this.pending = new Map()
     this.listeners = new Set()
     this.nextId = 0
+    this.loadedThreads = new Map()
+    this.modelPromise = null
   }
 
   async connect() {
@@ -27,11 +29,15 @@ export class CodexAppServer {
     let stderr = ''
     child.stderr.on('data', (chunk) => { stderr = (stderr + chunk.toString()).slice(-8000) })
     const fail = (error) => {
+      if (this.child !== child) return
       for (const entry of this.pending.values()) entry.reject(error)
       this.pending.clear()
       for (const listener of this.listeners) listener({ method: 'connection/closed', params: { error: error.message } })
       this.connection = null
-      if (this.child === child) this.child = null
+      this.child = null
+      this.loadedThreads.clear()
+      this.modelPromise = null
+      child.kill('SIGTERM')
     }
     child.on('error', fail)
     child.on('exit', (code) => fail(new Error(`Codex app-server exited (${code}). ${stderr}`.trim())))
@@ -49,6 +55,8 @@ export class CodexAppServer {
         // Page agents never approve commands, file writes, or external credentials.
         this.send({ id: message.id, error: { code: -32601, message: 'Interactive tools are unavailable for page agents.' } })
       } else {
+        if (message.method === 'thread/closed') this.loadedThreads.delete(message.params?.threadId)
+        if (['account/login/completed', 'account/updated'].includes(message.method)) this.modelPromise = null
         for (const listener of this.listeners) listener(message)
       }
     })
@@ -89,12 +97,19 @@ export class CodexAppServer {
     return this.rpc('account/login/start', { type: deviceCode ? 'chatgptDeviceCode' : 'chatgpt' })
   }
 
-  async run({ prompt, sessionId, editPage = false, instructions = '' }) {
+  async warm() {
     await this.connect()
-    // Resolve the account's available default rather than inheriting an inaccessible
-    // model from a different Codex client configuration.
-    const models = await this.rpc('model/list', {})
-    const model = process.env.AGENT_CODEX_MODEL || models.data?.find((entry) => entry.isDefault)?.model || models.data?.[0]?.model
+    if (process.env.AGENT_CODEX_MODEL) return process.env.AGENT_CODEX_MODEL
+    if (!this.modelPromise) {
+      this.modelPromise = this.rpc('model/list', {}).then((models) =>
+        models.data?.find((entry) => entry.isDefault)?.model || models.data?.[0]?.model,
+      ).catch((error) => { this.modelPromise = null; throw error })
+    }
+    return this.modelPromise
+  }
+
+  async run({ prompt, sessionId, editPage = false, instructions = '', onSession }) {
+    const model = await this.warm()
     const threadParams = {
       cwd: this.cwd, approvalPolicy: 'never', sandbox: 'read-only',
       developerInstructions: [
@@ -103,10 +118,18 @@ export class CodexAppServer {
       ].filter(Boolean).join('\n\n'),
       ...(model ? { model } : {}),
     }
-    const result = sessionId
-      ? await this.rpc('thread/resume', { ...threadParams, threadId: sessionId })
-      : await this.rpc('thread/start', threadParams)
-    const threadId = result.thread.id
+    const configuration = JSON.stringify(threadParams)
+    let threadId = sessionId
+    // A loaded conversation accepts turns directly. Resume only after reconnect,
+    // thread unload, or a change to its instructions/model.
+    if (!threadId || this.loadedThreads.get(threadId) !== configuration) {
+      const result = threadId
+        ? await this.rpc('thread/resume', { ...threadParams, threadId, excludeTurns: true })
+        : await this.rpc('thread/start', threadParams)
+      threadId = result.thread.id
+      this.loadedThreads.set(threadId, configuration)
+    }
+    onSession?.(threadId)
     let finalResponse = ''
     let activeTurnId
     const events = []

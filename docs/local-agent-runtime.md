@@ -38,11 +38,30 @@ Codex runs with read-only filesystem permissions and no tool approvals. Page
 editing happens through the returned text. The agent is instructed to operate
 only on the supplied page and to preserve unaffected content.
 
-The runtime resolves the model through `model/list` so a model configured by a
-different client cannot override the signed-in account's available default.
+The runtime warms the app-server connection at service startup and resolves the
+model through `model/list` once per connection. A model configured by a different
+client cannot override the signed-in account's available default.
 Set `AGENT_CODEX_MODEL` to select a specific available model.
 
-Requests on the same page/thread run in order. Repeating an active request ID
+Requests on the same page/thread run in order. After the first request, the
+loaded Codex thread receives `turn/start` directly. The service does not launch a
+new process, reload the model list, or resume that thread on each edit. Changed
+page instructions, a thread unload, or a reconnect require one resume with
+`excludeTurns: true`. A reconnect clears the in-memory cache and keeps the saved
+conversation ID. Failed turns are not retried automatically.
+
+The Run button shows a loader immediately, including while the app saves the
+note and prepares context. Closing the sheet keeps the run active; Enhance shows
+its loader until the run finishes. The sheet reuses the note's saved conversation
+for follow-ups. Old task records stay in the source file but are excluded from
+the submitted document, and identical local context is sent only once.
+
+`GET /health` includes `connected` and `loadedSessionCount`. These are operational
+observations, not proof that a particular phone applied an update.
+
+This follows the official [Codex thread lifecycle](https://developers.openai.com/codex/app-server#threads).
+
+ Repeating an active request ID
 joins the existing run; repeating a completed request ID returns its result.
 `GET /agent-runs/:requestId` reports current or completed state. Run deduplication
 and the in-memory conversation map reset on service restart; persist

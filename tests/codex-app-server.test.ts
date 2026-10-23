@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdtemp, writeFile, chmod, rm } from 'node:fs/promises'
+import { mkdtemp, writeFile, readFile, chmod, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -24,6 +24,7 @@ const rl = require('node:readline').createInterface({ input: process.stdin });
 const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
 rl.on('line', (line) => {
  const message = JSON.parse(line);
+ require('node:fs').appendFileSync(${JSON.stringify(join(directory, 'requests.jsonl'))}, JSON.stringify({ ...message, pid: process.pid }) + '\\n');
  if (message.id == null) return;
  const reply = (result) => send({ id: message.id, result });
  if (message.method === 'initialize') return reply({});
@@ -39,6 +40,7 @@ rl.on('line', (line) => {
   const text = message.params.outputSchema ? JSON.stringify({ response: 'Fixed spelling.', editedDocument: 'A small note.' }) : 'A reply';
   send({ method: 'item/completed', params: { threadId: message.params.threadId, item: { type: 'agentMessage', text } } });
   send({ method: 'turn/completed', params: { threadId: message.params.threadId, turn: { id: 'turn-1', status: 'completed' } } });
+  if (${JSON.stringify(mode)} === 'unload') send({ method: 'thread/closed', params: { threadId: message.params.threadId } });
   return reply({ turn: { id: 'turn-1' } });
  }
  reply({});
@@ -48,6 +50,10 @@ rl.on('line', (line) => {
   const client = new CodexAppServer({ command, cwd: directory, timeoutMs: 3000 })
   clients.push(client)
   return client
+}
+
+async function requests(client: InstanceType<typeof CodexAppServer>) {
+  return (await readFile(join(client.cwd, 'requests.jsonl'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line))
 }
 
 describe('JavaScript Codex page runtime', () => {
@@ -62,6 +68,45 @@ describe('JavaScript Codex page runtime', () => {
     const result = await client.run({ prompt: 'Fix spelling', editPage: true })
     expect(result).toEqual({ response: 'Fixed spelling.', editedDocument: 'A small note.', sessionId: 'test-thread' })
     expect(await client.run({ prompt: 'Explain', sessionId: result.sessionId })).toEqual({ response: 'A reply', sessionId: 'test-thread' })
+    const log = await requests(client)
+    expect(log.filter((item) => item.method === 'thread/start')).toHaveLength(1)
+    expect(log.filter((item) => item.method === 'thread/resume')).toHaveLength(0)
+    expect(log.filter((item) => item.method === 'model/list')).toHaveLength(1)
+    expect(log.filter((item) => item.method === 'turn/start')).toHaveLength(2)
+    expect(new Set(log.map((item) => item.pid)).size).toBe(1)
+  })
+
+  it('resumes a stored session once and reloads changed page instructions', async () => {
+    const client = await createClient()
+    await client.run({ prompt: 'First', sessionId: 'stored-thread', instructions: 'Keep examples.' })
+    await client.run({ prompt: 'Follow up', sessionId: 'stored-thread', instructions: 'Keep examples.' })
+    await client.run({ prompt: 'Again', sessionId: 'stored-thread', instructions: 'Use short sentences.' })
+    const resumes = (await requests(client)).filter((item) => item.method === 'thread/resume')
+    expect(resumes).toHaveLength(2)
+    expect(resumes.every((item) => item.params.excludeTurns === true)).toBe(true)
+    expect(resumes[1].params.developerInstructions).toContain('Use short sentences.')
+  })
+
+  it('resumes the same persisted thread after the process restarts', async () => {
+    const client = await createClient()
+    const first = await client.run({ prompt: 'First' })
+    const child = client.child!
+    const exited = new Promise((resolve) => child.once('exit', resolve))
+    client.close()
+    await exited
+    await client.run({ prompt: 'Continue', sessionId: first.sessionId })
+    const log = await requests(client)
+    expect(log.filter((item) => item.method === 'thread/start')).toHaveLength(1)
+    expect(log.filter((item) => item.method === 'thread/resume')).toHaveLength(1)
+    expect(log.filter((item) => item.method === 'model/list')).toHaveLength(2)
+    expect(new Set(log.map((item) => item.pid)).size).toBe(2)
+  })
+
+  it('resumes a thread unloaded by app-server before the next turn', async () => {
+    const client = await createClient('unload')
+    const first = await client.run({ prompt: 'First' })
+    await client.run({ prompt: 'Continue', sessionId: first.sessionId })
+    expect((await requests(client)).filter((item) => item.method === 'thread/resume')).toHaveLength(1)
   })
 
   it('fails promptly when the Codex process closes during a request', async () => {

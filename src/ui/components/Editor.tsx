@@ -20,6 +20,7 @@ import {
   persistedAgentTaskProgress,
   stripAgentMetadata,
   preserveAgentMetadata,
+  extractAgentRuntimeSessionId,
   type AgentTaskProgress,
 } from '../lib/agent-links'
 import { AgentTaskStatus } from './AgentTaskStatus'
@@ -368,8 +369,11 @@ export function Editor({
                 type="button"
                 aria-haspopup="dialog"
                 aria-expanded={agentComposerOpen}
+                aria-label="Enhance"
+                aria-busy={agentRequestPendingForNote}
               >
-                Enhance
+                {agentRequestPendingForNote && <span className="codex-spinner" aria-hidden="true" />}
+                {agentRequestPendingForNote ? 'Running…' : 'Enhance'}
               </button>
               <button className="btn-secondary note-tool-trigger" type="button" onClick={() => setActiveTool('versions')} aria-label="Versions" aria-haspopup="dialog"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>Versions</span></button>
               <button className="btn-secondary note-tool-trigger" type="button" onClick={() => setActiveTool('ideas')} aria-label="Ideas" aria-haspopup="dialog"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M9 18h6m-5 3h4M8 13a6 6 0 1 1 8 0c-1 1-1 2-1 3H9c0-1 0-2-1-3Z"/></svg><span>Ideas</span></button>
@@ -559,6 +563,7 @@ export function Editor({
           <NoteSheet open={agentComposerOpen} title="Refine with Codex" onClose={() => setActiveTool(null)}>
           <form
             className="note-agent-composer"
+            aria-busy={agentRequestPendingForNote}
             onSubmit={(event) => {
               event.preventDefault()
               if (!agentPrompt.trim() || agentRequestPending) return
@@ -566,6 +571,10 @@ export function Editor({
             }}
           >
             <label htmlFor="note-agent-prompt">Ask Codex to edit this page</label>
+            <p className="note-codex-session">
+              <span className={`note-codex-session-dot${agentRequestPendingForNote ? ' is-running' : ''}`} aria-hidden="true" />
+              {agentRequestPendingForNote ? 'Codex is working on this note' : extractAgentRuntimeSessionId(editor.body) ? "Continue this note's Codex session" : 'Start a Codex session for this note'}
+            </p>
             <div className="note-agent-composer-row">
               <textarea
                 id="note-agent-prompt"
@@ -575,7 +584,8 @@ export function Editor({
                 rows={2}
                 autoFocus
               />
-              <button className="btn-primary" disabled={!agentPrompt.trim() || agentRequestPending} type="submit">
+              <button className="btn-primary note-agent-run" disabled={!agentPrompt.trim() || agentRequestPending} type="submit">
+                {agentRequestPendingForNote && <span className="codex-spinner" aria-hidden="true" />}
                 {agentRequestPendingForNote ? 'Running…' : agentRequestPending ? 'Agent busy' : 'Run on note'}
               </button>
             </div>
@@ -591,7 +601,7 @@ export function Editor({
               />
             </details>
             <details className="note-account-settings"><summary>Codex account</summary><CodexAccount /></details>
-            <AgentTaskStatus progress={visibleAgentProgress} />
+            {!agentRequestPendingForNote && <AgentTaskStatus progress={visibleAgentProgress} />}
           </form>
           </NoteSheet>
           <NoteSheet open={activeTool === 'versions'} title="Version history" onClose={() => setActiveTool(null)}>

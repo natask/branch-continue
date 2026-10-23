@@ -4330,3 +4330,12 @@ pre {
 .welcome-card { text-transform: none; letter-spacing: 0; }
 
 .note-sheet .voice-recordings-panel { position: static; max-height: none; overflow: visible; box-shadow: none; }
+
+.note-agent-run,
+.note-enhance-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.codex-spinner { display: inline-block; width: 13px; height: 13px; flex: 0 0 13px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: codex-spin 750ms linear infinite; }
+.note-codex-session { display: flex; align-items: center; gap: 8px; margin: -6px 0 0; font: 12px/1.6 var(--font-ui); color: var(--text-dim); }
+.note-codex-session-dot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--text-dim); }
+.note-codex-session-dot.is-running { background: var(--accent); }
+@keyframes codex-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .codex-spinner { animation: none; } }

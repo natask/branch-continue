@@ -43,6 +43,8 @@ const handleRequest = async (request, response) => {
       codexArgs: CODEX_ARGS,
       runCount: runs.size,
       chatSessionCount: chatSessions.size,
+      loadedSessionCount: codex.loadedThreads.size,
+      connected: Boolean(codex.child),
     })
     return
   }
@@ -177,6 +179,7 @@ if (mobileHost && mobileHost !== HOST) {
 server.listen(PORT, HOST, () => {
   console.log(`Agent runtime service listening at http://${HOST}:${server.address().port}`)
   console.log(`Codex executor: ${CODEX_COMMAND} ${legacyExecutor ? CODEX_ARGS.join(' ') : 'app-server (JavaScript client)'}`)
+  if (!legacyExecutor) codex.warm().catch((error) => console.warn(`Codex warm-up deferred: ${errorMessage(error)}`))
 })
 
 for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => {
@@ -215,6 +218,7 @@ async function executeCodex(request, agent) {
     const output = await codex.run({
       prompt: buildCodexPrompt(request, agent),
       sessionId: chatSessions.get(threadKey) || request.metadata?.codexSessionId,
+      onSession: (sessionId) => chatSessions.set(threadKey, sessionId),
       editPage: request.metadata?.editPage === true,
       instructions: [agent.instructions, typeof request.metadata?.pageSystemPrompt === 'string' ? request.metadata.pageSystemPrompt : ''].filter(Boolean).join('\n\n'),
     })
@@ -332,8 +336,8 @@ function buildCodexPrompt(request, agent) {
     'Anchor:',
     request.context.quote || '',
     '',
-    'Local context:',
-    request.context.localContext || '',
+    ...(request.context.localContext && request.context.localContext.trim() !== request.context.documentText?.trim()
+      ? ['Local context:', request.context.localContext, ''] : []),
     '',
     'Full document:',
     request.context.documentText || '',

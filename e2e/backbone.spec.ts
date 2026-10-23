@@ -9,7 +9,9 @@ test('Codex keeps edits made during a run and explains wording conflicts', async
   await page.route('**/codex/account', (route) => route.fulfill({ json: { account: { type: 'chatgpt', email: 'test@example.com' }, requiresOpenaiAuth: false } }))
   let finishRun: (() => void) | undefined
   let runNumber = 0
+  const submitted: any[] = []
   await page.route('**/agent-runs', async (route) => {
+    submitted.push(route.request().postDataJSON())
     runNumber += 1
     await new Promise<void>((resolve) => { finishRun = resolve })
     await route.fulfill({ json: {
@@ -33,18 +35,29 @@ test('Codex keeps edits made during a run and explains wording conflicts', async
   await instructions.fill('Keep my voice.')
   await expect(editor.locator('.save-icon--saved')).toBeVisible()
   await codex.getByRole('button', { name: 'Run on note', exact: true }).click()
+  await expect(codex.getByRole('button', { name: 'Running…', exact: true })).toBeDisabled()
+  await expect(codex.locator('.note-agent-run .codex-spinner')).toBeVisible()
+  await expect(codex.locator('form')).toHaveAttribute('aria-busy', 'true')
   await expect.poll(() => Boolean(finishRun)).toBe(true)
   await instructions.fill('Keep examples and use short sentences.')
   await expect(editor.locator('.save-icon--saved')).toBeVisible()
   finishRun!()
   await expect(body).toHaveValue('A precise outcome.')
   await expect(instructions).toHaveValue('Keep examples and use short sentences.')
+  await expect(codex.locator('.note-codex-session')).toContainText("Continue this note's Codex session")
+  await expect(codex.locator('.note-agent-run .codex-spinner')).toHaveCount(0)
 
   finishRun = undefined
   await expect(editor.locator('.save-icon--saved')).toBeVisible()
   await codex.getByRole('button', { name: 'Run on note', exact: true }).click()
   await expect.poll(() => Boolean(finishRun)).toBe(true)
+  expect(submitted[1].request.metadata.codexSessionId).toBe('test-codex-session')
+  expect(submitted[1].request.context.threadId).toBe(submitted[0].request.context.threadId)
+  expect(submitted[1].request.context.documentText).not.toContain('branch-continue-agent-task:start')
+  expect(submitted[1].request.context.documentText).toContain('A precise outcome.')
   await codex.getByRole('button', { name: 'Done', exact: true }).click()
+  await expect(editor.getByRole('button', { name: 'Enhance', exact: true })).toContainText('Running…')
+  await expect(editor.locator('.note-enhance-button .codex-spinner')).toBeVisible()
   await body.fill('My own newer outcome.')
   await expect(editor.locator('.save-icon--saved')).toBeVisible()
   finishRun!()
@@ -150,10 +163,27 @@ test('Backbone saves portable note versions, ideas, and Codex page edits', async
   await codex.getByLabel('Page system prompt', { exact: true }).fill('Keep the meaning and improve clarity.')
   await expect(editor.locator('.save-icon--saved')).toBeVisible()
   await codex.getByLabel('Ask Codex to edit this page').fill(liveCodex ? 'Replace the visible note wording with exactly: A precise outcome. Preserve all page metadata and ideas.' : 'Refine this page.')
+  const firstResponse = page.waitForResponse((response) => response.url().endsWith('/agent-runs') && response.request().method() === 'POST', { timeout: liveCodex ? 120_000 : 5_000 })
   await codex.getByRole('button', { name: 'Run on note', exact: true }).click()
+  const firstResult = await (await firstResponse).json()
   await expect(body).toHaveValue('A precise outcome.', { timeout: liveCodex ? 120_000 : 5_000 })
   await expect(codex.getByLabel('Page system prompt')).toHaveValue('Keep the meaning and improve clarity.')
   await expect(body).not.toHaveValue(/backbone-concepts|backbone-page-system/)
+  if (liveCodex) {
+    await expect(codex.getByRole('button', { name: 'Run on note', exact: true })).toBeEnabled()
+    await expect(codex.locator('.note-codex-session')).toContainText("Continue this note's Codex session")
+    await codex.getByLabel('Ask Codex to edit this page').fill('Keep the visible wording exactly: A precise outcome. Confirm briefly that this is a follow-up in the same conversation. Preserve the page metadata and ideas.')
+    const followUpResponse = page.waitForResponse((response) => response.url().endsWith('/agent-runs') && response.request().method() === 'POST', { timeout: liveCodex ? 120_000 : 5_000 })
+    await codex.getByRole('button', { name: 'Run on note', exact: true }).click()
+    await expect(codex.locator('.note-agent-run .codex-spinner')).toBeVisible()
+    const followUp = await followUpResponse
+    const result = await followUp.json()
+    expect(result.status).toBe('completed')
+    expect(result.externalId).toBe(firstResult.externalId)
+    expect(followUp.request().postDataJSON().request.metadata.codexSessionId).toBe(firstResult.externalId)
+    await expect(codex.getByRole('button', { name: 'Run on note', exact: true })).toBeEnabled()
+    await expect(body).toHaveValue('A precise outcome.')
+  }
   await codex.getByRole('button', { name: 'Done', exact: true }).click()
   await editor.getByRole('button', { name: 'Ideas', exact: true }).click()
   await expect(ideas.getByRole('button', { name: 'The lasting meaning', exact: true })).toBeVisible()

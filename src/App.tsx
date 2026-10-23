@@ -41,6 +41,7 @@ import {
   extractLatestAgentPrompt,
   extractAgentRuntimeSessionId,
   parseAgentRequestInput,
+  stripAgentMetadata,
   updateAgentTask,
   type AgentLaunchSummary,
   type AgentTaskProgress,
@@ -1505,6 +1506,12 @@ function LoadedSourceApp({
 
     agentRequestInFlightRef.current = true
     setAgentRequestPending(true)
+    setAgentTaskProgress({
+      sourceNoteId: sourceNote?.id ?? null,
+      task: null,
+      phase: 'preparing',
+      message: 'Starting Codex…',
+    })
     let persistedTask: AgentTaskRecord | null = null
     let taskNote: SourceNote | null = sourceNote
     let taskBody = sourceBody
@@ -1546,7 +1553,7 @@ function LoadedSourceApp({
       }
 
       const requestId = createAgentRequestId()
-      const documentText = appendRecognizedVoiceContext(sourceBody, voiceContext.transcript)
+      const documentText = appendRecognizedVoiceContext(stripAgentMetadata(sourceBody), voiceContext.transcript)
       const submittedAt = new Date().toISOString()
       persistedTask = {
         taskId: requestId,
