@@ -50,8 +50,28 @@ Use + Idea to record an abstract point. Link it to a source passage, add a meani
 
 ## Verification record
 
-The integrated source passes 331 unit tests across 48 test files. The clean browser suite passes 13 checks with five device-specific checks skipped. It covers desktop, tablet, and phone layouts, plus note creation, ideas, snapshots, edit comparisons, restore, undo/redo, and the page command flow.
+The integrated source passes 339 unit tests across 50 test files. The clean browser suite passes 13 checks with five device-specific checks skipped. It covers desktop, tablet, and phone layouts, plus note creation, ideas, snapshots, edit comparisons, restore, undo/redo, and the page command flow.
 
 A separate `BACKBONE_LIVE_CODEX=1 pnpm exec playwright test e2e/backbone.spec.ts --project=desktop` run passed against the installed signed-in Codex runtime. It exercised the browser request, real Codex response, saved page instructions and ideas, and exported file history. Mock requests are disabled in that mode.
 
-The first desktop package was installed and launched through `pnpm app:deploy`. The version 0.1.13 deployment and mobile release results are recorded below when they finish. Phone installation and actual sync-provider transport still require device evidence. Publishing an OTA bundle does not prove that an older installed shell applied it.
+The final `pnpm app:deploy` passed. It built both desktop bundles, installed one app copy, restarted the background runtime, and launched the app. The installed `CFBundleShortVersionString` is `0.1.13`. `pnpm build` and `pnpm app:package` also passed through the required deployment flow. The final live Codex browser-to-file test passed after this deployment.
+
+Android Rust and Kotlin builds passed with the audio bridge and embedded/remote permissions. The ARM64 development APK is signed with the existing local debug key, aligned for 16 KB pages, and passes signature and ZIP validation. Its public download was independently checked: 30,901,087 bytes, SHA-256 `190389828f6ff5836a94c4c6d865a2822053f471768a905ddefd07fd137dd14f`. The native shell has the final native changes and can load the current OTA frontend.
+
+Phone installation and actual sync-provider transport still require device evidence. Publishing an OTA bundle does not prove that an older installed shell applied it. No phone was attached during verification.
+
+## Requirement audit
+
+| Requirement | Current evidence | Remaining verification |
+| --- | --- | --- |
+| Note and Codex workflow | Real signed-in Codex browser-to-file test; snapshots preserve authorship | Physical phone workflow |
+| Single portable history | File parser, edit, restore, undo/redo and malformed-field tests | Sync-provider conflict copies require manual reconciliation |
+| Version browsing | Desktop and phone browser tests cover previous/next, word diff and restore; preview supports touch swipes and arrow keys | Physical touch-device interaction |
+| Shared source and audio | History resides in the selected source; desktop file-storage tests; Android source-relative native bridge compiles | Actual folder grant, recording and sync on phone |
+| Idea depth | Hierarchy tests and browser save/edit/restore workflow | Physical phone workflow |
+| Common Backbone layer | Cross-page replay tests, typed domain records, causal sequence tests and public core exports | Adoption by other applications is available through the API, not deployed in unrelated repositories |
+| Delivery | Desktop installed and launched; OTA assets and signed Android installer published | Phone installation remains unverified |
+
+The final mobile OTA release is `0.1.13-20261023T002626Z-fc8f23a` at [the mobile endpoint](http://10.147.17.10/mobile/). Its 15 assets pass size and SHA-256 checks from both the Mac and release host. The private Codex endpoint is reachable from that host using the mobile origin. The [Android ARM64 development installer](http://10.147.17.10/mobile/native/Backbone-0.1.13-android-arm64-development.apk) stays available across OTA promotions. Master Orch release registration failed because that service is unavailable; public delivery and its asset checks passed.
+
+The source and release work is committed directly on `master`. No new branch or worktree was created. The pre-existing worktrees and unrelated untracked files were left in place.
