@@ -20,6 +20,8 @@ pub fn run() {
             source_file::android_select_source_file,
             source_file::android_read_source_file,
             source_file::android_write_source_file,
+            source_file::android_save_audio_capture,
+            source_file::android_read_audio_capture,
             switchboard::submit_switchboard_intent,
             switchboard::fetch_switchboard_tasks,
         ]);

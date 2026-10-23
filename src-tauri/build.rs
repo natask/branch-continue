@@ -43,6 +43,8 @@ fn main() {
             "android_select_source_file",
             "android_read_source_file",
             "android_write_source_file",
+            "android_save_audio_capture",
+            "android_read_audio_capture",
             "submit_switchboard_intent",
             "fetch_switchboard_tasks",
         ]));

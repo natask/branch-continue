@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-android-save-audio-capture"
+description = "Enables the android_save_audio_capture command without any pre-configured scope."
+commands.allow = ["android_save_audio_capture"]
+
+[[permission]]
+identifier = "deny-android-save-audio-capture"
+description = "Denies the android_save_audio_capture command without any pre-configured scope."
+commands.deny = ["android_save_audio_capture"]

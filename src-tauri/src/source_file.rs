@@ -56,6 +56,38 @@ pub struct WriteSourceFilePayload {
     content: String,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveAudioCapturePayload {
+    source_uri: String,
+    relative_path: String,
+    mime_type: String,
+    base64: String,
+    metadata_json: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadAudioCapturePayload {
+    source_uri: String,
+    relative_path: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioCaptureFile {
+    uri: String,
+    relative_path: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioCaptureContent {
+    base64: Option<String>,
+    mime_type: Option<String>,
+    metadata_json: Option<String>,
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     PluginBuilder::new(PLUGIN_NAME)
         .setup(|app, _api| {
@@ -148,6 +180,46 @@ pub async fn android_write_source_file(
         let _ = source_file;
         let _ = payload;
         Err("Android source writer is only available on Android.".to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn android_save_audio_capture(
+    source_file: State<'_, SourceFileMobile<Wry>>,
+    payload: SaveAudioCapturePayload,
+) -> Result<AudioCaptureFile, String> {
+    #[cfg(target_os = "android")]
+    {
+        let plugin = source_file
+            .0
+            .as_ref()
+            .ok_or_else(|| "Android audio storage is only available on Android.".to_string())?;
+        return run_mobile(plugin, "saveAudioCapture", payload).await;
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (source_file, payload);
+        Err("Android audio storage is only available on Android.".to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn android_read_audio_capture(
+    source_file: State<'_, SourceFileMobile<Wry>>,
+    payload: ReadAudioCapturePayload,
+) -> Result<AudioCaptureContent, String> {
+    #[cfg(target_os = "android")]
+    {
+        let plugin = source_file
+            .0
+            .as_ref()
+            .ok_or_else(|| "Android audio storage is only available on Android.".to_string())?;
+        return run_mobile(plugin, "readAudioCapture", payload).await;
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (source_file, payload);
+        Err("Android audio storage is only available on Android.".to_string())
     }
 }
 
