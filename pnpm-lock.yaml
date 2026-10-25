@@ -11,9 +11,6 @@ importers:
       '@audio/decode-webm':
         specifier: ^1.2.1
         version: 1.2.1
-      '@master-orch/client':
-        specifier: link:../master-orch/packages/master-orch-client
-        version: link:../master-orch/packages/master-orch-client
       '@natnaelkahssay/card-stack-3d':
         specifier: workspace:*
         version: link:packages/card-stack-3d

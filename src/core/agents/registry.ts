@@ -33,18 +33,9 @@ export const DEFAULT_AGENT_REGISTRY: AgentDefinition[] = [
     runtimeHint: 'model',
   },
   {
-    id: 'orch',
-    label: 'Master Orch',
-    purpose: 'Send the request to the orchestration/deployment worker runtime.',
-    runtimeHint: 'master-orch',
-    allowedActions: ['post-comment', 'triage-and-run'],
-  },
-  {
     id: 'implementer',
     label: 'Implementer',
     purpose: 'Turn scoped product or code requests into implementation work.',
-    runtimeHint: 'master-orch',
-    allowedActions: ['post-comment', 'triage-and-run'],
   },
 ]
 

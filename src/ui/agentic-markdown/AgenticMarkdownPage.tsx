@@ -3,9 +3,7 @@ import { createAgentRouter } from '../../core/agents/router'
 import { createLocalAgentRuntime } from '../../core/agents/local-runtime'
 import { createEventPrimitives, type EventPrimitives, type PageEvent } from '../../core/events'
 import { getDatabase } from '../../core/services/db'
-import { useAgentStation } from '../agent-station/use-agent-station'
 import { createAgentServiceRuntime } from '../agent-runtime/agent-service-runtime'
-import { createMasterOrchAgentRuntime } from '../agent-runtime/master-orch-runtime'
 import {
   AGENTIC_MARKDOWN_PAGE_ID,
   INITIAL_AGENTIC_MARKDOWN,
@@ -17,7 +15,6 @@ import {
 const AUTOSAVE_MS = 650
 
 export function AgenticMarkdownPage() {
-  const station = useAgentStation({ sourcePath: 'agentic-markdown.md' })
   const [events, setEvents] = useState<PageEvent[]>([])
   const [eventStore, setEventStore] = useState<EventPrimitives | null>(null)
   const [documentText, setDocumentText] = useState(INITIAL_AGENTIC_MARKDOWN)
@@ -31,11 +28,10 @@ export function AgenticMarkdownPage() {
       createAgentRouter({
         runtimes: [
           createAgentServiceRuntime(),
-          createMasterOrchAgentRuntime(station),
           createLocalAgentRuntime(),
         ],
       }),
-    [station],
+    [],
   )
 
   useEffect(() => {
@@ -326,8 +322,6 @@ export function AgenticMarkdownPage() {
           ))}
         </div>
       </section>
-
-      {station.element}
     </main>
   )
 }

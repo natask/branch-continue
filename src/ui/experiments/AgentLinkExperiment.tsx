@@ -10,7 +10,6 @@ import {
 } from 'react'
 import { SearchModal, type SearchCommandAction } from '../components/SearchModal'
 import { TimeMachine } from '../components/TimeMachine'
-import { useAgentStation } from '../agent-station/use-agent-station'
 import { shouldOpenCommandPalette } from '../lib/keyboard-shortcuts'
 import type { QuickNoteSearchHit, SourceNote } from '../../core/quicknote/types'
 
@@ -85,7 +84,6 @@ export function AgentLinkExperiment() {
   const [searchOpen, setSearchOpen] = useState(false)
   const [editorOpen, setEditorOpen] = useState(true)
   const [chatDraft, setChatDraft] = useState('')
-  const station = useAgentStation({ sourcePath: SOURCE_PATH })
   const bodyRef = useRef<HTMLTextAreaElement | null>(null)
 
   const activeThread = useMemo(
@@ -262,9 +260,8 @@ export function AgentLinkExperiment() {
           window.localStorage.removeItem(STORAGE_KEY)
         },
       },
-      ...station.actions,
     ],
-    [activeThread, createSearchLink, openThread, station.actions],
+    [activeThread, createSearchLink, openThread],
   )
 
   const sendMessage = useCallback(
@@ -394,8 +391,6 @@ export function AgentLinkExperiment() {
         onSelect={handleSearchSelect}
         commandActions={commandActions}
       />
-
-      {station.element}
 
       {editorOpen && (
         <AgentLinkEditor

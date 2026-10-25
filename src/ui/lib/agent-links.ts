@@ -310,22 +310,22 @@ function describeLaunch(launch: AgentLaunchSummary): string[] {
       ...(launch.runUrl ? [`Run link: ${launch.runUrl}`] : []),
       ...(launch.ticketId ? [`Ticket: ${launch.ticketId}`] : []),
       ...(launch.commentId ? [`Comment: ${launch.commentId}`] : []),
-      `Station: ${launch.dashboardUrl}`,
+      ...(launch.dashboardUrl ? [`Station: ${launch.dashboardUrl}`] : []),
     ]
   }
 
   if (launch.status === 'offline') {
     return [
       'Status: not launched',
-      `Reason: ${launch.reason ?? 'Master Orch is not available.'}`,
-      `Station: ${launch.dashboardUrl}`,
+      `Reason: ${launch.reason ?? 'No agent runtime is available.'}`,
+      ...(launch.dashboardUrl ? [`Station: ${launch.dashboardUrl}`] : []),
     ]
   }
 
   return [
     'Status: launch failed',
     `Reason: ${launch.reason ?? 'Unknown error'}`,
-    `Station: ${launch.dashboardUrl}`,
+    ...(launch.dashboardUrl ? [`Station: ${launch.dashboardUrl}`] : []),
   ]
 }
 

@@ -13,11 +13,6 @@ interface FactoryPanelProps {
   packets: WorkPacket[]
   summary: FactoryStateSummary
   selectedPacket: WorkPacket | null
-  stationStatus: {
-    configured: boolean
-    availability: string
-    dashboardUrl: string
-  }
   onClose: () => void
   onSelectPacket: (packetId: string) => void
   onCaptureIntent: (intent: string) => number
@@ -30,7 +25,6 @@ export function FactoryPanel({
   packets,
   summary,
   selectedPacket,
-  stationStatus,
   onClose,
   onSelectPacket,
   onCaptureIntent,
@@ -72,14 +66,6 @@ export function FactoryPanel({
         <FactorySummaryCell label="blocked" value={summary.blocked} />
         <FactorySummaryCell label="verified" value={summary.verified} />
         <FactorySummaryCell label="done" value={summary.done} />
-      </div>
-
-      <div className="factory-runtime">
-        <span>Master Orch</span>
-        <strong>{stationStatus.configured ? stationStatus.availability : 'not configured'}</strong>
-        <a href={stationStatus.dashboardUrl} target="_blank" rel="noreferrer">
-          Dashboard
-        </a>
       </div>
 
       <form className="factory-capture" onSubmit={handleSubmit}>

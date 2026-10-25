@@ -39,7 +39,6 @@
   },
   "dependencies": {
     "@audio/decode-webm": "^1.2.1",
-    "@master-orch/client": "link:../master-orch/packages/master-orch-client",
     "@natnaelkahssay/card-stack-3d": "workspace:*",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-dialog": "~2",

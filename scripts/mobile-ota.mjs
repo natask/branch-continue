@@ -13,7 +13,6 @@ const defaultChannel = 'production'
 const defaultMobileOtaUrl = 'http://10.147.17.10/mobile/'
 const defaultRemoteHost = 'reclaim@10.147.17.10'
 const defaultRemoteBase = '/home/reclaim-ethiopia/agent-stations/apps/branch-continue/mobile-ota'
-const defaultMasterOrchUrl = 'http://10.147.17.10:43110'
 const defaultMobileAgentRuntimeUrl = 'http://10.147.17.6:8765'
 const outputRoot = path.join(repoRoot, '.mobile-ota')
 
@@ -418,7 +417,8 @@ async function replaceDir(target, source) {
 }
 
 async function registerMasterOrchDeployment(manifest) {
-  const baseUrl = process.env.MOBILE_OTA_MASTER_ORCH_URL ?? process.env.MASTER_ORCH_URL ?? defaultMasterOrchUrl
+  const baseUrl = process.env.MOBILE_OTA_MASTER_ORCH_URL?.trim() || process.env.MASTER_ORCH_URL?.trim()
+  if (!baseUrl) return
   const token = process.env.MOBILE_OTA_MASTER_ORCH_TOKEN ?? process.env.MASTER_ORCH_TOKEN ?? ''
   const mobileUrl = manifest.publicUrl
   if (!mobileUrl) return
@@ -669,7 +669,7 @@ Environment:
   MOBILE_OTA_URL           OTA URL used by the native shell, default ${defaultMobileOtaUrl}
   MOBILE_OTA_SSH_HOST      SSH upload target, default ${defaultRemoteHost}
   MOBILE_OTA_REMOTE_BASE   Remote release base, default ${defaultRemoteBase}
-  MOBILE_OTA_MASTER_ORCH_URL  Master Orch API for deployment registration, default ${defaultMasterOrchUrl}
+  MOBILE_OTA_MASTER_ORCH_URL  Optional Master Orch API for deployment registration; disabled when unset
   MOBILE_OTA_AGENT_RUNTIME_URL  Codex runtime reachable from the phone, default ${defaultMobileAgentRuntimeUrl}
   --skip-master-orch       Deploy without recording the promoted mobile deployment in Master Orch
 

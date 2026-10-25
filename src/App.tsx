@@ -11,9 +11,7 @@ import { BranchControls } from './ui/components/BranchControls'
 import { FactoryPanel } from './ui/factory/FactoryPanel'
 import { AgentLinkExperiment } from './ui/experiments/AgentLinkExperiment'
 import { AgenticMarkdownPage } from './ui/agentic-markdown/AgenticMarkdownPage'
-import { useAgentStation } from './ui/agent-station/use-agent-station'
 import { createAgentServiceRuntime } from './ui/agent-runtime/agent-service-runtime'
-import { createMasterOrchAgentRuntime } from './ui/agent-runtime/master-orch-runtime'
 import {
   isSameAudioRecordingRun,
   shouldPauseForRecognitionInactivity,
@@ -332,17 +330,15 @@ function LoadedSourceApp({
   editorBodyMirrorRef.current = editorSession.editor
     ? { sessionKey: editorSession.editor.sessionKey, body: editorSession.editor.body }
     : { sessionKey: null, body: '' }
-  const station = useAgentStation({ sourcePath })
   const agentRouter = useMemo(
     () =>
       createAgentRouter({
         runtimes: [
           createAgentServiceRuntime(),
-          createMasterOrchAgentRuntime(station),
           createLocalAgentRuntime(),
         ],
       }),
-    [station],
+    [],
   )
   const [audioNoteMessage, setAudioNoteMessage] = useState<string | null>(null)
   const [agentComposerRequest, setAgentComposerRequest] = useState(0)
@@ -1605,7 +1601,7 @@ function LoadedSourceApp({
           switchboardEligible: Boolean(pending.note.noteUid && pending.note.parentNoteId),
         },
       })
-      const launch = agentWorkResultToLaunchSummary(result, station.dashboardUrl)
+      const launch = agentWorkResultToLaunchSummary(result)
       const status: AgentTaskStatus = result.runtimeId === 'local'
         ? 'blocked'
         : result.status === 'launched'
@@ -1646,7 +1642,7 @@ function LoadedSourceApp({
           response: `Agent request failed: ${message}`,
           launch: {
             status: 'failed',
-            dashboardUrl: station.dashboardUrl,
+            dashboardUrl: '',
             reason: message,
           },
         }
@@ -1676,7 +1672,6 @@ function LoadedSourceApp({
     currentContextNote,
     persistAgentTask,
     sourcePath,
-    station.dashboardUrl,
   ])
 
   const handleRunRecognizedVoiceNote = useCallback(
@@ -1906,7 +1901,6 @@ function LoadedSourceApp({
 
   const commandActions = useMemo<SearchCommandAction[]>(
     () => [
-      ...station.actions,
       {
         id: 'select-source-file',
         label: selectingSource ? 'Select Source File (busy...)' : 'Select Source File',
@@ -2184,7 +2178,6 @@ function LoadedSourceApp({
       resetWheelNavDirections,
       selectingSource,
       selectSourceFile,
-      station.actions,
       showCardStackTuner,
       isMobileDevice,
       mobilePreview,
@@ -2358,17 +2351,11 @@ function LoadedSourceApp({
         onSelect={handleSearchSelect}
         commandActions={commandActions}
       />
-      {station.element}
       <FactoryPanel
         open={factoryOpen}
         packets={factoryPackets}
         summary={factorySummary}
         selectedPacket={factorySelectedPacket}
-        stationStatus={{
-          configured: station.configured,
-          availability: station.availability,
-          dashboardUrl: station.dashboardUrl,
-        }}
         onClose={() => setFactoryOpen(false)}
         onSelectPacket={selectFactoryPacket}
         onCaptureIntent={captureFactoryIntent}
@@ -2420,12 +2407,11 @@ function agentWorkResultToLaunchSummary(
     externalId?: string
     error?: string
   },
-  dashboardUrl: string,
 ): AgentLaunchSummary {
   if (result.status === 'launched') {
     return {
       status: 'launched',
-      dashboardUrl,
+      dashboardUrl: '',
       runUrl: result.runUrl,
       commentId: result.externalId,
       runId: result.runUrl?.split('#run-')[1],
@@ -2435,14 +2421,14 @@ function agentWorkResultToLaunchSummary(
   if (result.status === 'failed') {
     return {
       status: 'failed',
-      dashboardUrl,
+      dashboardUrl: '',
       reason: result.error ?? result.response,
     }
   }
 
   return {
     status: 'offline',
-    dashboardUrl,
+    dashboardUrl: '',
     reason: `Handled by ${result.runtimeId}.`,
   }
 }
@@ -2476,7 +2462,6 @@ function SourceSelectionScreen({
   selectSourceFile: () => Promise<void>
 }) {
   const [searchOpen, setSearchOpen] = useState(false)
-  const station = useAgentStation({})
   const factoryWorkspace = useFactoryWorkspace()
   const commandActions = useMemo<SearchCommandAction[]>(
     () => [
@@ -2503,9 +2488,8 @@ function SourceSelectionScreen({
         group: 'Factory',
         run: factoryWorkspace.resetWorkspace,
       },
-      ...station.actions,
     ],
-    [factoryWorkspace, selectSourceFile, selectingSource, station.actions],
+    [factoryWorkspace, selectSourceFile, selectingSource],
   )
 
   useEffect(() => {
@@ -2552,17 +2536,11 @@ function SourceSelectionScreen({
         onSelect={() => undefined}
         commandActions={commandActions}
       />
-      {station.element}
       <FactoryPanel
         open={factoryWorkspace.open}
         packets={factoryWorkspace.packets}
         summary={factoryWorkspace.summary}
         selectedPacket={factoryWorkspace.selectedPacket}
-        stationStatus={{
-          configured: station.configured,
-          availability: station.availability,
-          dashboardUrl: station.dashboardUrl,
-        }}
         onClose={() => factoryWorkspace.setOpen(false)}
         onSelectPacket={factoryWorkspace.selectPacket}
         onCaptureIntent={factoryWorkspace.captureIntent}
@@ -2579,11 +2557,9 @@ function ErrorRecoveryScreen({
   app: ReturnType<typeof useApp>
 }) {
   const [searchOpen, setSearchOpen] = useState(false)
-  const station = useAgentStation({ sourcePath: app.sourcePath })
   const factoryWorkspace = useFactoryWorkspace()
   const commandActions = useMemo<SearchCommandAction[]>(
     () => [
-      ...station.actions,
       {
         id: 'open-software-factory',
         label: `Factory Status: ${factoryWorkspace.summary.active} Active`,
@@ -2615,7 +2591,7 @@ function ErrorRecoveryScreen({
         run: () => void app.reloadSource(),
       },
     ],
-    [app, factoryWorkspace, station.actions],
+    [app, factoryWorkspace],
   )
 
   useEffect(() => {
@@ -2670,17 +2646,11 @@ function ErrorRecoveryScreen({
         onSelect={() => undefined}
         commandActions={commandActions}
       />
-      {station.element}
       <FactoryPanel
         open={factoryWorkspace.open}
         packets={factoryWorkspace.packets}
         summary={factoryWorkspace.summary}
         selectedPacket={factoryWorkspace.selectedPacket}
-        stationStatus={{
-          configured: station.configured,
-          availability: station.availability,
-          dashboardUrl: station.dashboardUrl,
-        }}
         onClose={() => factoryWorkspace.setOpen(false)}
         onSelectPacket={factoryWorkspace.selectPacket}
         onCaptureIntent={factoryWorkspace.captureIntent}
