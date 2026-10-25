@@ -1,0 +1,26 @@
+name: Build and test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test
+      - run: pnpm test:packages
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm exec playwright test e2e/offline-notes.spec.ts e2e/command-palette.spec.ts --reporter=line

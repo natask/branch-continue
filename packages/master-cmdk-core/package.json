@@ -1,0 +1,53 @@
+{
+  "name": "master-cmdk-core",
+  "version": "0.2.0",
+  "license": "MIT",
+  "description": "Framework-agnostic command menu engine for master-cmdk.",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "CHANGELOG.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --clean",
+    "dev": "tsup src/index.ts --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "pnpm run build",
+    "prepack": "pnpm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.8"
+  },
+  "sideEffects": false,
+  "keywords": [
+    "cmdk",
+    "command",
+    "palette",
+    "menu",
+    "search",
+    "headless"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/natask/better-cmdk.git",
+    "directory": "packages/master-cmdk-core"
+  }
+}

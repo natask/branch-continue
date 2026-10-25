@@ -1,0 +1,65 @@
+{
+  "name": "master-cmdk",
+  "version": "0.2.0",
+  "license": "MIT",
+  "description": "A drop-in replacement for cmdk \u2014 same API, smarter matcher, bug fixes, and split pointer/keyboard selection.",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "CHANGELOG.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.tsx --clean",
+    "dev": "tsup src/index.tsx --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "pnpm run build",
+    "prepack": "pnpm run build"
+  },
+  "peerDependencies": {
+    "react": "^18.3.0 || ^19.0.0",
+    "react-dom": "^18.3.0 || ^19.0.0"
+  },
+  "dependencies": {
+    "@radix-ui/react-compose-refs": "^1.1.1",
+    "@radix-ui/react-dialog": "^1.1.6",
+    "@radix-ui/react-id": "^1.1.0",
+    "@radix-ui/react-primitive": "^2.0.2",
+    "master-cmdk-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.8"
+  },
+  "sideEffects": false,
+  "keywords": [
+    "cmdk",
+    "command",
+    "palette",
+    "menu",
+    "search",
+    "react"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/natask/better-cmdk.git",
+    "directory": "packages/master-cmdk"
+  }
+}

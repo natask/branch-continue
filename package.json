@@ -5,8 +5,8 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "pnpm --filter @natnaelkahssay/card-stack-3d build && vite",
-    "build": "pnpm --filter @natnaelkahssay/card-stack-3d build && tsc -b && vite build",
+    "dev": "pnpm -r --filter \"./packages/*\" build && vite",
+    "build": "pnpm -r --filter \"./packages/*\" build && tsc -b && vite build",
     "deploy": "pnpm app:deploy",
     "deploy:all": "pnpm app:deploy && pnpm desktop:ota:deploy && pnpm mobile:ota:deploy",
     "app:package": "pnpm tauri:build",
@@ -24,7 +24,7 @@
     "mobile:shell:android:apk": "node --env-file-if-exists=.env scripts/mobile-ota.mjs shell android --apk",
     "mobile:shell:ios": "node --env-file-if-exists=.env scripts/mobile-ota.mjs shell ios",
     "mobile:shell:ios:config": "node --env-file-if-exists=.env scripts/mobile-ota.mjs shell ios --config-only",
-    "test": "pnpm --filter @natnaelkahssay/card-stack-3d build && vitest run",
+    "test": "pnpm -r --filter \"./packages/*\" build && vitest run",
     "test:watch": "vitest",
     "preview": "vite preview",
     "tauri": "tauri",
@@ -35,7 +35,8 @@
     "tauri:ios:dev": "tauri ios dev",
     "local:qwen:probe": "node scripts/local-qwen-probe.mjs",
     "agent:runtime": "node scripts/agent-runtime-service.mjs",
-    "tauri:ios:build": "tauri ios build"
+    "tauri:ios:build": "tauri ios build",
+    "test:packages": "pnpm -r --filter \"./packages/*\" --if-present test"
   },
   "dependencies": {
     "@audio/decode-webm": "^1.2.1",
@@ -51,7 +52,7 @@
     "fix-webm-duration": "^1.0.6",
     "leva": "^0.10.1",
     "loro-crdt": "^1.6.2",
-    "master-cmdk": "link:../better-cmdk/packages/master-cmdk",
+    "master-cmdk": "workspace:*",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "wa-sqlite": "^1.0.0",
@@ -69,5 +70,6 @@
     "vite-plugin-top-level-await": "^1.6.0",
     "vite-plugin-wasm": "^3.6.0",
     "vitest": "^4.1.4"
-  }
+  },
+  "packageManager": "pnpm@10.33.0"
 }

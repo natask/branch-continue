@@ -18,25 +18,25 @@ There are no published installer releases yet.
 Install Node.js and pnpm. Desktop builds also need Rust and the
 [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform.
 
-The app currently links to a package in a sibling repository:
-
-| Dependency | Expected path relative to this repository |
-| --- | --- |
-| `master-cmdk` | `../better-cmdk/packages/master-cmdk` |
-
-This package must be available locally before installing dependencies.
-This repository alone does not yet provide a standalone build.
-
-With that package in place:
+The command palette packages and card stack are included in this repository.
+You do not need sibling repositories or private package access.
 
 ```sh
-pnpm install
+git clone https://github.com/natask/branch-continue.git
+cd branch-continue
+pnpm install --frozen-lockfile
 pnpm dev
 ```
 
 Run `pnpm build` to build the web interface, or `pnpm app:package` to package
 the desktop app. On macOS, `pnpm app:deploy` builds, installs a single app copy,
 and launches it.
+
+Run `pnpm test` for the app tests and `pnpm test:packages` for the included
+package tests.
+
+The command palette also has its own public [better-cmdk repository](https://github.com/natask/better-cmdk).
+See [package sources](packages/README.md) for the included version and license details.
 
 ## License
 
